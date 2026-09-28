@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "lib": ["ES2022"],
+        "types": ["node", "express", "jest"],
+        "baseUrl": ".",
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "experimentalDecorators": true,
+        "esModuleInterop": true,
+        "emitDecoratorMetadata": true,
+        "noImplicitAny": true,
+        "outDir": "./dist/",
+        "skipLibCheck": true,
+        "sourceMap": true,
+        "target": "ES2022",
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "strict": true,
+        "resolveJsonModule": true
+    },
+    "include": ["src/**/*", "tests/**/*"],
+    "exclude": ["node_modules", "dist"]
+}

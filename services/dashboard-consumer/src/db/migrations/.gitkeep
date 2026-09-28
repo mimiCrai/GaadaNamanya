@@ -1,0 +1,13 @@
+# Migrations
+
+This folder contains Drizzle ORM migrations.
+
+Run migrations with:
+```bash
+npm run db:migrate
+```
+
+Generate new migrations after schema changes:
+```bash
+npm run db:generate
+```
