@@ -9,7 +9,6 @@ import { IItemRepository, ItemRepository } from '../repositories/item.repository
 import { HealthService } from '../services/health.service';
 import { IItemService, ItemService } from '../services/item.service';
 import { MessagePublisher } from '../services/message-publisher.service';
-import { MessageSubscriber } from '../services/message-subscriber.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     // Database
@@ -23,5 +22,4 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<IItemService>(TYPES.IItemService).to(ItemService).inSingletonScope();
     // Message Queue
     bind<MessagePublisher>(TYPES.MessagePublisher).to(MessagePublisher).inSingletonScope();
-    bind<MessageSubscriber>(TYPES.MessageSubscriber).to(MessageSubscriber).inSingletonScope();
 });

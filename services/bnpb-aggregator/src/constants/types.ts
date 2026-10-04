@@ -13,5 +13,4 @@ export const TYPES = {
     IItemService: Symbol.for('IItemService'),
     // Message Queue
     MessagePublisher: Symbol.for('MessagePublisher'),
-    MessageSubscriber: Symbol.for('MessageSubscriber'),
 };

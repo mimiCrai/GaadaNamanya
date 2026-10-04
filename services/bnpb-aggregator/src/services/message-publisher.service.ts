@@ -1,83 +1,74 @@
 import { injectable } from 'inversify';
-import amqp, { ChannelModel, Channel } from 'amqplib';
+import { Kafka, Producer } from 'kafkajs';
 import { logger } from '../libs/logger';
 import env from '../util/env';
 
 export interface PublishOptions {
-    exchange?: string;
-    routingKey: string;
-    persistent?: boolean;
+    topic: string;
+    key?: string;
+    headers?: Record<string, string>;
 }
 
 @injectable()
 export class MessagePublisher {
-    private connection: ChannelModel | null = null;
-    private channel: Channel | null = null;
+    private readonly kafka = new Kafka({
+        clientId: env.KAFKA_CLIENT_ID,
+        brokers: env.KAFKA_BROKERS,
+    });
+    private producer: Producer | null = null;
 
     async connect(): Promise<void> {
         try {
-            this.connection = await amqp.connect(env.RABBITMQ_URL);
-            this.channel = await this.connection.createChannel();
-
-            this.connection.on('error', (err) => {
-                logger.error({ err }, 'RabbitMQ connection error');
-            });
-
-            this.connection.on('close', () => {
-                logger.warn('RabbitMQ connection closed');
-                this.connection = null;
-                this.channel = null;
-            });
-
-            logger.info('RabbitMQ publisher connected');
+            this.producer = this.kafka.producer();
+            await this.producer.connect();
+            logger.info('Kafka producer connected');
         } catch (error) {
-            logger.error({ error }, 'Failed to connect to RabbitMQ');
+            this.producer = null;
+            logger.error({ error }, 'Failed to connect Kafka producer');
             throw error;
         }
     }
 
-    async publish<T>(message: T, options: PublishOptions): Promise<boolean> {
-        if (!this.channel) {
+    async publish<T>(message: T, options: PublishOptions): Promise<void> {
+        if (!this.producer) {
             await this.connect();
         }
 
-        if (!this.channel) {
-            throw new Error('RabbitMQ channel not available');
+        if (!this.producer) {
+            throw new Error('Kafka producer is not available');
         }
 
-        const { exchange = '', routingKey, persistent = true } = options;
-        const content = Buffer.from(JSON.stringify(message));
+        const { topic, key, headers } = options;
 
         try {
-            // Ensure queue exists if using default exchange
-            if (!exchange) {
-                await this.channel.assertQueue(routingKey, { durable: true });
-            }
-
-            const result = this.channel.publish(exchange, routingKey, content, {
-                persistent,
-                contentType: 'application/json',
+            await this.producer.send({
+                topic,
+                acks: -1,
+                messages: [
+                    {
+                        key,
+                        value: JSON.stringify(message),
+                        headers,
+                    },
+                ],
             });
 
-            logger.debug({ routingKey, exchange }, 'Message published');
-            return result;
+            logger.debug({ topic, key }, 'Kafka message published');
         } catch (error) {
-            logger.error({ error, routingKey }, 'Failed to publish message');
+            logger.error({ error, topic, key }, 'Failed to publish Kafka message');
             throw error;
         }
     }
 
     async close(): Promise<void> {
         try {
-            if (this.channel) {
-                await this.channel.close();
+            if (this.producer) {
+                await this.producer.disconnect();
+                this.producer = null;
             }
-            if (this.connection) {
-                await this.connection.close();
-            }
-            logger.info('RabbitMQ publisher connection closed');
+            logger.info('Kafka producer disconnected');
         } catch (error) {
-            logger.error({ error }, 'Error closing RabbitMQ connection');
+            logger.error({ error }, 'Error disconnecting Kafka producer');
         }
     }
 }
