@@ -49,6 +49,16 @@ Kafka topic: hazard-events
     └──> notification-consumer-group ─> Notification Consumer
 ```
 
+## Local configuration
+
+Create a local `.env` from the tracked template:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Root Compose resolves its `${...}` variables from that `.env` file. The example values are a complete runnable local configuration, so no edits are needed before starting the current stack. For a deployed environment, replace the sample credentials and host-specific values in the local `.env`. `.env` is ignored by Git; commit only `.env.example`.
+
 ## Local Kafka
 
 Start the current BNPB event stack (Canonical PostgreSQL, Kafka, Aggregator, and both consumers):

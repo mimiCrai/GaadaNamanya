@@ -1,209 +1,73 @@
 openapi: 3.0.3
 info:
-    title: Repo Template API
-    description: A template Node.js API with Express, Inversify, and Drizzle ORM
+    title: BNPB Aggregator Internal API
+    description: Internal canonical-hazard read API. It is consumed by the BNPB Client API, not exposed directly to external clients.
     version: 1.0.0
 
 servers:
-    - url: http://localhost:3000
+    - url: http://localhost:3003
       description: Local development server
 
 paths:
     /health:
         get:
             summary: Health check
-            description: Returns the health status of the service
             operationId: getHealth
-            tags:
-                - Health
+            tags: [Health]
             responses:
-                '200':
-                    description: Service is healthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-                '503':
-                    description: Service is unhealthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
+                '200': { description: Service is healthy }
+                '503': { description: Service is unhealthy }
 
     /health/live:
         get:
             summary: Liveness probe
-            description: Returns OK if the service is running
             operationId: getLiveness
-            tags:
-                - Health
+            tags: [Health]
             responses:
-                '200':
-                    description: Service is alive
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok]
+                '200': { description: Service is alive }
 
     /health/ready:
         get:
             summary: Readiness probe
-            description: Returns OK if the service is ready to accept traffic
             operationId: getReadiness
-            tags:
-                - Health
+            tags: [Health]
             responses:
-                '200':
-                    description: Service is ready
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok, error]
-                '503':
-                    description: Service is not ready
+                '200': { description: Service is ready }
+                '503': { description: Service is not ready }
 
-    /items:
+    /internal/hazards:
         get:
-            summary: Get all items
-            description: Returns a list of all items
-            operationId: getAllItems
-            tags:
-                - Items
+            summary: List canonical hazard events
+            operationId: getInternalHazards
+            tags: [Hazards]
             responses:
                 '200':
-                    description: List of items
+                    description: Canonical hazard events, newest occurrence first
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    data:
-                                        type: array
-                                        items:
-                                            $ref: '#/components/schemas/Item'
+                                $ref: '#/components/schemas/HazardEventListResponse'
 
-        post:
-            summary: Create a new item
-            description: Creates a new item and returns it
-            operationId: createItem
-            tags:
-                - Items
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/CreateItemRequest'
-            responses:
-                '201':
-                    description: Item created successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '400':
-                    description: Invalid request body
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-    /items/{id}:
+    /internal/hazards/{hazardId}:
         get:
-            summary: Get an item by ID
-            description: Returns a single item by its ID
-            operationId: getItemById
-            tags:
-                - Items
+            summary: Get a canonical hazard event
+            operationId: getInternalHazardById
+            tags: [Hazards]
             parameters:
-                - name: id
+                - name: hazardId
                   in: path
                   required: true
                   schema:
                       type: string
-                      format: uuid
             responses:
                 '200':
-                    description: Item found
+                    description: Canonical hazard event
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
+                                $ref: '#/components/schemas/HazardEventResponse'
                 '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        put:
-            summary: Update an item
-            description: Updates an existing item
-            operationId: updateItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/UpdateItemRequest'
-            responses:
-                '200':
-                    description: Item updated successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        delete:
-            summary: Delete an item
-            description: Deletes an item by its ID
-            operationId: deleteItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            responses:
-                '204':
-                    description: Item deleted successfully
-                '404':
-                    description: Item not found
+                    description: Hazard event not found
                     content:
                         application/json:
                             schema:
@@ -211,78 +75,106 @@ paths:
 
 components:
     schemas:
-        Item:
+        HazardEvent:
             type: object
+            required:
+                - hazardId
+                - source
+                - sourceRefId
+                - hazardType
+                - severity
+                - areaName
+                - latitude
+                - longitude
+                - occurredAt
+                - ingestedAt
+                - attributes
             properties:
-                id:
+                hazardId:
                     type: string
-                    format: uuid
-                name:
+                    description: BNPB-generated canonical identifier
+                source:
                     type: string
-                description:
+                    enum: [BMKG, PVMBG]
+                sourceRefId:
                     type: string
-                    nullable: true
-                createdAt:
+                    description: Original source event_id or report_id
+                hazardType:
+                    type: string
+                    enum: [SEISMIC, VOLCANIC]
+                severity:
+                    type: string
+                    enum: [NORMAL, WASPADA, SIAGA, AWAS]
+                areaName:
+                    type: string
+                latitude:
+                    type: number
+                    format: double
+                longitude:
+                    type: number
+                    format: double
+                occurredAt:
                     type: string
                     format: date-time
-                updatedAt:
+                ingestedAt:
                     type: string
                     format: date-time
-            required:
-                - id
-                - name
-                - createdAt
-                - updatedAt
+                attributes:
+                    type: object
+                    additionalProperties: true
 
-        CreateItemRequest:
+        HazardEventListResponse:
             type: object
+            required: [data]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-            required:
-                - name
+                data:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/HazardEvent'
+                meta:
+                    $ref: '#/components/schemas/PollingMeta'
 
-        UpdateItemRequest:
+        HazardEventResponse:
             type: object
+            required: [data]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
+                data:
+                    $ref: '#/components/schemas/HazardEvent'
+                meta:
+                    $ref: '#/components/schemas/PollingMeta'
 
-        HealthResponse:
+        PollingMeta:
             type: object
+            required: [pollingStatus]
+            properties:
+                pollingStatus:
+                    type: object
+                    additionalProperties:
+                        $ref: '#/components/schemas/PollingStatus'
+
+        PollingStatus:
+            type: object
+            required: [status]
             properties:
                 status:
                     type: string
-                    enum: [healthy, unhealthy]
-                timestamp:
+                    enum: [HEALTHY, STALE, UNAVAILABLE]
+                lastSuccessfulPollAt:
                     type: string
                     format: date-time
-                services:
-                    type: object
-                    properties:
-                        database:
-                            type: string
-                            enum: [connected, disconnected]
+                    nullable: true
+                staleSince:
+                    type: string
+                    format: date-time
+                    nullable: true
 
         ErrorResponse:
             type: object
+            required: [error]
             properties:
                 error:
                     type: object
+                    required: [message]
                     properties:
                         message:
                             type: string
-                        details:
-                            type: array
-                            items:
-                                type: object

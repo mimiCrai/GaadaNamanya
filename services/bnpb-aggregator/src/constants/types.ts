@@ -6,11 +6,13 @@ export const TYPES = {
     Database: Symbol.for('Database'),
 
     // Repositories (bind to interfaces)
-    IItemRepository: Symbol.for('IItemRepository'),
+    IHazardEventRepository: Symbol.for('IHazardEventRepository'),
+    ISourceSyncStateRepository: Symbol.for('ISourceSyncStateRepository'),
 
     // Services (bind to interfaces)
     HealthService: Symbol.for('HealthService'),
-    IItemService: Symbol.for('IItemService'),
+    IHazardEventService: Symbol.for('IHazardEventService'),
+    ISourceSyncStateService: Symbol.for('ISourceSyncStateService'),
     // Message Queue
     MessagePublisher: Symbol.for('MessagePublisher'),
 };

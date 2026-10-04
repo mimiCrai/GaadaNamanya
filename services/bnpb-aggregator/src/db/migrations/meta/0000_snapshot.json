@@ -1,0 +1,229 @@
+{
+  "id": "e7fe77c8-9209-4b90-9140-18ea0db185d1",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.hazard_events": {
+      "name": "hazard_events",
+      "schema": "",
+      "columns": {
+        "hazard_id": {
+          "name": "hazard_id",
+          "type": "varchar(128)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "hazard_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_ref_id": {
+          "name": "source_ref_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hazard_type": {
+          "name": "hazard_type",
+          "type": "hazard_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "severity": {
+          "name": "severity",
+          "type": "hazard_severity",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "area_name": {
+          "name": "area_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ingested_at": {
+          "name": "ingested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "attributes": {
+          "name": "attributes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {
+        "hazard_events_source_ref_id_unique": {
+          "name": "hazard_events_source_ref_id_unique",
+          "columns": [
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_ref_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.source_sync_states": {
+      "name": "source_sync_states",
+      "schema": "",
+      "columns": {
+        "source_stream": {
+          "name": "source_stream",
+          "type": "source_stream",
+          "typeSchema": "public",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "source_sync_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'UNAVAILABLE'"
+        },
+        "last_successful_poll_at": {
+          "name": "last_successful_poll_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_attempt_at": {
+          "name": "last_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stale_since": {
+          "name": "stale_since",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "consecutive_failures": {
+          "name": "consecutive_failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.hazard_severity": {
+      "name": "hazard_severity",
+      "schema": "public",
+      "values": [
+        "NORMAL",
+        "WASPADA",
+        "SIAGA",
+        "AWAS"
+      ]
+    },
+    "public.hazard_source": {
+      "name": "hazard_source",
+      "schema": "public",
+      "values": [
+        "BMKG",
+        "PVMBG"
+      ]
+    },
+    "public.hazard_type": {
+      "name": "hazard_type",
+      "schema": "public",
+      "values": [
+        "SEISMIC",
+        "VOLCANIC"
+      ]
+    },
+    "public.source_stream": {
+      "name": "source_stream",
+      "schema": "public",
+      "values": [
+        "BMKG_SEISMIC",
+        "BMKG_TSUNAMI_WARNING",
+        "PVMBG_VOLCANIC"
+      ]
+    },
+    "public.source_sync_status": {
+      "name": "source_sync_status",
+      "schema": "public",
+      "values": [
+        "HEALTHY",
+        "STALE",
+        "UNAVAILABLE"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
