@@ -1,14 +1,15 @@
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
+import { pool } from './db';
 import { logger } from './libs/logger';
-import { NotificationEventConsumer } from './services/notification-event-consumer.service';
+import { INotificationEventConsumer } from './services/notification-event-consumer.service';
 import env from './util/env';
 
 async function main() {
     try {
         const container = await createContainer();
         const app = await createApp(container);
-        const eventConsumer = container.get<NotificationEventConsumer>(TYPES.NotificationEventConsumer);
+        const eventConsumer = container.get<INotificationEventConsumer>(TYPES.INotificationEventConsumer);
 
         await eventConsumer.start();
 
@@ -19,7 +20,10 @@ async function main() {
         const shutdown = async (signal: string) => {
             logger.info({ signal }, 'Shutting down notification consumer');
             await eventConsumer.stop();
-            server.close(() => process.exit(0));
+            server.close(async () => {
+                await pool.end();
+                process.exit(0);
+            });
         };
 
         process.once('SIGINT', () => void shutdown('SIGINT'));

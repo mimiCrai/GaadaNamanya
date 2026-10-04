@@ -1,0 +1,113 @@
+{
+    "id": "299ec9e1-cdfb-4c3f-a875-e8a668bc2b3d",
+    "prevId": "00000000-0000-0000-0000-000000000000",
+    "version": "7",
+    "dialect": "postgresql",
+    "tables": {
+        "public.notifications": {
+            "name": "notifications",
+            "schema": "",
+            "columns": {
+                "event_id": {
+                    "name": "event_id",
+                    "type": "varchar(36)",
+                    "primaryKey": true,
+                    "notNull": true
+                },
+                "hazard_id": {
+                    "name": "hazard_id",
+                    "type": "varchar(36)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "event_type": {
+                    "name": "event_type",
+                    "type": "varchar(64)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "severity": {
+                    "name": "severity",
+                    "type": "varchar(16)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "area_name": {
+                    "name": "area_name",
+                    "type": "varchar(255)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "title": {
+                    "name": "title",
+                    "type": "varchar(255)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "message": {
+                    "name": "message",
+                    "type": "varchar(1000)",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "occurred_at": {
+                    "name": "occurred_at",
+                    "type": "timestamp with time zone",
+                    "primaryKey": false,
+                    "notNull": true
+                },
+                "created_at": {
+                    "name": "created_at",
+                    "type": "timestamp with time zone",
+                    "primaryKey": false,
+                    "notNull": true,
+                    "default": "now()"
+                }
+            },
+            "indexes": {},
+            "foreignKeys": {},
+            "compositePrimaryKeys": {},
+            "uniqueConstraints": {},
+            "policies": {},
+            "checkConstraints": {},
+            "isRLSEnabled": false
+        },
+        "public.processed_events": {
+            "name": "processed_events",
+            "schema": "",
+            "columns": {
+                "event_id": {
+                    "name": "event_id",
+                    "type": "varchar(36)",
+                    "primaryKey": true,
+                    "notNull": true
+                },
+                "processed_at": {
+                    "name": "processed_at",
+                    "type": "timestamp with time zone",
+                    "primaryKey": false,
+                    "notNull": true,
+                    "default": "now()"
+                }
+            },
+            "indexes": {},
+            "foreignKeys": {},
+            "compositePrimaryKeys": {},
+            "uniqueConstraints": {},
+            "policies": {},
+            "checkConstraints": {},
+            "isRLSEnabled": false
+        }
+    },
+    "enums": {},
+    "schemas": {},
+    "sequences": {},
+    "roles": {},
+    "policies": {},
+    "views": {},
+    "_meta": {
+        "columns": {},
+        "schemas": {},
+        "tables": {}
+    }
+}

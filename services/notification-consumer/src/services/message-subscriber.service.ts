@@ -10,8 +10,14 @@ export interface SubscribeOptions {
     fromBeginning?: boolean;
 }
 
+export interface IMessageSubscriber {
+    connect(): Promise<void>;
+    subscribe<T>(options: SubscribeOptions, handler: MessageHandler<T>): Promise<void>;
+    close(): Promise<void>;
+}
+
 @injectable()
-export class MessageSubscriber {
+export class MessageSubscriber implements IMessageSubscriber {
     private readonly kafka = new Kafka({
         clientId: env.KAFKA_CLIENT_ID,
         brokers: env.KAFKA_BROKERS,

@@ -17,6 +17,7 @@ RUN npm ci --only=production
 
 COPY --from=builder /app/dist ./dist
 COPY docs ./docs
+COPY public ./public
 
 EXPOSE 3000
 
