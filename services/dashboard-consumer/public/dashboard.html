@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>BNPB Hazard Dashboard</title>
+        <style>
+            body {
+                font-family: system-ui, sans-serif;
+                max-width: 1050px;
+                margin: 2rem auto;
+                padding: 0 1rem;
+                color: #18212f;
+            }
+            h1 {
+                margin-bottom: 0.2rem;
+            }
+            .muted {
+                color: #667085;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 1.5rem;
+            }
+            th,
+            td {
+                text-align: left;
+                padding: 0.75rem;
+                border-bottom: 1px solid #e4e7ec;
+            }
+            .severity {
+                font-weight: 700;
+            }
+            .AWAS {
+                color: #b42318;
+            }
+            .SIAGA {
+                color: #b54708;
+            }
+            .WASPADA {
+                color: #b69200;
+            }
+            .NORMAL {
+                color: #027a48;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>BNPB Hazard Dashboard</h1>
+        <p class="muted">Projection maintained by Dashboard Consumer. Refreshes every 3 seconds.</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Severity</th>
+                    <th>Type</th>
+                    <th>Area</th>
+                    <th>Source</th>
+                    <th>Occurred</th>
+                    <th>Last event</th>
+                </tr>
+            </thead>
+            <tbody id="hazards"></tbody>
+        </table>
+
+        <script>
+            const format = (value) => new Date(value).toLocaleString();
+
+            async function refresh() {
+                const response = await fetch('/api/hazards');
+                const { data } = await response.json();
+                const rows = document.querySelector('#hazards');
+
+                rows.replaceChildren();
+                if (data.length === 0) {
+                    rows.innerHTML = '<tr><td colspan="6">No hazard events received yet.</td></tr>';
+                    return;
+                }
+
+                for (const hazard of data) {
+                    const row = rows.insertRow();
+                    const severity = row.insertCell();
+                    severity.className = `severity ${hazard.severity}`;
+                    severity.textContent = hazard.severity;
+                    row.insertCell().textContent = hazard.hazardType;
+                    row.insertCell().textContent = hazard.areaName;
+                    row.insertCell().textContent = hazard.source;
+                    row.insertCell().textContent = format(hazard.occurredAt);
+                    row.insertCell().textContent = hazard.lastEventType;
+                }
+            }
+
+            refresh();
+            setInterval(refresh, 3000);
+        </script>
+    </body>
+</html>

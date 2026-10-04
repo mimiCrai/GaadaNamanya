@@ -5,8 +5,14 @@ export interface HealthStatus {
     timestamp: string;
 }
 
+export interface IHealthService {
+    check(): Promise<HealthStatus>;
+    liveness(): Promise<{ status: 'ok' }>;
+    readiness(): Promise<{ status: 'ok' | 'error' }>;
+}
+
 @injectable()
-export class HealthService {
+export class HealthService implements IHealthService {
     async check(): Promise<HealthStatus> {
         return {
             status: 'healthy',

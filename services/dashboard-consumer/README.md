@@ -1,5 +1,11 @@
 # Dashboard Consumer
 
-Consumes `hazard-events` as consumer group `dashboard-consumer-group` by default. Its offset is committed only after the dashboard handler succeeds, giving at-least-once delivery; the eventual dashboard projection must therefore be idempotent.
+Consumes the Kafka `hazard-events` topic as `dashboard-consumer-group` and maintains a dashboard-owned projection. It never reads the BNPB Aggregator's Canonical Store.
 
-Copy `.env.example` to `.env`. Run `docker compose up` in this directory for an isolated development stack.
+- `GET /dashboard` — auto-refreshing HTML dashboard.
+- `GET /api/hazards` — JSON projection.
+- `GET /health` — health endpoint.
+
+The service stores one current row per `hazardId` in its own database and deduplicates Kafka redelivery using `processed_events`.
+
+For the full architecture, configuration, and demo instructions, see [consumer implementation notes](../../docs/consumer-implementation.md). Run the full stack from the repository root with `docker compose up`.

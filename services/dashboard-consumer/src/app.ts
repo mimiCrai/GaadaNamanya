@@ -14,6 +14,8 @@ import { logger } from './libs/logger';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
+import './controllers/dashboard.controller';
+import './controllers/dashboard-api.controller';
 
 /** Create the service's dependency-injection container. */
 export async function createContainer(): Promise<Container> {

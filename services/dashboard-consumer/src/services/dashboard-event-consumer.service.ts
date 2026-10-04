@@ -1,18 +1,37 @@
 import { inject, injectable } from 'inversify';
+import { hazardEventMessageSchema } from '../contracts/hazard-event-message';
 import { TYPES } from '../constants/types';
 import { logger } from '../libs/logger';
-import { MessageSubscriber } from './message-subscriber.service';
+import { IDashboardProjectionService } from './dashboard-projection.service';
+import { IMessageSubscriber } from './message-subscriber.service';
 import env from '../util/env';
 
+export interface IDashboardEventConsumer {
+    start(): Promise<void>;
+    stop(): Promise<void>;
+}
+
 @injectable()
-export class DashboardEventConsumer {
-    constructor(@inject(TYPES.MessageSubscriber) private readonly subscriber: MessageSubscriber) {}
+export class DashboardEventConsumer implements IDashboardEventConsumer {
+    constructor(
+        @inject(TYPES.IMessageSubscriber) private readonly subscriber: IMessageSubscriber,
+        @inject(TYPES.IDashboardProjectionService)
+        private readonly dashboardProjectionService: IDashboardProjectionService
+    ) {}
 
     async start(): Promise<void> {
-        await this.subscriber.subscribe<Record<string, unknown>>({ topic: env.KAFKA_TOPIC }, async (event) => {
-            // The dashboard projection will be implemented here. Keep this handler idempotent:
-            // Kafka can redeliver an event if the process stops before its offset is committed.
-            logger.info({ event }, 'Received hazard event for dashboard');
+        await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC }, async (event) => {
+            const message = hazardEventMessageSchema.parse(event);
+            const applied = await this.dashboardProjectionService.apply(message);
+            logger.info(
+                {
+                    eventId: message.eventId,
+                    hazardId: message.hazard.hazardId,
+                    eventType: message.eventType,
+                    applied,
+                },
+                applied ? 'Updated dashboard projection' : 'Skipped already processed dashboard event'
+            );
         });
     }
 

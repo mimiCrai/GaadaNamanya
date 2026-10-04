@@ -2,8 +2,14 @@
 // Use these to identify injectable services
 
 export const TYPES = {
+    Database: Symbol.for('Database'),
+
+    // Repositories
+    IDashboardProjectionRepository: Symbol.for('IDashboardProjectionRepository'),
+
     // Services
-    HealthService: Symbol.for('HealthService'),
-    MessageSubscriber: Symbol.for('MessageSubscriber'),
-    DashboardEventConsumer: Symbol.for('DashboardEventConsumer'),
+    IHealthService: Symbol.for('IHealthService'),
+    IMessageSubscriber: Symbol.for('IMessageSubscriber'),
+    IDashboardProjectionService: Symbol.for('IDashboardProjectionService'),
+    IDashboardEventConsumer: Symbol.for('IDashboardEventConsumer'),
 };
