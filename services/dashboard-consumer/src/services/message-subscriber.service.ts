@@ -1,88 +1,73 @@
 import { injectable } from 'inversify';
-import amqp, { ChannelModel, Channel, ConsumeMessage } from 'amqplib';
+import { Consumer, Kafka } from 'kafkajs';
 import { logger } from '../libs/logger';
 import env from '../util/env';
 
-export type MessageHandler<T> = (message: T, ack: () => void, nack: (requeue?: boolean) => void) => Promise<void>;
+export type MessageHandler<T> = (message: T) => Promise<void>;
 
 export interface SubscribeOptions {
-    queue: string;
-    prefetch?: number;
+    topic: string;
+    fromBeginning?: boolean;
 }
 
 @injectable()
 export class MessageSubscriber {
-    private connection: ChannelModel | null = null;
-    private channel: Channel | null = null;
+    private readonly kafka = new Kafka({
+        clientId: env.KAFKA_CLIENT_ID,
+        brokers: env.KAFKA_BROKERS,
+    });
+    private consumer: Consumer | null = null;
 
     async connect(): Promise<void> {
         try {
-            this.connection = await amqp.connect(env.RABBITMQ_URL);
-            this.channel = await this.connection.createChannel();
-
-            this.connection.on('error', (err) => {
-                logger.error({ err }, 'RabbitMQ connection error');
-            });
-
-            this.connection.on('close', () => {
-                logger.warn('RabbitMQ connection closed');
-                this.connection = null;
-                this.channel = null;
-            });
-
-            logger.info('RabbitMQ subscriber connected');
+            this.consumer = this.kafka.consumer({ groupId: env.KAFKA_GROUP_ID });
+            await this.consumer.connect();
+            logger.info({ groupId: env.KAFKA_GROUP_ID }, 'Kafka consumer connected');
         } catch (error) {
-            logger.error({ error }, 'Failed to connect to RabbitMQ');
+            this.consumer = null;
+            logger.error({ error }, 'Failed to connect Kafka consumer');
             throw error;
         }
     }
 
     async subscribe<T>(options: SubscribeOptions, handler: MessageHandler<T>): Promise<void> {
-        if (!this.channel) {
+        if (!this.consumer) {
             await this.connect();
         }
 
-        if (!this.channel) {
-            throw new Error('RabbitMQ channel not available');
+        if (!this.consumer) {
+            throw new Error('Kafka consumer is not available');
         }
 
-        const { queue, prefetch = 10 } = options;
+        const { topic, fromBeginning = false } = options;
+        await this.consumer.subscribe({ topic, fromBeginning });
+        logger.info({ topic, groupId: env.KAFKA_GROUP_ID }, 'Starting Kafka subscription');
 
-        // Ensure queue exists
-        await this.channel.assertQueue(queue, { durable: true });
-        await this.channel.prefetch(prefetch);
-
-        logger.info({ queue, prefetch }, 'Starting to consume messages');
-
-        await this.channel.consume(queue, async (msg: ConsumeMessage | null) => {
-            if (!msg || !this.channel) return;
-
-            try {
-                const content = JSON.parse(msg.content.toString()) as T;
-
-                const ack = () => this.channel?.ack(msg);
-                const nack = (requeue = false) => this.channel?.nack(msg, false, requeue);
-
-                await handler(content, ack, nack);
-            } catch (error) {
-                logger.error({ error, queue }, 'Error processing message');
-                // Reject and don't requeue on parse/handler errors
-                this.channel.nack(msg, false, false);
-            }
+        await this.consumer.run({
+            autoCommit: false,
+            eachMessage: async ({ topic, partition, message }) => {
+                try {
+                    await handler(JSON.parse(message.value?.toString() ?? 'null') as T);
+                    await this.consumer?.commitOffsets([
+                        { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
+                    ]);
+                } catch (error) {
+                    logger.error({ error, topic, partition, offset: message.offset }, 'Error processing Kafka message');
+                    throw error;
+                }
+            },
         });
     }
 
     async close(): Promise<void> {
         try {
-            if (this.channel) {
-                await this.channel.close();
+            if (this.consumer) {
+                await this.consumer.disconnect();
+                this.consumer = null;
             }
-            if (this.connection) {
-                await this.connection.close();
-            }
-            logger.info('RabbitMQ subscriber connection closed');
+            logger.info('Kafka consumer disconnected');
         } catch (error) {
-            logger.error({ error }, 'Error closing RabbitMQ connection');
+            logger.error({ error }, 'Error disconnecting Kafka consumer');
         }
     }
 }

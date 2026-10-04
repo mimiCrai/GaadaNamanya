@@ -5,4 +5,5 @@ export const TYPES = {
     // Services
     HealthService: Symbol.for('HealthService'),
     MessageSubscriber: Symbol.for('MessageSubscriber'),
+    DashboardEventConsumer: Symbol.for('DashboardEventConsumer'),
 };
