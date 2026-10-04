@@ -1,6 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { TYPES } from '../constants/types';
-import { SourceStream, SourceSyncStatus } from '../db/schema/source-sync-states';
+import { SourceStream, SourceSyncState, SourceSyncStatus } from '../db/schema/source-sync-states';
 import { ISourceSyncStateRepository } from '../repositories/source-sync-state.repository';
 
 export interface PollingStatus {
@@ -11,6 +11,7 @@ export interface PollingStatus {
 
 export interface ISourceSyncStateService {
     getPollingStatus(): Promise<Record<string, PollingStatus>>;
+    getState(sourceStream: SourceStream): Promise<SourceSyncState | undefined>;
     recordSuccessfulPoll(sourceStream: SourceStream): Promise<void>;
     recordFailedPoll(sourceStream: SourceStream, error: unknown): Promise<void>;
 }
@@ -33,6 +34,10 @@ export class SourceSyncStateService implements ISourceSyncStateService {
                 },
             ])
         );
+    }
+
+    async getState(sourceStream: SourceStream): Promise<SourceSyncState | undefined> {
+        return this.sourceSyncStateRepository.findBySourceStream(sourceStream);
     }
 
     async recordSuccessfulPoll(sourceStream: SourceStream): Promise<void> {

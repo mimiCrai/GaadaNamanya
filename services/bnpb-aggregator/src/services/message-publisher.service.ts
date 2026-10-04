@@ -9,8 +9,14 @@ export interface PublishOptions {
     headers?: Record<string, string>;
 }
 
+export interface IMessagePublisher {
+    connect(): Promise<void>;
+    publish<T>(message: T, options: PublishOptions): Promise<void>;
+    close(): Promise<void>;
+}
+
 @injectable()
-export class MessagePublisher {
+export class MessagePublisher implements IMessagePublisher {
     private readonly kafka = new Kafka({
         clientId: env.KAFKA_CLIENT_ID,
         brokers: env.KAFKA_BROKERS,

@@ -7,10 +7,13 @@ import { ISourceSyncStateService } from '../../src/services/source-sync-state.se
 const mockHazardEventRepository: jest.Mocked<IHazardEventRepository> = {
     findAll: jest.fn(),
     findByHazardId: jest.fn(),
+    findBySourceAndRefId: jest.fn(),
+    upsertAndEnqueue: jest.fn(),
 };
 
 const mockSourceSyncStateService: jest.Mocked<ISourceSyncStateService> = {
     getPollingStatus: jest.fn(),
+    getState: jest.fn(),
     recordSuccessfulPoll: jest.fn(),
     recordFailedPoll: jest.fn(),
 };
