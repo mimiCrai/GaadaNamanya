@@ -142,7 +142,7 @@ services:
             notification-store:
                 condition: service_healthy
 
-    # BMKG Mock (seismic events + tsunami warnings). Reached by the Aggregator at http://bmkg:8081.
+    # BMKG Mock
     bmkg:
         build: ./services/bmkg
         environment:
@@ -157,6 +157,29 @@ services:
             RANDOM_SEED: ${BMKG_RANDOM_SEED:-}
         ports:
             - '${BMKG_PORT:-8081}:8081'
+        healthcheck:
+            test: ['CMD', 'node', './dist/src/healthcheck.js']
+            interval: 10s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        restart: unless-stopped
+
+    # PVMBG Mock
+    pvmbg:
+        build: ./services/pvmbg
+        environment:
+            PORT: 8082
+            NODE_ENV: ${PVMBG_NODE_ENV:-production}
+            LOG_LEVEL: ${PVMBG_LOG_LEVEL:-info}
+            PVMBG_CLIENT_TOKENS: ${PVMBG_CLIENT_TOKENS}
+            PVMBG_ADMIN_TOKEN: ${PVMBG_ADMIN_TOKEN}
+            PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS:-500}
+            PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS:-3000}
+            PVMBG_REPORT_INTERVAL_MS: ${PVMBG_REPORT_INTERVAL_MS:-5000}
+            RANDOM_SEED: ${PVMBG_RANDOM_SEED:-}
+        ports:
+            - '${PVMBG_PORT:-8082}:8082'
         healthcheck:
             test: ['CMD', 'node', './dist/src/healthcheck.js']
             interval: 10s
