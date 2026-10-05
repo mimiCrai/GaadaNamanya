@@ -1,12 +1,19 @@
 import { AddressInfo } from 'net';
+import path from 'path';
 import { Writable } from 'stream';
+import { PGlite } from '@electric-sql/pglite';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/pglite';
+import { migrate } from 'drizzle-orm/pglite/migrator';
 import { Application } from 'express';
 import { Logger } from 'pino';
 import { createApp } from '../src/app';
 import { loadConfig } from '../src/config/env';
 import { TYPES } from '../src/constants/types';
+import { Database } from '../src/db';
+import * as schema from '../src/db/schema';
 import { createLogger } from '../src/libs/logger';
-import { IReportStore } from '../src/repositories/report.store';
+import { IReportRepository } from '../src/repositories/report.repository';
 
 export const PVMBG_TOKEN = 'pvmbg.bnpb.4f9c2a7e1b3d5f60718293a4b5c6d7e8';
 export const ROTATED_PVMBG_TOKEN = 'pvmbg.bnpb-2.0123456789abcdef0123456789abcdef';
@@ -19,9 +26,35 @@ export interface BuildOptions {
     env?: Record<string, string>;
 }
 
-export function buildApp({ logger = createLogger({ level: 'silent' }), env = {} }: BuildOptions = {}) {
-    const pvmbg = createApp(loadConfig({ ...process.env, ...env }), { logger });
-    return { ...pvmbg, store: pvmbg.container.get<IReportStore>(TYPES.IReportStore) };
+let testDb: Promise<{ client: PGlite; db: Database }> | undefined;
+
+export function getTestDb(): Promise<{ client: PGlite; db: Database }> {
+    testDb ??= (async () => {
+        const client = new PGlite();
+        const db = drizzle(client, { schema });
+        await migrate(db, { migrationsFolder: path.join(__dirname, '../src/db/migrations') });
+        return { client, db };
+    })();
+    return testDb;
+}
+
+export async function resetTestDb(): Promise<Database> {
+    const { db } = await getTestDb();
+    await db.execute(sql`truncate table volcanic_reports`);
+    return db;
+}
+
+export async function closeTestDb(): Promise<void> {
+    if (!testDb) return;
+    const { client } = await testDb;
+    testDb = undefined;
+    await client.close();
+}
+
+export async function buildApp({ logger = createLogger({ level: 'silent' }), env = {} }: BuildOptions = {}) {
+    const db = await resetTestDb();
+    const pvmbg = await createApp(loadConfig({ ...process.env, ...env }), db, { logger });
+    return { ...pvmbg, db, reports: pvmbg.container.get<IReportRepository>(TYPES.IReportRepository) };
 }
 
 export function captureLogs() {
@@ -53,9 +86,9 @@ export async function listen(app: Application) {
     };
 }
 
-export async function waitFor(condition: () => boolean, timeoutMs = 3_000): Promise<void> {
+export async function waitFor(condition: () => boolean | Promise<boolean>, timeoutMs = 3_000): Promise<void> {
     const deadline = Date.now() + timeoutMs;
-    while (!condition()) {
+    while (!(await condition())) {
         if (Date.now() > deadline) throw new Error('waitFor: condition not met in time');
         await new Promise((resolve) => setTimeout(resolve, 10));
     }

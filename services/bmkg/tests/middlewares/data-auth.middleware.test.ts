@@ -1,11 +1,13 @@
 import 'reflect-metadata';
+import { Application } from 'express';
 import request from 'supertest';
 import { BMKG_KEY, BNPB_JWT, buildApp, PVMBG_TOKEN, ROTATED_BMKG_KEY } from '../helpers';
 
 const WRONG_BMKG_KEY = 'bmkg_test01_ffffffffffffffffffffffffffffffff';
 
 describe('DataAuthMiddleware', () => {
-    const { app } = buildApp();
+    let app: Application;
+    beforeAll(async () => ({ app } = await buildApp()));
 
     it.each([
         ['no credential', {}, 401, 'missing_credential'],

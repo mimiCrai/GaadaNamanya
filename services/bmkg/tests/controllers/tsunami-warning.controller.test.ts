@@ -1,10 +1,12 @@
 import 'reflect-metadata';
+import { Application } from 'express';
 import request from 'supertest';
 import { SeismicEvent, TsunamiWarning, TsunamiWarningSchema } from '../../src/types/contract';
 import { BMKG_KEY, buildApp } from '../helpers';
 
 describe('GET /tsunami-warnings', () => {
-    const { app } = buildApp();
+    let app: Application;
+    beforeAll(async () => ({ app } = await buildApp()));
     const get = (path: string, query: Record<string, string> = {}) =>
         request(app).get(path).query(query).set('X-BMKG-Key', BMKG_KEY);
 

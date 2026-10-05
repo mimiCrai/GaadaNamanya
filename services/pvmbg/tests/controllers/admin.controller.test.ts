@@ -11,7 +11,7 @@ describe('AdminController', () => {
         (await request(app).get('/volcanic-reports').set('Authorization', `Bearer ${PVMBG_TOKEN}`)).body.data;
 
     it('exposes only POST /admin/schema-version and POST /admin/outage', async () => {
-        const { app } = buildApp();
+        const { app } = await buildApp();
 
         for (const path of ['/admin/schema-version', '/admin/outage']) {
             const response = await request(app).get(path).set('Authorization', `Bearer ${PVMBG_TOKEN}`);
@@ -22,13 +22,13 @@ describe('AdminController', () => {
 
     describe('POST /admin/schema-version', () => {
         it('adds confidence_level only to records created while v2 is active', async () => {
-            const { app, generator } = buildApp();
+            const { app, generator } = await buildApp();
 
-            const [v1Report] = generator.generate(1);
+            const [v1Report] = await generator.generate(1);
             const switched = await post(app, '/schema-version', { version: 2 });
-            const [v2Report] = generator.generate(1);
+            const [v2Report] = await generator.generate(1);
             await post(app, '/schema-version', { version: 1 });
-            const [backToV1Report] = generator.generate(1);
+            const [backToV1Report] = await generator.generate(1);
 
             expect(switched.status).toBe(200);
             expect(switched.body).toEqual({ schema_version: 2, changed_at: expect.any(String) });
@@ -41,7 +41,7 @@ describe('AdminController', () => {
         });
 
         it('keeps changed_at when the active version is posted again', async () => {
-            const { app } = buildApp();
+            const { app } = await buildApp();
             const first = await post(app, '/schema-version', { version: 2 });
             await new Promise((resolve) => setTimeout(resolve, 5));
 
@@ -53,7 +53,7 @@ describe('AdminController', () => {
         it.each<object>([{ version: 3 }, { version: '2' }, {}, { version: 2, extra: true }])(
             'rejects body %j with 400 invalid_body',
             async (body) => {
-                const { app } = buildApp();
+                const { app } = await buildApp();
                 const response = await post(app, '/schema-version', body);
 
                 expect(response.status).toBe(400);
@@ -62,7 +62,7 @@ describe('AdminController', () => {
         );
 
         it('rejects malformed JSON with 400 invalid_body', async () => {
-            const { app } = buildApp();
+            const { app } = await buildApp();
             const response = await request(app)
                 .post('/admin/schema-version')
                 .set('Authorization', `Bearer ${PVMBG_TOKEN}`)
@@ -76,7 +76,7 @@ describe('AdminController', () => {
 
     describe('POST /admin/outage', () => {
         it('defaults to error mode and keeps /admin working during the outage', async () => {
-            const { app } = buildApp();
+            const { app } = await buildApp();
 
             const started = await post(app, '/outage', { enabled: true });
             const schemaDuringOutage = await post(app, '/schema-version', { version: 2 });
@@ -94,7 +94,7 @@ describe('AdminController', () => {
         });
 
         it('rejects an unknown mode', async () => {
-            const { app } = buildApp();
+            const { app } = await buildApp();
             const response = await post(app, '/outage', { enabled: true, mode: 'slow' });
 
             expect(response.status).toBe(400);
@@ -104,7 +104,7 @@ describe('AdminController', () => {
 
     it('logs every schema and outage change at warn level', async () => {
         const logs = captureLogs();
-        const { app } = buildApp({ logger: logs.logger });
+        const { app } = await buildApp({ logger: logs.logger });
 
         await post(app, '/schema-version', { version: 2 });
         await post(app, '/outage', { enabled: true, mode: 'hang' });

@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { Application } from 'express';
 import request from 'supertest';
 import { TYPES } from '../../src/constants/types';
 import { OutageService } from '../../src/services/outage.service';
@@ -24,7 +25,8 @@ const REJECTED: [string, Record<string, string>, number, string][] = [
 
 describe('DataAuthMiddleware', () => {
     describe('on GET /volcanic-reports', () => {
-        const { app } = buildApp();
+        let app: Application;
+        beforeAll(async () => ({ app } = await buildApp()));
 
         it.each(REJECTED)('rejects %s', async (_case, headers, status, error) => {
             const response = await request(app).get('/volcanic-reports').set(headers);
@@ -50,7 +52,7 @@ describe('DataAuthMiddleware', () => {
     // /admin/* shares the client token with the data endpoint
     describe('on POST /admin/*', () => {
         it.each(REJECTED)('rejects %s without changing state', async (_case, headers, status, error) => {
-            const { app, container } = buildApp();
+            const { app, container } = await buildApp();
 
             for (const [path, body] of [
                 ['/admin/schema-version', { version: 2 }],
@@ -66,7 +68,7 @@ describe('DataAuthMiddleware', () => {
         });
 
         it.each([PVMBG_TOKEN, ROTATED_PVMBG_TOKEN])('accepts every client token (%s)', async (token) => {
-            const { app } = buildApp();
+            const { app } = await buildApp();
             const response = await request(app)
                 .post('/admin/schema-version')
                 .set('Authorization', `Bearer ${token}`)

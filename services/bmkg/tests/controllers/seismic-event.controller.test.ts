@@ -1,12 +1,14 @@
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
+import { Application } from 'express';
 import request from 'supertest';
 import { SEED_EVENT_COUNT } from '../../src/services/generator.service';
 import { SeismicEvent, SeismicEventSchema } from '../../src/types/contract';
 import { BMKG_KEY, buildApp } from '../helpers';
 
 describe('GET /seismic-events', () => {
-    const { app } = buildApp();
+    let app: Application;
+    beforeAll(async () => ({ app } = await buildApp()));
     const get = (query: Record<string, string> = {}) =>
         request(app).get('/seismic-events').query(query).set('X-BMKG-Key', BMKG_KEY);
 

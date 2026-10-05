@@ -10,7 +10,7 @@ describe('OutageMiddleware', () => {
         request(app).get('/volcanic-reports').set('Authorization', `Bearer ${PVMBG_TOKEN}`);
 
     it('answers the data endpoint and /health with 503 in error mode, then recovers', async () => {
-        const { app } = buildApp();
+        const { app } = await buildApp();
         await setOutage(app, { enabled: true, mode: 'error' });
 
         const data = await getReports(app);
@@ -26,7 +26,7 @@ describe('OutageMiddleware', () => {
     });
 
     it('checks the outage before auth, like a dead service', async () => {
-        const { app } = buildApp();
+        const { app } = await buildApp();
         await setOutage(app, { enabled: true });
 
         const response = await request(app).get('/volcanic-reports');
@@ -35,7 +35,7 @@ describe('OutageMiddleware', () => {
     });
 
     it('never answers in hang mode and forgets a request once the client gives up', async () => {
-        const { app, outage } = buildApp();
+        const { app, outage } = await buildApp();
         await setOutage(app, { enabled: true, mode: 'hang' });
 
         await expect(request(app).get('/health').timeout(150)).rejects.toThrow(/Timeout/);
@@ -44,7 +44,7 @@ describe('OutageMiddleware', () => {
     });
 
     it('answers still-held requests with 503 when the outage is switched off', async () => {
-        const { app, outage } = buildApp();
+        const { app, outage } = await buildApp();
         await setOutage(app, { enabled: true, mode: 'hang' });
 
         const pending = Promise.all([getReports(app), request(app).get('/health')]);
@@ -59,7 +59,7 @@ describe('OutageMiddleware', () => {
     });
 
     it('releases held requests when switching from hang to error mode', async () => {
-        const { app, outage } = buildApp();
+        const { app, outage } = await buildApp();
         await setOutage(app, { enabled: true, mode: 'hang' });
 
         const pending = getReports(app).then((response) => response); // supertest only sends once then() is called

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Writable } from 'stream';
+import { Application } from 'express';
 import request from 'supertest';
 import { createLogger } from '../../src/libs/logger';
 import { BMKG_KEY, buildApp } from '../helpers';
@@ -8,7 +9,8 @@ const CORRELATION_ID = '7d3f6c1e-2b4a-4c8d-9e0f-1a2b3c4d5e6f';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe('X-Correlation-ID', () => {
-    const { app } = buildApp();
+    let app: Application;
+    beforeAll(async () => ({ app } = await buildApp()));
 
     it.each([
         ['a successful poll', '/seismic-events', 200],
@@ -37,7 +39,7 @@ describe('X-Correlation-ID', () => {
                 callback();
             },
         });
-        const { app: loggedApp } = buildApp(createLogger({ stream }));
+        const { app: loggedApp } = await buildApp(createLogger({ stream }));
 
         await request(loggedApp)
             .get('/seismic-events')

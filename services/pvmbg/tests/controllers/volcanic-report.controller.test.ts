@@ -1,12 +1,14 @@
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
+import { Application } from 'express';
 import request from 'supertest';
 import { SEED_REPORT_COUNT } from '../../src/services/generator.service';
 import { ALERT_LEVELS, VolcanicReport, VolcanicReportV1Schema } from '../../src/types/contract';
 import { buildApp, PVMBG_TOKEN } from '../helpers';
 
 describe('GET /volcanic-reports', () => {
-    const { app } = buildApp();
+    let app: Application;
+    beforeAll(async () => ({ app } = await buildApp()));
     const get = (query: Record<string, string> = {}) =>
         request(app).get('/volcanic-reports').query(query).set('Authorization', `Bearer ${PVMBG_TOKEN}`);
 
