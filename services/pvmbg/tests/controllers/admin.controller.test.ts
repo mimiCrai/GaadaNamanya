@@ -2,11 +2,11 @@ import 'reflect-metadata';
 import { Application } from 'express';
 import request from 'supertest';
 import { VolcanicReport } from '../../src/types/contract';
-import { ADMIN_TOKEN, buildApp, captureLogs, PVMBG_TOKEN } from '../helpers';
+import { buildApp, captureLogs, PVMBG_TOKEN } from '../helpers';
 
 describe('AdminController', () => {
     const post = (app: Application, path: string, body: object) =>
-        request(app).post(`/admin${path}`).set('X-Admin-Token', ADMIN_TOKEN).send(body);
+        request(app).post(`/admin${path}`).set('Authorization', `Bearer ${PVMBG_TOKEN}`).send(body);
     const listReports = async (app: Application): Promise<VolcanicReport[]> =>
         (await request(app).get('/volcanic-reports').set('Authorization', `Bearer ${PVMBG_TOKEN}`)).body.data;
 
@@ -14,7 +14,7 @@ describe('AdminController', () => {
         const { app } = buildApp();
 
         for (const path of ['/admin/schema-version', '/admin/outage']) {
-            const response = await request(app).get(path).set('X-Admin-Token', ADMIN_TOKEN);
+            const response = await request(app).get(path).set('Authorization', `Bearer ${PVMBG_TOKEN}`);
             expect(response.status).toBe(404);
         }
         expect((await post(app, '/delay', { min_ms: 3000, max_ms: 3000 })).status).toBe(404);
@@ -65,7 +65,7 @@ describe('AdminController', () => {
             const { app } = buildApp();
             const response = await request(app)
                 .post('/admin/schema-version')
-                .set('X-Admin-Token', ADMIN_TOKEN)
+                .set('Authorization', `Bearer ${PVMBG_TOKEN}`)
                 .set('Content-Type', 'application/json')
                 .send('{"version":');
 
@@ -117,6 +117,6 @@ describe('AdminController', () => {
             'PVMBG outage ended',
         ]);
         expect(warnings[0]).toEqual(expect.objectContaining({ previous_version: 1, schema_version: 2 }));
-        expect(logs.raw()).not.toContain(ADMIN_TOKEN);
+        expect(logs.raw()).not.toContain(PVMBG_TOKEN);
     });
 });

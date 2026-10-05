@@ -19,7 +19,6 @@ export const TYPES = {
     // Middlewares
     OutageMiddleware: Symbol.for('OutageMiddleware'),
     DataAuthMiddleware: Symbol.for('DataAuthMiddleware'),
-    AdminAuthMiddleware: Symbol.for('AdminAuthMiddleware'),
     DelayMiddleware: Symbol.for('DelayMiddleware'),
 
     HealthService: Symbol.for('HealthService'),

@@ -15,7 +15,6 @@ import { OutageService } from '../services/outage.service';
 import { SchemaService } from '../services/schema.service';
 
 // Middlewares
-import { AdminAuthMiddleware } from '../middlewares/admin-auth.middleware';
 import { DataAuthMiddleware } from '../middlewares/data-auth.middleware';
 import { DelayMiddleware } from '../middlewares/delay.middleware';
 import { OutageMiddleware } from '../middlewares/outage.middleware';
@@ -40,7 +39,6 @@ export function createBindings(config: AppConfig, logger: Logger, clock: Clock):
         // Middlewares
         bind<OutageMiddleware>(TYPES.OutageMiddleware).to(OutageMiddleware);
         bind<DataAuthMiddleware>(TYPES.DataAuthMiddleware).to(DataAuthMiddleware);
-        bind<AdminAuthMiddleware>(TYPES.AdminAuthMiddleware).to(AdminAuthMiddleware);
         bind<DelayMiddleware>(TYPES.DelayMiddleware).to(DelayMiddleware);
     });
 }

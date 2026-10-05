@@ -3,7 +3,7 @@ info:
     title: PVMBG Mock API
     description: |
         Passive mock of PVMBG (volcanic reports) polled by the BNPB Aggregator. Operators can switch the schema version
-        and start or stop a simulated outage at runtime through `POST /admin/*`.
+        and start or stop a simulated outage at runtime through `POST /admin/*`, using the same bearer token as the data endpoint.
         Documentation only: requests are validated in code (zod), after authentication.
 
         Every response carries `X-Correlation-ID` (echoed if the request sent a valid UUID, otherwise a new UUID v4).
@@ -67,7 +67,7 @@ paths:
                 Posting the active version is a no-op and keeps `changed_at`. Every change is logged at `warn`.
             operationId: setSchemaVersion
             tags: [Admin]
-            security: [{ AdminToken: [] }]
+            security: [{ PvmbgBearer: [] }]
             requestBody:
                 required: true
                 content:
@@ -85,8 +85,8 @@ paths:
                         application/json:
                             schema: { $ref: '#/components/schemas/SchemaState' }
                 '400': { $ref: '#/components/responses/InvalidBody' }
-                '401': { $ref: '#/components/responses/AdminUnauthorized' }
-                '403': { $ref: '#/components/responses/AdminForbidden' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
 
     /admin/outage:
         post:
@@ -98,7 +98,7 @@ paths:
                 Every change is logged at `warn`.
             operationId: setOutage
             tags: [Admin]
-            security: [{ AdminToken: [] }]
+            security: [{ PvmbgBearer: [] }]
             requestBody:
                 required: true
                 content:
@@ -125,8 +125,8 @@ paths:
                                               type: integer
                                               description: Held requests answered with 503 by this change.
                 '400': { $ref: '#/components/responses/InvalidBody' }
-                '401': { $ref: '#/components/responses/AdminUnauthorized' }
-                '403': { $ref: '#/components/responses/AdminForbidden' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
 
     /health:
         get:
@@ -154,11 +154,6 @@ components:
             type: http
             scheme: bearer
             description: Token format `pvmbg.<client_id>.<32 hex>`. Valid values come from PVMBG_CLIENT_TOKENS (comma-separated).
-        AdminToken:
-            type: apiKey
-            in: header
-            name: X-Admin-Token
-            description: Value of PVMBG_ADMIN_TOKEN. Data credentials are not accepted on /admin/*, and vice versa.
 
     parameters:
         CorrelationId:
@@ -205,16 +200,6 @@ components:
             description: |
                 Unknown token (`invalid_credential`), or a credential from another domain of trust
                 (`foreign_credential`: BMKG key or BNPB client JWT).
-            content:
-                application/json:
-                    schema: { $ref: '#/components/schemas/Error' }
-        AdminUnauthorized:
-            description: X-Admin-Token missing (`missing_credential`)
-            content:
-                application/json:
-                    schema: { $ref: '#/components/schemas/Error' }
-        AdminForbidden:
-            description: Wrong admin token (`invalid_credential`) or a data credential sent instead (`foreign_credential`)
             content:
                 application/json:
                     schema: { $ref: '#/components/schemas/Error' }

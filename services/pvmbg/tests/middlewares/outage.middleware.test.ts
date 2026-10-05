@@ -1,11 +1,11 @@
 import 'reflect-metadata';
 import { Application } from 'express';
 import request from 'supertest';
-import { ADMIN_TOKEN, buildApp, PVMBG_TOKEN, waitFor } from '../helpers';
+import { buildApp, PVMBG_TOKEN, waitFor } from '../helpers';
 
 describe('OutageMiddleware', () => {
     const setOutage = (app: Application, body: object) =>
-        request(app).post('/admin/outage').set('X-Admin-Token', ADMIN_TOKEN).send(body);
+        request(app).post('/admin/outage').set('Authorization', `Bearer ${PVMBG_TOKEN}`).send(body);
     const getReports = (app: Application) =>
         request(app).get('/volcanic-reports').set('Authorization', `Bearer ${PVMBG_TOKEN}`);
 

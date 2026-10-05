@@ -4,7 +4,6 @@ export const PVMBG_TOKEN_PATTERN = /^pvmbg\.[A-Za-z0-9-]{1,32}\.[0-9a-f]{32}$/;
 
 const DELAY_MAX_MS = 60_000;
 const REPORT_INTERVAL_MAX_MS = 10_000;
-const ADMIN_TOKEN_MIN_LENGTH = 16;
 
 const tokenList = z
     .string()
@@ -34,7 +33,6 @@ const envSchema = z
         LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
         PVMBG_CLIENT_TOKENS: tokenList,
-        PVMBG_ADMIN_TOKEN: z.string().trim().min(ADMIN_TOKEN_MIN_LENGTH),
 
         PVMBG_DELAY_MIN_MS: delayMs.default(500),
         PVMBG_DELAY_MAX_MS: delayMs.default(3000),
@@ -49,14 +47,6 @@ const envSchema = z
                 message: 'PVMBG_DELAY_MIN_MS must be <= PVMBG_DELAY_MAX_MS',
             });
         }
-
-        if (env.PVMBG_CLIENT_TOKENS.includes(env.PVMBG_ADMIN_TOKEN)) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                path: ['PVMBG_ADMIN_TOKEN'],
-                message: 'PVMBG_ADMIN_TOKEN must differ from every data token',
-            });
-        }
     });
 
 export interface AppConfig {
@@ -64,7 +54,6 @@ export interface AppConfig {
     nodeEnv: 'local' | 'staging' | 'production' | 'test';
     logLevel: string;
     clientTokens: string[];
-    adminToken: string;
     delayMinMs: number;
     delayMaxMs: number;
     reportIntervalMs: number;
@@ -79,7 +68,6 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         nodeEnv: env.NODE_ENV,
         logLevel: env.LOG_LEVEL,
         clientTokens: env.PVMBG_CLIENT_TOKENS,
-        adminToken: env.PVMBG_ADMIN_TOKEN,
         delayMinMs: env.PVMBG_DELAY_MIN_MS,
         delayMaxMs: env.PVMBG_DELAY_MAX_MS,
         reportIntervalMs: env.PVMBG_REPORT_INTERVAL_MS,

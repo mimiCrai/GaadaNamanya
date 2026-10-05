@@ -10,7 +10,6 @@ import { IReportStore } from '../src/repositories/report.store';
 
 export const PVMBG_TOKEN = 'pvmbg.bnpb.4f9c2a7e1b3d5f60718293a4b5c6d7e8';
 export const ROTATED_PVMBG_TOKEN = 'pvmbg.bnpb-2.0123456789abcdef0123456789abcdef';
-export const ADMIN_TOKEN = 'test-admin-token-5f0c1a2b3c4d5e6f';
 export const BMKG_KEY = 'bmkg_test01_0123456789abcdef0123456789abcdef';
 export const BNPB_JWT =
     'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkb3duc3RyZWFtLWNsaWVudCIsInNjb3BlIjoiaGF6YXJkOnJlYWQifQ.c2lnbmF0dXJl';

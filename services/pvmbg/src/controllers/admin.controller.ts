@@ -8,7 +8,8 @@ import { OutageService } from '../services/outage.service';
 import { SchemaService } from '../services/schema.service';
 import { OutageBodySchema, SchemaVersionBodySchema } from '../types/contract';
 
-@controller('/admin', TYPES.AdminAuthMiddleware)
+// operator controls, protected by the same client token as the data endpoint
+@controller('/admin', TYPES.DataAuthMiddleware)
 export class AdminController {
     constructor(
         @inject(TYPES.SchemaService) private readonly schema: SchemaService,
