@@ -1,288 +1,301 @@
 openapi: 3.0.3
 info:
-    title: Repo Template API
-    description: A template Node.js API with Express, Inversify, and Drizzle ORM
+    title: PVMBG Mock API
+    description: |
+        Passive mock of PVMBG (volcanic reports) polled by the BNPB Aggregator. Operators can switch the schema version
+        and start or stop a simulated outage at runtime through `POST /admin/*`.
+        Documentation only: requests are validated in code (zod), after authentication.
+
+        Every response carries `X-Correlation-ID` (echoed if the request sent a valid UUID, otherwise a new UUID v4).
+        Errors always have the body `{ "error": "<code>", "message": "...", "correlation_id": "..." }`.
+
+        During an outage, `/volcanic-reports` and `/health` either never answer (`hang`) or answer
+        503 `service_unavailable` (`error`). `/admin/*` keeps working and is never delayed.
     version: 1.0.0
 
 servers:
-    - url: http://localhost:3000
-      description: Local development server
+    - url: http://localhost:8082
+      description: Local
+    - url: http://pvmbg:8082
+      description: Inside the root docker compose network
+
+tags:
+    - name: Data
+    - name: Admin
+    - name: Health
 
 paths:
-    /health:
+    /volcanic-reports:
         get:
-            summary: Health check
-            description: Returns the health status of the service
-            operationId: getHealth
-            tags:
-                - Health
+            summary: Volcanic reports with reported_at >= since, ascending
+            description: |
+                Subject to the outage (checked first) and the artificial delay (after successful auth).
+                `confidence_level` is present only on records created while schema v2 was active, so one response
+                can mix both shapes.
+            operationId: listVolcanicReports
+            tags: [Data]
+            security: [{ PvmbgBearer: [] }]
+            parameters:
+                - $ref: '#/components/parameters/CorrelationId'
+                - $ref: '#/components/parameters/Since'
+                - $ref: '#/components/parameters/Limit'
             responses:
                 '200':
-                    description: Service is healthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-                '503':
-                    description: Service is unhealthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-
-    /health/live:
-        get:
-            summary: Liveness probe
-            description: Returns OK if the service is running
-            operationId: getLiveness
-            tags:
-                - Health
-            responses:
-                '200':
-                    description: Service is alive
+                    description: Reports
+                    headers:
+                        X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
                     content:
                         application/json:
                             schema:
                                 type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok]
-
-    /health/ready:
-        get:
-            summary: Readiness probe
-            description: Returns OK if the service is ready to accept traffic
-            operationId: getReadiness
-            tags:
-                - Health
-            responses:
-                '200':
-                    description: Service is ready
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok, error]
-                '503':
-                    description: Service is not ready
-
-    /items:
-        get:
-            summary: Get all items
-            description: Returns a list of all items
-            operationId: getAllItems
-            tags:
-                - Items
-            responses:
-                '200':
-                    description: List of items
-                    content:
-                        application/json:
-                            schema:
-                                type: object
+                                required: [data, meta]
                                 properties:
                                     data:
                                         type: array
-                                        items:
-                                            $ref: '#/components/schemas/Item'
+                                        items: { $ref: '#/components/schemas/VolcanicReport' }
+                                    meta: { $ref: '#/components/schemas/ListMeta' }
+                '400': { $ref: '#/components/responses/InvalidQuery' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+                '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+    /admin/schema-version:
         post:
-            summary: Create a new item
-            description: Creates a new item and returns it
-            operationId: createItem
-            tags:
-                - Items
+            summary: Switch the schema version without a restart
+            description: |
+                Affects only records created afterwards; existing records are never rewritten.
+                Posting the active version is a no-op and keeps `changed_at`. Every change is logged at `warn`.
+            operationId: setSchemaVersion
+            tags: [Admin]
+            security: [{ AdminToken: [] }]
             requestBody:
                 required: true
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/CreateItemRequest'
+                            type: object
+                            additionalProperties: false
+                            required: [version]
+                            properties:
+                                version: { type: integer, enum: [1, 2] }
             responses:
-                '201':
-                    description: Item created successfully
+                '200':
+                    description: New state
                     content:
                         application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '400':
-                    description: Invalid request body
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                            schema: { $ref: '#/components/schemas/SchemaState' }
+                '400': { $ref: '#/components/responses/InvalidBody' }
+                '401': { $ref: '#/components/responses/AdminUnauthorized' }
+                '403': { $ref: '#/components/responses/AdminForbidden' }
 
-    /items/{id}:
+    /admin/outage:
+        post:
+            summary: Start or stop a simulated outage
+            description: |
+                Lasts until an operator turns it off. `hang` holds requests open (each is dropped from memory as soon as
+                its socket closes); when the outage ends or switches to `error`, still-held requests get 503.
+                The report generator keeps running, so BNPB can catch up with `since` afterwards.
+                Every change is logged at `warn`.
+            operationId: setOutage
+            tags: [Admin]
+            security: [{ AdminToken: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            additionalProperties: false
+                            required: [enabled]
+                            properties:
+                                enabled: { type: boolean }
+                                mode: { type: string, enum: [hang, error], default: error }
+            responses:
+                '200':
+                    description: New state
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: '#/components/schemas/OutageState'
+                                    - type: object
+                                      required: [released_requests]
+                                      properties:
+                                          released_requests:
+                                              type: integer
+                                              description: Held requests answered with 503 by this change.
+                '400': { $ref: '#/components/responses/InvalidBody' }
+                '401': { $ref: '#/components/responses/AdminUnauthorized' }
+                '403': { $ref: '#/components/responses/AdminForbidden' }
+
+    /health:
         get:
-            summary: Get an item by ID
-            description: Returns a single item by its ID
-            operationId: getItemById
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
+            summary: Health check (no auth, no delay; hangs or returns 503 during an outage)
+            operationId: getHealth
+            tags: [Health]
             responses:
                 '200':
-                    description: Item found
+                    description: Healthy
                     content:
                         application/json:
                             schema:
                                 type: object
+                                required: [status, service, uptime_s, time]
                                 properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        put:
-            summary: Update an item
-            description: Updates an existing item
-            operationId: updateItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/UpdateItemRequest'
-            responses:
-                '200':
-                    description: Item updated successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        delete:
-            summary: Delete an item
-            description: Deletes an item by its ID
-            operationId: deleteItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            responses:
-                '204':
-                    description: Item deleted successfully
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                                    status: { type: string, enum: [ok] }
+                                    service: { type: string, enum: [pvmbg] }
+                                    uptime_s: { type: integer }
+                                    time: { type: string, format: date-time }
+                '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
 components:
+    securitySchemes:
+        PvmbgBearer:
+            type: http
+            scheme: bearer
+            description: Token format `pvmbg.<client_id>.<32 hex>`. Valid values come from PVMBG_CLIENT_TOKENS (comma-separated).
+        AdminToken:
+            type: apiKey
+            in: header
+            name: X-Admin-Token
+            description: Value of PVMBG_ADMIN_TOKEN. Data credentials are not accepted on /admin/*, and vice versa.
+
+    parameters:
+        CorrelationId:
+            name: X-Correlation-ID
+            in: header
+            required: false
+            schema: { type: string, format: uuid }
+        Since:
+            name: since
+            in: query
+            required: false
+            description: ISO 8601 date-time (Z or offset). Returns reports whose reported_at is >= since.
+            schema: { type: string, format: date-time }
+        Limit:
+            name: limit
+            in: query
+            required: false
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+
+    headers:
+        CorrelationId:
+            schema: { type: string, format: uuid }
+
+    responses:
+        InvalidQuery:
+            description: Invalid `since` or `limit` (`invalid_query`)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        InvalidBody:
+            description: Malformed JSON or a body that fails validation (`invalid_body`)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Unauthorized:
+            description: Bearer token missing (`missing_credential`) or malformed (`malformed_credential`)
+            headers:
+                WWW-Authenticate:
+                    schema: { type: string, example: 'Bearer realm="pvmbg"' }
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Forbidden:
+            description: |
+                Unknown token (`invalid_credential`), or a credential from another domain of trust
+                (`foreign_credential`: BMKG key or BNPB client JWT).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        AdminUnauthorized:
+            description: X-Admin-Token missing (`missing_credential`)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        AdminForbidden:
+            description: Wrong admin token (`invalid_credential`) or a data credential sent instead (`foreign_credential`)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        ServiceUnavailable:
+            description: |
+                Outage in `error` mode, or a request held by a `hang` outage that ended (`service_unavailable`).
+                In `hang` mode no response is sent at all.
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+
     schemas:
-        Item:
+        VolcanicReport:
             type: object
-            properties:
-                id:
-                    type: string
-                    format: uuid
-                name:
-                    type: string
-                description:
-                    type: string
-                    nullable: true
-                createdAt:
-                    type: string
-                    format: date-time
-                updatedAt:
-                    type: string
-                    format: date-time
+            additionalProperties: false
             required:
-                - id
-                - name
-                - createdAt
-                - updatedAt
-
-        CreateItemRequest:
-            type: object
+                - report_id
+                - volcano_id
+                - alert_level
+                - eruption_count_24h
+                - ash_column_height_m
+                - reported_at
             properties:
-                name:
+                report_id: { type: string, example: VR-20261005031502-a1b2c3 }
+                volcano_id:
                     type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-            required:
-                - name
-
-        UpdateItemRequest:
+                    enum: [MERAPI, SEMERU, ANAK_KRAKATAU, SINABUNG, MARAPI]
+                    description: Fixed ID (not a name), resolved by BNPB against its static reference table.
+                alert_level: { type: string, enum: [Normal, Waspada, Siaga, Awas] }
+                eruption_count_24h:
+                    type: integer
+                    minimum: 0
+                    description: Consistent with alert_level (Normal 0, Waspada 0–3, Siaga 2–15, Awas 10–50).
+                ash_column_height_m:
+                    type: number
+                    format: float
+                    minimum: 0
+                    description: 0 when eruption_count_24h is 0.
+                reported_at: { type: string, format: date-time }
+                confidence_level:
+                    type: number
+                    format: float
+                    minimum: 0
+                    maximum: 1
+                    description: Schema v2 only. Present only on records created while v2 was active (absent, never null).
+        SchemaState:
             type: object
+            required: [schema_version, changed_at]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-
-        HealthResponse:
+                schema_version: { type: integer, enum: [1, 2] }
+                changed_at: { type: string, format: date-time, description: Last change (startup time if never changed) }
+        OutageState:
             type: object
+            required: [enabled, mode, since, held_requests]
             properties:
-                status:
-                    type: string
-                    enum: [healthy, unhealthy]
-                timestamp:
-                    type: string
-                    format: date-time
-                services:
-                    type: object
-                    properties:
-                        database:
-                            type: string
-                            enum: [connected, disconnected]
-
-        ErrorResponse:
+                enabled: { type: boolean }
+                mode: { type: string, enum: [hang, error] }
+                since: { type: string, format: date-time, nullable: true, description: Start of the current outage }
+                held_requests: { type: integer, description: Requests currently held open by a hang outage }
+        ListMeta:
             type: object
+            required: [count, since, server_time]
+            properties:
+                count: { type: integer }
+                since: { type: string, nullable: true, description: The since parameter echoed back (null if absent) }
+                server_time: { type: string, format: date-time }
+        Error:
+            type: object
+            required: [error, message, correlation_id]
             properties:
                 error:
-                    type: object
-                    properties:
-                        message:
-                            type: string
-                        details:
-                            type: array
-                            items:
-                                type: object
+                    type: string
+                    enum:
+                        - missing_credential
+                        - malformed_credential
+                        - invalid_credential
+                        - foreign_credential
+                        - invalid_query
+                        - invalid_body
+                        - not_found
+                        - service_unavailable
+                        - internal_error
+                message: { type: string }
+                correlation_id: { type: string, format: uuid }

@@ -1,22 +1,46 @@
-import { AsyncContainerModule, interfaces } from 'inversify';
-import { db } from '../db';
-import { TYPES } from '../constants/types';
+import { ContainerModule, interfaces } from 'inversify';
+import { Logger } from 'pino';
+import { Clock, TYPES } from '../constants/types';
+import { Faker } from '@faker-js/faker';
+import { createFaker } from '../libs/faker';
+import { AppConfig } from './env';
 
 // Repositories
-import { IItemRepository, ItemRepository } from '../repositories/item.repository';
+import { IReportStore, ReportStore } from '../repositories/report.store';
 
 // Services
+import { GeneratorService } from '../services/generator.service';
 import { HealthService } from '../services/health.service';
-import { IItemService, ItemService } from '../services/item.service';
+import { OutageService } from '../services/outage.service';
+import { SchemaService } from '../services/schema.service';
 
-export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
-    // Database
-    bind(TYPES.Database).toConstantValue(db);
+// Middlewares
+import { AdminAuthMiddleware } from '../middlewares/admin-auth.middleware';
+import { DataAuthMiddleware } from '../middlewares/data-auth.middleware';
+import { DelayMiddleware } from '../middlewares/delay.middleware';
+import { OutageMiddleware } from '../middlewares/outage.middleware';
 
-    // Repositories (bind interface to implementation)
-    bind<IItemRepository>(TYPES.IItemRepository).to(ItemRepository).inSingletonScope();
+export function createBindings(config: AppConfig, logger: Logger, clock: Clock): ContainerModule {
+    return new ContainerModule((bind: interfaces.Bind) => {
+        // Runtime
+        bind<AppConfig>(TYPES.Config).toConstantValue(config);
+        bind<Logger>(TYPES.Logger).toConstantValue(logger);
+        bind<Clock>(TYPES.Clock).toConstantValue(clock);
+        bind<Faker>(TYPES.Faker).toConstantValue(createFaker(config.randomSeed));
 
-    // Services (bind interface to implementation)
-    bind<HealthService>(TYPES.HealthService).to(HealthService).inSingletonScope();
-    bind<IItemService>(TYPES.IItemService).to(ItemService).inSingletonScope();
-});
+        // Repositories (bind interface to implementation)
+        bind<IReportStore>(TYPES.IReportStore).to(ReportStore).inSingletonScope();
+
+        // Services (runtime state lives in singletons)
+        bind<GeneratorService>(TYPES.GeneratorService).to(GeneratorService).inSingletonScope();
+        bind<SchemaService>(TYPES.SchemaService).to(SchemaService).inSingletonScope();
+        bind<OutageService>(TYPES.OutageService).to(OutageService).inSingletonScope();
+        bind<HealthService>(TYPES.HealthService).to(HealthService).inSingletonScope();
+
+        // Middlewares
+        bind<OutageMiddleware>(TYPES.OutageMiddleware).to(OutageMiddleware);
+        bind<DataAuthMiddleware>(TYPES.DataAuthMiddleware).to(DataAuthMiddleware);
+        bind<AdminAuthMiddleware>(TYPES.AdminAuthMiddleware).to(AdminAuthMiddleware);
+        bind<DelayMiddleware>(TYPES.DelayMiddleware).to(DelayMiddleware);
+    });
+}
