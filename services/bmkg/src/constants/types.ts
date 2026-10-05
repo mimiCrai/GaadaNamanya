@@ -2,13 +2,23 @@
 // Use these to identify injectable services
 
 export const TYPES = {
-    // Database
-    Database: Symbol.for('Database'),
+    // Runtime
+    Config: Symbol.for('Config'),
+    Logger: Symbol.for('Logger'),
+    Clock: Symbol.for('Clock'),
+    Faker: Symbol.for('Faker'),
 
-    // Repositories (bind to interfaces)
-    IItemRepository: Symbol.for('IItemRepository'),
+    // Repositories
+    IEventStore: Symbol.for('IEventStore'),
 
-    // Services (bind to interfaces)
+    // Services
+    GeneratorService: Symbol.for('GeneratorService'),
+
+    // Middlewares
+    DataAuthMiddleware: Symbol.for('DataAuthMiddleware'),
+    DelayMiddleware: Symbol.for('DelayMiddleware'),
+
     HealthService: Symbol.for('HealthService'),
-    IItemService: Symbol.for('IItemService'),
 };
+
+export type Clock = () => number;

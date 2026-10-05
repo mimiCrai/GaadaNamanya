@@ -19,6 +19,7 @@
         "format:check": "prettier --config .prettierrc.json --check '**/*.{js,jsx,ts,tsx,css,json,yml,yaml}'"
     },
     "dependencies": {
+        "@faker-js/faker": "^9.9.0",
         "compression": "^1.7.4",
         "express": "^4.21.0",
         "inversify": "^6.0.2",
