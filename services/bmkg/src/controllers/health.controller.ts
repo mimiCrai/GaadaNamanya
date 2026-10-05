@@ -1,16 +1,15 @@
 import { Response } from 'express';
+import { inject } from 'inversify';
 import { controller, httpGet, response } from 'inversify-express-utils';
-import { SERVICE_NAME } from '../libs/logger';
+import { TYPES } from '../constants/types';
+import { HealthService } from '../services/health.service';
 
 @controller('/health')
 export class HealthController {
+    constructor(@inject(TYPES.HealthService) private readonly healthService: HealthService) {}
+
     @httpGet('/')
     getHealth(@response() res: Response) {
-        return res.status(200).json({
-            status: 'ok',
-            service: SERVICE_NAME,
-            uptime_s: Math.round(process.uptime()),
-            time: new Date().toISOString(),
-        });
+        return res.status(200).json(this.healthService.check());
     }
 }

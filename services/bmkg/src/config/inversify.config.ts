@@ -10,6 +10,7 @@ import { EventStore, IEventStore } from '../repositories/event.store';
 
 // Services
 import { GeneratorService } from '../services/generator.service';
+import { HealthService } from '../services/health.service';
 
 // Middlewares
 import { DataAuthMiddleware } from '../middlewares/data-auth.middleware';
@@ -28,6 +29,7 @@ export function createBindings(config: AppConfig, logger: Logger, clock: Clock):
 
         // Services
         bind<GeneratorService>(TYPES.GeneratorService).to(GeneratorService).inSingletonScope();
+        bind<HealthService>(TYPES.HealthService).to(HealthService).inSingletonScope();
 
         // Middlewares
         bind<DataAuthMiddleware>(TYPES.DataAuthMiddleware).to(DataAuthMiddleware);
