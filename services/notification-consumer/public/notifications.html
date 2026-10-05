@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>BNPB Notification Inbox</title>
+        <style>
+            body {
+                font-family: system-ui, sans-serif;
+                max-width: 900px;
+                margin: 2rem auto;
+                padding: 0 1rem;
+                color: #18212f;
+            }
+            h1 {
+                margin-bottom: 0.2rem;
+            }
+            .muted,
+            .meta {
+                color: #667085;
+            }
+            .meta {
+                font-size: 0.9rem;
+            }
+            .notification {
+                border: 1px solid #e4e7ec;
+                border-left: 6px solid #667085;
+                border-radius: 8px;
+                padding: 1rem;
+                margin: 1rem 0;
+            }
+            .AWAS {
+                border-left-color: #b42318;
+            }
+            .SIAGA {
+                border-left-color: #b54708;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>BNPB Notification Inbox</h1>
+        <p class="muted">Notifications for SIAGA and AWAS hazards. Refreshes every 3 seconds.</p>
+        <main id="notifications"></main>
+
+        <script>
+            const format = (value) => new Date(value).toLocaleString();
+
+            async function refresh() {
+                const response = await fetch('/api/notifications');
+                const { data } = await response.json();
+                const notifications = document.querySelector('#notifications');
+
+                notifications.replaceChildren();
+                if (data.length === 0) {
+                    notifications.textContent = 'No SIAGA or AWAS notifications received yet.';
+                    return;
+                }
+
+                for (const notification of data) {
+                    const card = document.createElement('article');
+                    card.className = `notification ${notification.severity}`;
+                    const title = document.createElement('strong');
+                    title.textContent = `[${notification.severity}] ${notification.title}`;
+                    const message = document.createElement('p');
+                    message.textContent = notification.message;
+                    const meta = document.createElement('p');
+                    meta.className = 'meta';
+                    meta.textContent = `${notification.eventType} · ${format(notification.createdAt)}`;
+                    card.append(title, message, meta);
+                    notifications.append(card);
+                }
+            }
+
+            refresh();
+            setInterval(refresh, 3000);
+        </script>
+    </body>
+</html>

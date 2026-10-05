@@ -6,12 +6,23 @@ export const TYPES = {
     Database: Symbol.for('Database'),
 
     // Repositories (bind to interfaces)
-    IItemRepository: Symbol.for('IItemRepository'),
+    IHazardEventRepository: Symbol.for('IHazardEventRepository'),
+    ISourceSyncStateRepository: Symbol.for('ISourceSyncStateRepository'),
+    IOutboxEventRepository: Symbol.for('IOutboxEventRepository'),
+    IPendingTsunamiWarningRepository: Symbol.for('IPendingTsunamiWarningRepository'),
 
     // Services (bind to interfaces)
-    HealthService: Symbol.for('HealthService'),
-    IItemService: Symbol.for('IItemService'),
+    IHealthService: Symbol.for('IHealthService'),
+    IHazardEventService: Symbol.for('IHazardEventService'),
+    ISourceSyncStateService: Symbol.for('ISourceSyncStateService'),
+    IHazardEventIngestionService: Symbol.for('IHazardEventIngestionService'),
+    IPollingService: Symbol.for('IPollingService'),
+    IOutboxRelayService: Symbol.for('IOutboxRelayService'),
+
+    // Source REST clients
+    IBmkgClient: Symbol.for('IBmkgClient'),
+    IPvmbgClient: Symbol.for('IPvmbgClient'),
+
     // Message Queue
-    MessagePublisher: Symbol.for('MessagePublisher'),
-    MessageSubscriber: Symbol.for('MessageSubscriber'),
+    IMessagePublisher: Symbol.for('IMessagePublisher'),
 };

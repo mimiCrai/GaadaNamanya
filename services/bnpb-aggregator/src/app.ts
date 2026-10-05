@@ -7,6 +7,7 @@ import compression from 'compression';
 import * as OpenApiValidator from 'express-openapi-validator';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
+import { randomUUID } from 'node:crypto';
 import path from 'path';
 
 import { bindings } from './config/inversify.config';
@@ -14,15 +15,23 @@ import { logger } from './libs/logger';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
-import './controllers/item.controller';
+import './controllers/hazard-event.controller';
 
 /**
  * Create and configure the Express application
  */
-export async function createApp(): Promise<express.Application> {
-    // Set up Inversify container
+export async function createContainer(): Promise<Container> {
     const container = new Container();
     await container.loadAsync(bindings);
+    return container;
+}
+
+/**
+ * Passing a container lets the HTTP server and background services share one
+ * dependency graph. Tests may omit it for an isolated application.
+ */
+export async function createApp(existingContainer?: Container): Promise<express.Application> {
+    const container = existingContainer ?? (await createContainer());
 
     // Create base Express app
     const app = express();
@@ -36,8 +45,10 @@ export async function createApp(): Promise<express.Application> {
     app.use(bodyParser.urlencoded({ extended: true }));
 
     // Request logging
-    app.use((req: Request, _res: Response, next: NextFunction) => {
-        logger.info({ method: req.method, path: req.path }, 'Incoming request');
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        const correlationId = req.header('x-correlation-id') ?? randomUUID();
+        res.setHeader('X-Correlation-ID', correlationId);
+        logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
     });
 

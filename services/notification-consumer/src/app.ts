@@ -14,14 +14,22 @@ import { logger } from './libs/logger';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
+import './controllers/notification.controller';
+import './controllers/notification-api.controller';
 
-/**
- * Create and configure the Express application
- */
-export async function createApp(): Promise<express.Application> {
-    // Set up Inversify container
+/** Create the service's dependency-injection container. */
+export async function createContainer(): Promise<Container> {
     const container = new Container();
     await container.loadAsync(bindings);
+    return container;
+}
+
+/**
+ * Create and configure the Express application.
+ * Tests may omit the container; the service bootstrap supplies its shared one.
+ */
+export async function createApp(container?: Container): Promise<express.Application> {
+    const appContainer = container ?? (await createContainer());
 
     // Create base Express app
     const app = express();
@@ -50,7 +58,7 @@ export async function createApp(): Promise<express.Application> {
     );
 
     // Build Inversify Express server
-    const server = new InversifyExpressServer(container, null, null, app);
+    const server = new InversifyExpressServer(appContainer, null, null, app);
 
     // Error handling (must be after routes)
     server.setErrorConfig((app) => {

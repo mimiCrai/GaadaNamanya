@@ -1,0 +1,149 @@
+services:
+    canonical-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${CANONICAL_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${CANONICAL_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${CANONICAL_STORE_DB_NAME}
+        ports:
+            - '${CANONICAL_STORE_HOST_PORT}:5432'
+        volumes:
+            - canonical_store_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    kafka:
+        image: confluentinc/cp-kafka:7.7.1
+        environment:
+            KAFKA_NODE_ID: ${KAFKA_NODE_ID}
+            KAFKA_PROCESS_ROLES: ${KAFKA_PROCESS_ROLES}
+            KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_CONTROLLER_QUORUM_VOTERS}
+            KAFKA_LISTENERS: ${KAFKA_LISTENERS}
+            KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+            KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: ${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
+            KAFKA_INTER_BROKER_LISTENER_NAME: ${KAFKA_INTER_BROKER_LISTENER_NAME}
+            KAFKA_CONTROLLER_LISTENER_NAMES: ${KAFKA_CONTROLLER_LISTENER_NAMES}
+            KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+            KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR}
+            KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR}
+            KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS}
+            KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE}
+            CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+        ports:
+            - '${KAFKA_HOST_PORT}:9092'
+        volumes:
+            - kafka_data:/var/lib/kafka/data
+        healthcheck:
+            test: ['CMD', 'kafka-topics', '--bootstrap-server', '$${KAFKA_INTERNAL_BOOTSTRAP_SERVER}', '--list']
+            interval: 10s
+            timeout: 10s
+            retries: 10
+
+    dashboard-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${DASHBOARD_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${DASHBOARD_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${DASHBOARD_STORE_DB_NAME}
+        ports:
+            - '${DASHBOARD_STORE_HOST_PORT}:5432'
+        volumes:
+            - dashboard_store_data:/var/lib/postgresql/data
+            - ./services/dashboard-consumer/src/db/migrations/0000_orange_meltdown.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    notification-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${NOTIFICATION_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${NOTIFICATION_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${NOTIFICATION_STORE_DB_NAME}
+        ports:
+            - '${NOTIFICATION_STORE_HOST_PORT}:5432'
+        volumes:
+            - notification_store_data:/var/lib/postgresql/data
+            - ./services/notification-consumer/src/db/migrations/0000_futuristic_swarm.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    bnpb-aggregator:
+        build: ./services/bnpb-aggregator
+        environment:
+            PORT: ${BNPB_AGGREGATOR_CONTAINER_PORT}
+            SERVICE_NAME: ${BNPB_AGGREGATOR_SERVICE_NAME}
+            NODE_ENV: ${BNPB_AGGREGATOR_NODE_ENV}
+            DATABASE_URL: ${BNPB_AGGREGATOR_DATABASE_URL}
+            KAFKA_BROKERS: ${BNPB_AGGREGATOR_KAFKA_BROKERS}
+            KAFKA_CLIENT_ID: ${BNPB_AGGREGATOR_KAFKA_CLIENT_ID}
+            KAFKA_TOPIC: ${BNPB_AGGREGATOR_KAFKA_TOPIC}
+            BMKG_BASE_URL: ${BNPB_AGGREGATOR_BMKG_BASE_URL}
+            BMKG_API_KEY: ${BNPB_AGGREGATOR_BMKG_API_KEY}
+            BMKG_REQUEST_TIMEOUT_MS: ${BNPB_AGGREGATOR_BMKG_REQUEST_TIMEOUT_MS}
+            PVMBG_BASE_URL: ${BNPB_AGGREGATOR_PVMBG_BASE_URL}
+            PVMBG_TOKEN: ${BNPB_AGGREGATOR_PVMBG_TOKEN}
+            PVMBG_REQUEST_TIMEOUT_MS: ${BNPB_AGGREGATOR_PVMBG_REQUEST_TIMEOUT_MS}
+            POLL_INTERVAL_MS: ${BNPB_AGGREGATOR_POLL_INTERVAL_MS}
+            POLL_OVERLAP_MS: ${BNPB_AGGREGATOR_POLL_OVERLAP_MS}
+            OUTBOX_RELAY_INTERVAL_MS: ${BNPB_AGGREGATOR_OUTBOX_RELAY_INTERVAL_MS}
+            OUTBOX_BATCH_SIZE: ${BNPB_AGGREGATOR_OUTBOX_BATCH_SIZE}
+        ports:
+            - '${BNPB_AGGREGATOR_HOST_PORT}:${BNPB_AGGREGATOR_CONTAINER_PORT}'
+        depends_on:
+            canonical-store:
+                condition: service_healthy
+            kafka:
+                condition: service_healthy
+
+    dashboard-consumer:
+        build: ./services/dashboard-consumer
+        environment:
+            PORT: ${DASHBOARD_CONSUMER_CONTAINER_PORT}
+            SERVICE_NAME: ${DASHBOARD_CONSUMER_SERVICE_NAME}
+            NODE_ENV: ${DASHBOARD_CONSUMER_NODE_ENV}
+            DATABASE_URL: ${DASHBOARD_CONSUMER_DATABASE_URL}
+            KAFKA_BROKERS: ${DASHBOARD_CONSUMER_KAFKA_BROKERS}
+            KAFKA_CLIENT_ID: ${DASHBOARD_CONSUMER_KAFKA_CLIENT_ID}
+            KAFKA_GROUP_ID: ${DASHBOARD_CONSUMER_KAFKA_GROUP_ID}
+            KAFKA_TOPIC: ${DASHBOARD_CONSUMER_KAFKA_TOPIC}
+        ports:
+            - '${DASHBOARD_CONSUMER_HOST_PORT}:${DASHBOARD_CONSUMER_CONTAINER_PORT}'
+        depends_on:
+            kafka:
+                condition: service_healthy
+            dashboard-store:
+                condition: service_healthy
+
+    notification-consumer:
+        build: ./services/notification-consumer
+        environment:
+            PORT: ${NOTIFICATION_CONSUMER_CONTAINER_PORT}
+            SERVICE_NAME: ${NOTIFICATION_CONSUMER_SERVICE_NAME}
+            NODE_ENV: ${NOTIFICATION_CONSUMER_NODE_ENV}
+            DATABASE_URL: ${NOTIFICATION_CONSUMER_DATABASE_URL}
+            KAFKA_BROKERS: ${NOTIFICATION_CONSUMER_KAFKA_BROKERS}
+            KAFKA_CLIENT_ID: ${NOTIFICATION_CONSUMER_KAFKA_CLIENT_ID}
+            KAFKA_GROUP_ID: ${NOTIFICATION_CONSUMER_KAFKA_GROUP_ID}
+            KAFKA_TOPIC: ${NOTIFICATION_CONSUMER_KAFKA_TOPIC}
+        ports:
+            - '${NOTIFICATION_CONSUMER_HOST_PORT}:${NOTIFICATION_CONSUMER_CONTAINER_PORT}'
+        depends_on:
+            kafka:
+                condition: service_healthy
+            notification-store:
+                condition: service_healthy
+
+volumes:
+    canonical_store_data:
+    kafka_data:
+    dashboard_store_data:
+    notification_store_data:

@@ -4,7 +4,7 @@ import express from 'express';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
 import { TYPES } from '../../src/constants/types';
-import { HealthService } from '../../src/services/health.service';
+import { IHealthService } from '../../src/services/health.service';
 
 // Import controller to register routes
 import '../../src/controllers/health.controller';
@@ -22,8 +22,8 @@ describe('HealthController', () => {
     beforeAll(() => {
         const container = new Container();
         container
-            .bind<HealthService>(TYPES.HealthService)
-            .toConstantValue(mockHealthService as unknown as HealthService);
+            .bind<IHealthService>(TYPES.IHealthService)
+            .toConstantValue(mockHealthService as unknown as IHealthService);
 
         const server = new InversifyExpressServer(container);
         app = server.build();

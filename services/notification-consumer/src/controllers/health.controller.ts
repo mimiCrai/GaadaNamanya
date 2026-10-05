@@ -2,11 +2,11 @@ import { inject } from 'inversify';
 import { controller, httpGet } from 'inversify-express-utils';
 import { Request, Response } from 'express';
 import { TYPES } from '../constants/types';
-import { HealthService } from '../services/health.service';
+import { IHealthService } from '../services/health.service';
 
 @controller('/health')
 export class HealthController {
-    constructor(@inject(TYPES.HealthService) private healthService: HealthService) {}
+    constructor(@inject(TYPES.IHealthService) private healthService: IHealthService) {}
 
     @httpGet('/')
     async getHealth(_req: Request, res: Response) {

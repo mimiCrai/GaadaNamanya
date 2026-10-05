@@ -6,8 +6,22 @@ const envSchema = z.object({
     SERVICE_NAME: z.string().default('repo-template'),
     NODE_ENV: z.enum(['local', 'staging', 'production', 'test']).default('local'),
 
-    // RabbitMQ
-    RABBITMQ_URL: z.string().url(),
+    // Database owned by Notification Consumer
+    DATABASE_URL: z.string().url(),
+
+    // Kafka
+    KAFKA_BROKERS: z
+        .string()
+        .min(1)
+        .transform((value) =>
+            value
+                .split(',')
+                .map((broker) => broker.trim())
+                .filter(Boolean)
+        ),
+    KAFKA_CLIENT_ID: z.string().default('notification-consumer'),
+    KAFKA_GROUP_ID: z.string().default('notification-consumer-group'),
+    KAFKA_TOPIC: z.string().default('hazard-events'),
 });
 
 const env = envSchema.parse(process.env);
