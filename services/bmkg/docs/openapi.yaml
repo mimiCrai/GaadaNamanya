@@ -1,288 +1,218 @@
 openapi: 3.0.3
 info:
-    title: Repo Template API
-    description: A template Node.js API with Express, Inversify, and Drizzle ORM
+    title: BMKG Mock API
+    description: |
+        Passive mock of BMKG (seismic events and tsunami warnings) polled by the BNPB Aggregator.
+        Documentation only: requests are validated in code (zod), after authentication.
+
+        Every response carries `X-Correlation-ID` (echoed if the request sent a valid UUID, otherwise a new UUID v4).
+        Errors always have the body `{ "error": "<code>", "message": "...", "correlation_id": "..." }`.
     version: 1.0.0
 
 servers:
-    - url: http://localhost:3000
-      description: Local development server
+    - url: http://localhost:8081
+      description: Local
+    - url: http://bmkg:8081
+      description: Inside the root docker compose network
+
+tags:
+    - name: Data
+    - name: Health
 
 paths:
-    /health:
+    /seismic-events:
         get:
-            summary: Health check
-            description: Returns the health status of the service
-            operationId: getHealth
-            tags:
-                - Health
+            summary: Seismic events with occurred_at >= since, ascending
+            operationId: listSeismicEvents
+            tags: [Data]
+            security: [{ BmkgApiKey: [] }]
+            parameters:
+                - $ref: '#/components/parameters/CorrelationId'
+                - $ref: '#/components/parameters/Since'
+                - $ref: '#/components/parameters/Limit'
             responses:
                 '200':
-                    description: Service is healthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-                '503':
-                    description: Service is unhealthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-
-    /health/live:
-        get:
-            summary: Liveness probe
-            description: Returns OK if the service is running
-            operationId: getLiveness
-            tags:
-                - Health
-            responses:
-                '200':
-                    description: Service is alive
+                    description: Events
+                    headers:
+                        X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
                     content:
                         application/json:
                             schema:
                                 type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok]
-
-    /health/ready:
-        get:
-            summary: Readiness probe
-            description: Returns OK if the service is ready to accept traffic
-            operationId: getReadiness
-            tags:
-                - Health
-            responses:
-                '200':
-                    description: Service is ready
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok, error]
-                '503':
-                    description: Service is not ready
-
-    /items:
-        get:
-            summary: Get all items
-            description: Returns a list of all items
-            operationId: getAllItems
-            tags:
-                - Items
-            responses:
-                '200':
-                    description: List of items
-                    content:
-                        application/json:
-                            schema:
-                                type: object
+                                required: [data, meta]
                                 properties:
                                     data:
                                         type: array
-                                        items:
-                                            $ref: '#/components/schemas/Item'
+                                        items: { $ref: '#/components/schemas/SeismicEvent' }
+                                    meta: { $ref: '#/components/schemas/ListMeta' }
+                '400': { $ref: '#/components/responses/InvalidQuery' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
 
-        post:
-            summary: Create a new item
-            description: Creates a new item and returns it
-            operationId: createItem
-            tags:
-                - Items
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/CreateItemRequest'
-            responses:
-                '201':
-                    description: Item created successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '400':
-                    description: Invalid request body
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-    /items/{id}:
+    /tsunami-warnings:
         get:
-            summary: Get an item by ID
-            description: Returns a single item by its ID
-            operationId: getItemById
-            tags:
-                - Items
+            summary: Tsunami warnings with issued_at >= since, ascending
+            operationId: listTsunamiWarnings
+            tags: [Data]
+            security: [{ BmkgApiKey: [] }]
             parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
+                - $ref: '#/components/parameters/CorrelationId'
+                - $ref: '#/components/parameters/Since'
+                - $ref: '#/components/parameters/Limit'
             responses:
                 '200':
-                    description: Item found
+                    description: Warnings
+                    headers:
+                        X-Correlation-ID: { $ref: '#/components/headers/CorrelationId' }
                     content:
                         application/json:
                             schema:
                                 type: object
+                                required: [data, meta]
                                 properties:
                                     data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                                        type: array
+                                        items: { $ref: '#/components/schemas/TsunamiWarning' }
+                                    meta: { $ref: '#/components/schemas/ListMeta' }
+                '400': { $ref: '#/components/responses/InvalidQuery' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
 
-        put:
-            summary: Update an item
-            description: Updates an existing item
-            operationId: updateItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/UpdateItemRequest'
+    /health:
+        get:
+            summary: Health check (no auth, no delay)
+            operationId: getHealth
+            tags: [Health]
             responses:
                 '200':
-                    description: Item updated successfully
+                    description: Healthy
                     content:
                         application/json:
                             schema:
                                 type: object
+                                required: [status, service, uptime_s, time]
                                 properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        delete:
-            summary: Delete an item
-            description: Deletes an item by its ID
-            operationId: deleteItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            responses:
-                '204':
-                    description: Item deleted successfully
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                                    status: { type: string, enum: [ok] }
+                                    service: { type: string, enum: [bmkg] }
+                                    uptime_s: { type: integer }
+                                    time: { type: string, format: date-time }
 
 components:
+    securitySchemes:
+        BmkgApiKey:
+            type: apiKey
+            in: header
+            name: X-BMKG-Key
+            description: Format `bmkg_<keyid>_<32 hex>`. Valid values come from BMKG_API_KEYS (comma-separated).
+
+    parameters:
+        CorrelationId:
+            name: X-Correlation-ID
+            in: header
+            required: false
+            schema: { type: string, format: uuid }
+        Since:
+            name: since
+            in: query
+            required: false
+            description: ISO 8601 date-time (Z or offset). Returns records whose reference time is >= since.
+            schema: { type: string, format: date-time }
+        Limit:
+            name: limit
+            in: query
+            required: false
+            schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+
+    headers:
+        CorrelationId:
+            schema: { type: string, format: uuid }
+
+    responses:
+        InvalidQuery:
+            description: Invalid `since` or `limit` (`invalid_query`)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Unauthorized:
+            description: Credential missing (`missing_credential`) or malformed (`malformed_credential`)
+            headers:
+                WWW-Authenticate:
+                    schema: { type: string }
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+        Forbidden:
+            description: |
+                Unknown credential (`invalid_credential`), or a credential from another domain of trust
+                (`foreign_credential`: PVMBG bearer token or BNPB client JWT).
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/Error' }
+
     schemas:
-        Item:
+        SeismicEvent:
             type: object
-            properties:
-                id:
-                    type: string
-                    format: uuid
-                name:
-                    type: string
-                description:
-                    type: string
-                    nullable: true
-                createdAt:
-                    type: string
-                    format: date-time
-                updatedAt:
-                    type: string
-                    format: date-time
+            additionalProperties: false
             required:
-                - id
-                - name
-                - createdAt
-                - updatedAt
-
-        CreateItemRequest:
-            type: object
+                - event_id
+                - magnitude
+                - depth_km
+                - epicenter_lat
+                - epicenter_lon
+                - region_name
+                - occurred_at
+                - potential_tsunami
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-            required:
-                - name
-
-        UpdateItemRequest:
+                event_id: { type: string, example: EQ-20261005031502-a1b2c3 }
+                magnitude: { type: number, format: float, description: 'Mw, 1 decimal', example: 6.5 }
+                depth_km: { type: number, format: float, example: 25 }
+                epicenter_lat: { type: number, format: float, example: -8.31 }
+                epicenter_lon: { type: number, format: float, example: 107.18 }
+                region_name: { type: string, example: Samudra Hindia Selatan Jawa Barat }
+                occurred_at: { type: string, format: date-time }
+                potential_tsunami:
+                    type: boolean
+                    description: true only when magnitude >= 6.5, depth_km <= 70 and the epicentre is offshore.
+        TsunamiWarning:
             type: object
+            additionalProperties: false
+            required: [warning_id, related_event_id, threat_level, affected_zones, estimated_arrival, issued_at]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-
-        HealthResponse:
-            type: object
-            properties:
-                status:
-                    type: string
-                    enum: [healthy, unhealthy]
-                timestamp:
+                warning_id: { type: string, example: TW-20261005031502-a1b2c3 }
+                related_event_id: { type: string, example: EQ-20261005031502-a1b2c3 }
+                threat_level: { type: string, enum: [Waspada, Siaga, Awas] }
+                affected_zones:
+                    type: array
+                    minItems: 1
+                    items: { type: string }
+                estimated_arrival:
                     type: string
                     format: date-time
-                services:
-                    type: object
-                    properties:
-                        database:
-                            type: string
-                            enum: [connected, disconnected]
-
-        ErrorResponse:
+                    description: Later than the related event occurred_at.
+                issued_at:
+                    type: string
+                    format: date-time
+                    description: (Addition) When the warning was issued; the reference time for `since`.
+        ListMeta:
             type: object
+            required: [count, since, server_time]
+            properties:
+                count: { type: integer }
+                since: { type: string, nullable: true, description: The since parameter echoed back (null if absent) }
+                server_time: { type: string, format: date-time }
+        Error:
+            type: object
+            required: [error, message, correlation_id]
             properties:
                 error:
-                    type: object
-                    properties:
-                        message:
-                            type: string
-                        details:
-                            type: array
-                            items:
-                                type: object
+                    type: string
+                    enum:
+                        - missing_credential
+                        - malformed_credential
+                        - invalid_credential
+                        - foreign_credential
+                        - invalid_query
+                        - not_found
+                        - internal_error
+                message: { type: string }
+                correlation_id: { type: string, format: uuid }

@@ -142,6 +142,29 @@ services:
             notification-store:
                 condition: service_healthy
 
+    # BMKG Mock (seismic events + tsunami warnings). Reached by the Aggregator at http://bmkg:8081.
+    bmkg:
+        build: ./services/bmkg
+        environment:
+            PORT: 8081
+            NODE_ENV: ${BMKG_NODE_ENV:-production}
+            LOG_LEVEL: ${BMKG_LOG_LEVEL:-info}
+            BMKG_API_KEYS: ${BMKG_API_KEYS}
+            BMKG_DELAY_MIN_MS: ${BMKG_DELAY_MIN_MS:-100}
+            BMKG_DELAY_MAX_MS: ${BMKG_DELAY_MAX_MS:-100}
+            BMKG_EVENT_INTERVAL_MS: ${BMKG_EVENT_INTERVAL_MS:-5000}
+            BMKG_WARNING_LAG_MS: ${BMKG_WARNING_LAG_MS:-0}
+            RANDOM_SEED: ${BMKG_RANDOM_SEED:-}
+        ports:
+            - '${BMKG_PORT:-8081}:8081'
+        healthcheck:
+            test: ['CMD', 'node', './dist/src/healthcheck.js']
+            interval: 10s
+            timeout: 5s
+            start_period: 10s
+            retries: 3
+        restart: unless-stopped
+
 volumes:
     canonical_store_data:
     kafka_data:
