@@ -3,10 +3,11 @@ import { Logger } from 'pino';
 import { Clock, TYPES } from '../constants/types';
 import { Faker } from '@faker-js/faker';
 import { createFaker } from '../libs/faker';
+import { Database } from '../db';
 import { AppConfig } from './env';
 
 // Repositories
-import { EventStore, IEventStore } from '../repositories/event.store';
+import { EventRepository, IEventRepository } from '../repositories/event.repository';
 
 // Services
 import { GeneratorService } from '../services/generator.service';
@@ -16,16 +17,17 @@ import { HealthService } from '../services/health.service';
 import { DataAuthMiddleware } from '../middlewares/data-auth.middleware';
 import { DelayMiddleware } from '../middlewares/delay.middleware';
 
-export function createBindings(config: AppConfig, logger: Logger, clock: Clock): ContainerModule {
+export function createBindings(config: AppConfig, db: Database, logger: Logger, clock: Clock): ContainerModule {
     return new ContainerModule((bind: interfaces.Bind) => {
         // Runtime
         bind<AppConfig>(TYPES.Config).toConstantValue(config);
         bind<Logger>(TYPES.Logger).toConstantValue(logger);
         bind<Clock>(TYPES.Clock).toConstantValue(clock);
         bind<Faker>(TYPES.Faker).toConstantValue(createFaker(config.randomSeed));
+        bind<Database>(TYPES.Database).toConstantValue(db);
 
         // Repositories (bind interface to implementation)
-        bind<IEventStore>(TYPES.IEventStore).to(EventStore).inSingletonScope();
+        bind<IEventRepository>(TYPES.IEventRepository).to(EventRepository).inSingletonScope();
 
         // Services
         bind<GeneratorService>(TYPES.GeneratorService).to(GeneratorService).inSingletonScope();

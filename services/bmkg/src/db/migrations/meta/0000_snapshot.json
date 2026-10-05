@@ -1,0 +1,198 @@
+{
+  "id": "2086f7f4-8525-4983-a6ac-7b6790d5d090",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.seismic_events": {
+      "name": "seismic_events",
+      "schema": "",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "magnitude": {
+          "name": "magnitude",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "depth_km": {
+          "name": "depth_km",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "epicenter_lat": {
+          "name": "epicenter_lat",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "epicenter_lon": {
+          "name": "epicenter_lon",
+          "type": "double precision",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "region_name": {
+          "name": "region_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "potential_tsunami": {
+          "name": "potential_tsunami",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "seismic_events_occurred_at_idx": {
+          "name": "seismic_events_occurred_at_idx",
+          "columns": [
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.tsunami_warnings": {
+      "name": "tsunami_warnings",
+      "schema": "",
+      "columns": {
+        "warning_id": {
+          "name": "warning_id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "related_event_id": {
+          "name": "related_event_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "threat_level": {
+          "name": "threat_level",
+          "type": "threat_level",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "affected_zones": {
+          "name": "affected_zones",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estimated_arrival": {
+          "name": "estimated_arrival",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "tsunami_warnings_issued_at_idx": {
+          "name": "tsunami_warnings_issued_at_idx",
+          "columns": [
+            {
+              "expression": "issued_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "warning_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "tsunami_warnings_related_event_id_seismic_events_event_id_fk": {
+          "name": "tsunami_warnings_related_event_id_seismic_events_event_id_fk",
+          "tableFrom": "tsunami_warnings",
+          "tableTo": "seismic_events",
+          "columnsFrom": [
+            "related_event_id"
+          ],
+          "columnsTo": [
+            "event_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.threat_level": {
+      "name": "threat_level",
+      "schema": "public",
+      "values": [
+        "Waspada",
+        "Siaga",
+        "Awas"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

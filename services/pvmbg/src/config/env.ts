@@ -32,6 +32,8 @@ const envSchema = z
         NODE_ENV: z.enum(['local', 'staging', 'production', 'test']).default('local'),
         LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
+        DATABASE_URL: z.string().url(),
+
         PVMBG_CLIENT_TOKENS: tokenList,
 
         PVMBG_DELAY_MIN_MS: delayMs.default(500),
@@ -53,6 +55,7 @@ export interface AppConfig {
     port: number;
     nodeEnv: 'local' | 'staging' | 'production' | 'test';
     logLevel: string;
+    databaseUrl: string;
     clientTokens: string[];
     delayMinMs: number;
     delayMaxMs: number;
@@ -67,6 +70,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         port: env.PORT,
         nodeEnv: env.NODE_ENV,
         logLevel: env.LOG_LEVEL,
+        databaseUrl: env.DATABASE_URL,
         clientTokens: env.PVMBG_CLIENT_TOKENS,
         delayMinMs: env.PVMBG_DELAY_MIN_MS,
         delayMaxMs: env.PVMBG_DELAY_MAX_MS,

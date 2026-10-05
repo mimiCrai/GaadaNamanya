@@ -1,6 +1,7 @@
 import { ZodError } from 'zod';
 import { createApp } from './app';
 import { AppConfig, loadConfig } from './config/env';
+import { createDatabase } from './db';
 import { createLogger } from './libs/logger';
 
 function readConfig(): AppConfig {
@@ -16,9 +17,19 @@ function readConfig(): AppConfig {
     }
 }
 
-function main() {
+async function main() {
     const config = readConfig();
-    const { app, generator, logger } = createApp(config);
+    const { db, pool } = createDatabase(config.databaseUrl, config.nodeEnv);
+
+    let started;
+    try {
+        started = await createApp(config, db);
+    } catch (error) {
+        createLogger().fatal({ err: error }, 'Failed to start BMKG mock (is the database reachable and migrated?)');
+        await pool.end();
+        process.exit(1);
+    }
+    const { app, generator, logger } = started;
 
     const server = app.listen(config.port, () => {
         logger.info(
@@ -39,11 +50,13 @@ function main() {
     const shutdown = (signal: string) => {
         logger.info({ signal }, 'Shutting down');
         generator.stop();
-        server.close(() => process.exit(0));
+        server.close(() => {
+            pool.end().finally(() => process.exit(0));
+        });
         setTimeout(() => process.exit(0), 5_000).unref();
     };
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-main();
+void main();

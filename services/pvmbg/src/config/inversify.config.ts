@@ -2,11 +2,12 @@ import { ContainerModule, interfaces } from 'inversify';
 import { Logger } from 'pino';
 import { Clock, TYPES } from '../constants/types';
 import { Faker } from '@faker-js/faker';
+import { Database } from '../db';
 import { createFaker } from '../libs/faker';
 import { AppConfig } from './env';
 
 // Repositories
-import { IReportStore, ReportStore } from '../repositories/report.store';
+import { IReportRepository, ReportRepository } from '../repositories/report.repository';
 
 // Services
 import { GeneratorService } from '../services/generator.service';
@@ -19,16 +20,17 @@ import { DataAuthMiddleware } from '../middlewares/data-auth.middleware';
 import { DelayMiddleware } from '../middlewares/delay.middleware';
 import { OutageMiddleware } from '../middlewares/outage.middleware';
 
-export function createBindings(config: AppConfig, logger: Logger, clock: Clock): ContainerModule {
+export function createBindings(config: AppConfig, db: Database, logger: Logger, clock: Clock): ContainerModule {
     return new ContainerModule((bind: interfaces.Bind) => {
         // Runtime
         bind<AppConfig>(TYPES.Config).toConstantValue(config);
         bind<Logger>(TYPES.Logger).toConstantValue(logger);
         bind<Clock>(TYPES.Clock).toConstantValue(clock);
         bind<Faker>(TYPES.Faker).toConstantValue(createFaker(config.randomSeed));
+        bind<Database>(TYPES.Database).toConstantValue(db);
 
         // Repositories (bind interface to implementation)
-        bind<IReportStore>(TYPES.IReportStore).to(ReportStore).inSingletonScope();
+        bind<IReportRepository>(TYPES.IReportRepository).to(ReportRepository).inSingletonScope();
 
         // Services (runtime state lives in singletons)
         bind<GeneratorService>(TYPES.GeneratorService).to(GeneratorService).inSingletonScope();

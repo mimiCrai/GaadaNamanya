@@ -2,11 +2,7 @@ openapi: 3.0.3
 info:
     title: BMKG Mock API
     description: |
-        Passive mock of BMKG (seismic events and tsunami warnings) polled by the BNPB Aggregator.
-        Documentation only: requests are validated in code (zod), after authentication.
-
-        Every response carries `X-Correlation-ID` (echoed if the request sent a valid UUID, otherwise a new UUID v4).
-        Errors always have the body `{ "error": "<code>", "message": "...", "correlation_id": "..." }`.
+        Passive mock of BMKG 
     version: 1.0.0
 
 servers:
@@ -85,17 +81,15 @@ paths:
             tags: [Health]
             responses:
                 '200':
-                    description: Healthy
+                    description: Healthy (the database answers)
                     content:
                         application/json:
-                            schema:
-                                type: object
-                                required: [status, service, uptime_s, time]
-                                properties:
-                                    status: { type: string, enum: [ok] }
-                                    service: { type: string, enum: [bmkg] }
-                                    uptime_s: { type: integer }
-                                    time: { type: string, format: date-time }
+                            schema: { $ref: '#/components/schemas/HealthStatus' }
+                '503':
+                    description: 'Database unreachable (body is the health status with `status: error`)'
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/HealthStatus' }
 
 components:
     securitySchemes:
@@ -193,6 +187,15 @@ components:
                     type: string
                     format: date-time
                     description: (Addition) When the warning was issued; the reference time for `since`.
+        HealthStatus:
+            type: object
+            required: [status, service, database, uptime_s, time]
+            properties:
+                status: { type: string, enum: [ok, error] }
+                service: { type: string, enum: [bmkg] }
+                database: { type: string, enum: [connected, disconnected] }
+                uptime_s: { type: integer }
+                time: { type: string, format: date-time }
         ListMeta:
             type: object
             required: [count, since, server_time]

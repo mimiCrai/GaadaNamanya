@@ -9,6 +9,7 @@ import { Logger } from 'pino';
 import { createBindings } from './config/inversify.config';
 import { AppConfig } from './config/env';
 import { Clock, TYPES } from './constants/types';
+import { Database } from './db';
 import { createLogger } from './libs/logger';
 import { correlationMiddleware } from './middlewares/correlation';
 import { errorHandler, notFoundHandler } from './middlewares/errors';
@@ -33,15 +34,15 @@ export interface PvmbgApp {
     logger: Logger;
 }
 
-export function createApp(config: AppConfig, deps: AppDependencies = {}): PvmbgApp {
+export async function createApp(config: AppConfig, db: Database, deps: AppDependencies = {}): Promise<PvmbgApp> {
     const logger = deps.logger ?? createLogger({ level: config.logLevel });
     const clock = deps.clock ?? (() => Date.now());
 
     const container = new Container();
-    container.load(createBindings(config, logger, clock));
+    container.load(createBindings(config, db, logger, clock));
 
     const generator = container.get<GeneratorService>(TYPES.GeneratorService);
-    generator.seed();
+    await generator.seed();
 
     const app = express();
 

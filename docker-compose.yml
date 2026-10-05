@@ -142,6 +142,23 @@ services:
             notification-store:
                 condition: service_healthy
 
+    bmkg-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${BMKG_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${BMKG_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${BMKG_STORE_DB_NAME}
+        ports:
+            - '${BMKG_STORE_HOST_PORT}:5432'
+        volumes:
+            - bmkg_store_data:/var/lib/postgresql/data
+            - ./services/bmkg/src/db/migrations/0000_init.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
     # BMKG Mock
     bmkg:
         build: ./services/bmkg
@@ -149,6 +166,7 @@ services:
             PORT: 8081
             NODE_ENV: ${BMKG_NODE_ENV:-production}
             LOG_LEVEL: ${BMKG_LOG_LEVEL:-info}
+            DATABASE_URL: ${BMKG_DATABASE_URL}
             BMKG_API_KEYS: ${BMKG_API_KEYS}
             BMKG_DELAY_MIN_MS: ${BMKG_DELAY_MIN_MS:-100}
             BMKG_DELAY_MAX_MS: ${BMKG_DELAY_MAX_MS:-100}
@@ -157,6 +175,9 @@ services:
             RANDOM_SEED: ${BMKG_RANDOM_SEED:-}
         ports:
             - '${BMKG_PORT:-8081}:8081'
+        depends_on:
+            bmkg-store:
+                condition: service_healthy
         healthcheck:
             test: ['CMD', 'node', './dist/src/healthcheck.js']
             interval: 10s
@@ -165,6 +186,23 @@ services:
             retries: 3
         restart: unless-stopped
 
+    pvmbg-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${PVMBG_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${PVMBG_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${PVMBG_STORE_DB_NAME}
+        ports:
+            - '${PVMBG_STORE_HOST_PORT}:5432'
+        volumes:
+            - pvmbg_store_data:/var/lib/postgresql/data
+            - ./services/pvmbg/src/db/migrations/0000_init.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
     # PVMBG Mock
     pvmbg:
         build: ./services/pvmbg
@@ -172,6 +210,7 @@ services:
             PORT: 8082
             NODE_ENV: ${PVMBG_NODE_ENV:-production}
             LOG_LEVEL: ${PVMBG_LOG_LEVEL:-info}
+            DATABASE_URL: ${PVMBG_DATABASE_URL}
             PVMBG_CLIENT_TOKENS: ${PVMBG_CLIENT_TOKENS}
             PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS:-500}
             PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS:-3000}
@@ -179,6 +218,9 @@ services:
             RANDOM_SEED: ${PVMBG_RANDOM_SEED:-}
         ports:
             - '${PVMBG_PORT:-8082}:8082'
+        depends_on:
+            pvmbg-store:
+                condition: service_healthy
         healthcheck:
             test: ['CMD', 'node', './dist/src/healthcheck.js']
             interval: 10s
@@ -192,3 +234,5 @@ volumes:
     kafka_data:
     dashboard_store_data:
     notification_store_data:
+    bmkg_store_data:
+    pvmbg_store_data:

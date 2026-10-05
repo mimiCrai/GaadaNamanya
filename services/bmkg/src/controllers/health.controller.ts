@@ -9,7 +9,8 @@ export class HealthController {
     constructor(@inject(TYPES.HealthService) private readonly healthService: HealthService) {}
 
     @httpGet('/')
-    getHealth(@response() res: Response) {
-        return res.status(200).json(this.healthService.check());
+    async getHealth(@response() res: Response) {
+        const health = await this.healthService.check();
+        return res.status(health.status === 'ok' ? 200 : 503).json(health);
     }
 }

@@ -7,9 +7,10 @@ export const TYPES = {
     Logger: Symbol.for('Logger'),
     Clock: Symbol.for('Clock'),
     Faker: Symbol.for('Faker'),
+    Database: Symbol.for('Database'),
 
     // Repositories
-    IEventStore: Symbol.for('IEventStore'),
+    IEventRepository: Symbol.for('IEventRepository'),
 
     // Services
     GeneratorService: Symbol.for('GeneratorService'),

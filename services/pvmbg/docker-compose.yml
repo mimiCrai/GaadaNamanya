@@ -1,4 +1,21 @@
 services:
+    pvmbg-db:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_DB: pvmbg
+        ports:
+            - '5437:5432'
+        volumes:
+            - pvmbg_db_data:/var/lib/postgresql/data
+            - ./src/db/migrations/0000_init.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
     pvmbg:
         build: .
         container_name: pvmbg-mock
@@ -8,10 +25,11 @@ services:
             - '${PORT:-8082}:8082'
         environment:
             PORT: 8082
+            DATABASE_URL: postgresql://postgres:password@pvmbg-db:5432/pvmbg
+        depends_on:
+            pvmbg-db:
+                condition: service_healthy
         restart: unless-stopped
 
-
 volumes:
-    postgres_data:
-    redis_data:
-    rabbitmq_data:
+    pvmbg_db_data:

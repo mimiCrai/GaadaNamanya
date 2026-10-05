@@ -31,6 +31,8 @@ const envSchema = z
         NODE_ENV: z.enum(['local', 'staging', 'production', 'test']).default('local'),
         LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
+        DATABASE_URL: z.string().url(),
+
         BMKG_API_KEYS: commaList,
 
         BMKG_DELAY_MIN_MS: z.coerce.number().int().min(0).default(100),
@@ -64,6 +66,7 @@ export interface AppConfig {
     port: number;
     nodeEnv: 'local' | 'staging' | 'production' | 'test';
     logLevel: string;
+    databaseUrl: string;
     apiKeys: string[];
     delayMinMs: number;
     delayMaxMs: number;
@@ -79,6 +82,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         port: env.PORT,
         nodeEnv: env.NODE_ENV,
         logLevel: env.LOG_LEVEL,
+        databaseUrl: env.DATABASE_URL,
         apiKeys: env.BMKG_API_KEYS,
         delayMinMs: env.BMKG_DELAY_MIN_MS,
         delayMaxMs: env.BMKG_DELAY_MAX_MS,

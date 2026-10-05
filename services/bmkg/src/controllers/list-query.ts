@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { ListQuery } from '../repositories/event.store';
+import { ListQuery } from '../repositories/event.repository';
 import { sendError } from '../libs/http-error';
 import { ListQuerySchema } from '../types/contract';
 

@@ -4,13 +4,14 @@ import { Logger } from 'pino';
 import { AppConfig } from '../config/env';
 import { Clock, TYPES } from '../constants/types';
 import { findRegion, SEA_REGIONS, SEISMIC_REGIONS, SeismicRegion } from '../data/regions';
-import { IEventStore } from '../repositories/event.store';
+import { IEventRepository } from '../repositories/event.repository';
 import { SeismicEvent, ThreatLevel, TsunamiWarning } from '../types/contract';
 
 export const SEED_EVENT_COUNT = 25;
 export const TSUNAMI_MIN_MAGNITUDE = 6.5;
 export const TSUNAMI_MAX_DEPTH_KM = 70;
 
+const MAX_ID_ATTEMPTS = 5;
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 
@@ -60,11 +61,17 @@ export class GeneratorService {
         @inject(TYPES.Logger) private readonly logger: Logger,
         @inject(TYPES.Clock) private readonly clock: Clock,
         @inject(TYPES.Faker) private readonly faker: Faker,
-        @inject(TYPES.IEventStore) private readonly store: IEventStore
+        @inject(TYPES.IEventRepository) private readonly events: IEventRepository
     ) {}
 
-    // loads 25 historical events over the last 24 hours with their tsunami warnings
-    seed(): void {
+    // loads 25 historical events over the last 24 only into an database
+    async seed(): Promise<void> {
+        const existing = await this.events.countEvents();
+        if (existing > 0) {
+            this.logger.info({ seismic_events: existing }, 'Database already holds BMKG data, skipping seed');
+            return;
+        }
+
         const now = this.clock();
         const randomSpecs = Array.from({ length: SEED_EVENT_COUNT - SEED_ANCHORS.length }, (): EventSpec => ({}));
 
@@ -75,8 +82,14 @@ export class GeneratorService {
 
         const events: SeismicEvent[] = [];
         const warnings: TsunamiWarning[] = [];
+        const ids = new Set<string>();
         specs.forEach((spec, index) => {
-            const { event, region } = this.buildEvent(times[index], spec);
+            let built: { event: SeismicEvent; region: SeismicRegion };
+            do {
+                built = this.buildEvent(times[index], spec);
+            } while (ids.has(built.event.event_id));
+            const { event, region } = built;
+            ids.add(event.event_id);
             events.push(event);
             if (event.potential_tsunami) {
                 const issuedAt = Math.min(times[index] + this.faker.number.int({ min: 60, max: 180 }) * 1000, now);
@@ -84,20 +97,18 @@ export class GeneratorService {
             }
         });
 
-        this.store.addEvents(events);
-        this.store.addWarnings(warnings);
+        await this.events.insertEventsWithWarnings(events, warnings);
         this.logger.info(
             { seismic_events: events.length, tsunami_warnings: warnings.length },
             'Seeded historical BMKG data'
         );
     }
 
-    generate(count: number, options: GenerateOptions = {}): GenerateResult {
+    async generate(count: number, options: GenerateOptions = {}): Promise<GenerateResult> {
         const result: GenerateResult = { events: [], warnings: [] };
 
         for (let i = 0; i < count; i++) {
-            const { event, region } = this.buildEvent(this.clock(), { forceTsunami: options.forceTsunami });
-            this.store.addEvents([event]);
+            const { event, region } = await this.insertNewEvent(this.clock(), { forceTsunami: options.forceTsunami });
             result.events.push(event);
             this.logger.info(
                 {
@@ -113,7 +124,7 @@ export class GeneratorService {
             if (!event.potential_tsunami) continue;
 
             if (this.config.warningLagMs === 0) {
-                result.warnings.push(this.issueWarning(event, region));
+                result.warnings.push(await this.issueWarning(event, region));
             } else {
                 this.scheduleWarning(event, region);
             }
@@ -125,11 +136,7 @@ export class GeneratorService {
     start(): void {
         if (this.config.eventIntervalMs === 0 || this.interval) return;
         this.interval = setInterval(() => {
-            try {
-                this.generate(1);
-            } catch (error) {
-                this.logger.error({ err: error }, 'Seismic event generation failed');
-            }
+            this.generate(1).catch((error) => this.logger.error({ err: error }, 'Seismic event generation failed'));
         }, this.config.eventIntervalMs);
         this.interval.unref();
         this.logger.info({ interval_ms: this.config.eventIntervalMs }, 'Seismic event generator started');
@@ -151,15 +158,18 @@ export class GeneratorService {
     private scheduleWarning(event: SeismicEvent, region: SeismicRegion): void {
         const timer = setTimeout(() => {
             this.lagTimers.delete(timer);
-            this.issueWarning(event, region);
+            this.issueWarning(event, region).catch((error) =>
+                this.logger.error({ err: error, related_event_id: event.event_id }, 'Tsunami warning issue failed')
+            );
         }, this.config.warningLagMs);
         timer.unref();
         this.lagTimers.add(timer);
     }
 
-    private issueWarning(event: SeismicEvent, region: SeismicRegion): TsunamiWarning {
+    // warning_id mirrors the event's unique event_id (TW- instead of EQ-), so it cannot conflict
+    private async issueWarning(event: SeismicEvent, region: SeismicRegion): Promise<TsunamiWarning> {
         const warning = this.buildWarning(event, region, this.clock());
-        this.store.addWarnings([warning]);
+        await this.events.insertWarnings([warning]);
         this.logger.info(
             {
                 warning_id: warning.warning_id,
@@ -169,6 +179,18 @@ export class GeneratorService {
             'Issued tsunami warning'
         );
         return warning;
+    }
+
+    // a random event_id that already exists inserts nothing; retry with a new suffix
+    private async insertNewEvent(
+        occurredAtMs: number,
+        spec: EventSpec
+    ): Promise<{ event: SeismicEvent; region: SeismicRegion }> {
+        for (let attempt = 0; attempt < MAX_ID_ATTEMPTS; attempt++) {
+            const built = this.buildEvent(occurredAtMs, spec);
+            if ((await this.events.insertEvents([built.event])) === 1) return built;
+        }
+        throw new Error('Could not generate a unique event_id');
     }
 
     private buildEvent(occurredAtMs: number, spec: EventSpec): { event: SeismicEvent; region: SeismicRegion } {
@@ -206,11 +228,7 @@ export class GeneratorService {
     // EQ-<yyyyMMddHHmmss>-<6 hex>
     private newEventId(occurredAtMs: number): string {
         const stamp = new Date(occurredAtMs).toISOString().replace(/[-:T]/g, '').slice(0, 14);
-        let id: string;
-        do {
-            id = `EQ-${stamp}-${this.faker.string.hexadecimal({ length: 6, casing: 'lower', prefix: '' })}`;
-        } while (this.store.hasEvent(id));
-        return id;
+        return `EQ-${stamp}-${this.faker.string.hexadecimal({ length: 6, casing: 'lower', prefix: '' })}`;
     }
 
     // < 5.0, 5.0–6.4 and >= 6.5

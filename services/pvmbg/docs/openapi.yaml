@@ -2,15 +2,7 @@ openapi: 3.0.3
 info:
     title: PVMBG Mock API
     description: |
-        Passive mock of PVMBG (volcanic reports) polled by the BNPB Aggregator. Operators can switch the schema version
-        and start or stop a simulated outage at runtime through `POST /admin/*`, using the same bearer token as the data endpoint.
-        Documentation only: requests are validated in code (zod), after authentication.
-
-        Every response carries `X-Correlation-ID` (echoed if the request sent a valid UUID, otherwise a new UUID v4).
-        Errors always have the body `{ "error": "<code>", "message": "...", "correlation_id": "..." }`.
-
-        During an outage, `/volcanic-reports` and `/health` either never answer (`hang`) or answer
-        503 `service_unavailable` (`error`). `/admin/*` keeps working and is never delayed.
+        Passive mock of PVMBG (volcanic reports) polled by the BNPB Aggregator
     version: 1.0.0
 
 servers:
@@ -28,10 +20,6 @@ paths:
     /volcanic-reports:
         get:
             summary: Volcanic reports with reported_at >= since, ascending
-            description: |
-                Subject to the outage (checked first) and the artificial delay (after successful auth).
-                `confidence_level` is present only on records created while schema v2 was active, so one response
-                can mix both shapes.
             operationId: listVolcanicReports
             tags: [Data]
             security: [{ PvmbgBearer: [] }]
@@ -62,9 +50,6 @@ paths:
     /admin/schema-version:
         post:
             summary: Switch the schema version without a restart
-            description: |
-                Affects only records created afterwards; existing records are never rewritten.
-                Posting the active version is a no-op and keeps `changed_at`. Every change is logged at `warn`.
             operationId: setSchemaVersion
             tags: [Admin]
             security: [{ PvmbgBearer: [] }]
@@ -91,11 +76,6 @@ paths:
     /admin/outage:
         post:
             summary: Start or stop a simulated outage
-            description: |
-                Lasts until an operator turns it off. `hang` holds requests open (each is dropped from memory as soon as
-                its socket closes); when the outage ends or switches to `error`, still-held requests get 503.
-                The report generator keeps running, so BNPB can catch up with `since` afterwards.
-                Every change is logged at `warn`.
             operationId: setOutage
             tags: [Admin]
             security: [{ PvmbgBearer: [] }]
@@ -135,18 +115,18 @@ paths:
             tags: [Health]
             responses:
                 '200':
-                    description: Healthy
+                    description: Healthy (the database answers)
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/HealthStatus' }
+                '503':
+                    description: 'Database unreachable (body is the health status with `status: error`), or, during an outage, `service_unavailable` (or no answer at all in hang mode)'
                     content:
                         application/json:
                             schema:
-                                type: object
-                                required: [status, service, uptime_s, time]
-                                properties:
-                                    status: { type: string, enum: [ok] }
-                                    service: { type: string, enum: [pvmbg] }
-                                    uptime_s: { type: integer }
-                                    time: { type: string, format: date-time }
-                '503': { $ref: '#/components/responses/ServiceUnavailable' }
+                                oneOf:
+                                    - $ref: '#/components/schemas/HealthStatus'
+                                    - $ref: '#/components/schemas/Error'
 
 components:
     securitySchemes:
@@ -259,6 +239,15 @@ components:
                 mode: { type: string, enum: [hang, error] }
                 since: { type: string, format: date-time, nullable: true, description: Start of the current outage }
                 held_requests: { type: integer, description: Requests currently held open by a hang outage }
+        HealthStatus:
+            type: object
+            required: [status, service, database, uptime_s, time]
+            properties:
+                status: { type: string, enum: [ok, error] }
+                service: { type: string, enum: [pvmbg] }
+                database: { type: string, enum: [connected, disconnected] }
+                uptime_s: { type: integer }
+                time: { type: string, format: date-time }
         ListMeta:
             type: object
             required: [count, since, server_time]
