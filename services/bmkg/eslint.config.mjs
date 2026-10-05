@@ -14,6 +14,15 @@ export default tseslint.config(
             '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
             '@typescript-eslint/explicit-function-return-type': 'off',
             '@typescript-eslint/no-explicit-any': 'warn',
+            // Git (core.autocrlf) may check files out with CRLF on Windows.
+            'prettier/prettier': ['error', { endOfLine: 'auto' }],
+        },
+    },
+    {
+        files: ['**/*.js'],
+        languageOptions: {
+            sourceType: 'commonjs',
+            globals: { module: 'writable', require: 'readonly' },
         },
     }
 );
