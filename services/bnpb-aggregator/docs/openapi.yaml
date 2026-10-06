@@ -40,6 +40,8 @@ paths:
             summary: List canonical hazard events
             operationId: getInternalHazards
             tags: [Hazards]
+            security:
+                - BNPBInternalApiKey: []
             parameters:
                 - name: since
                   in: query
@@ -61,12 +63,16 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ErrorResponse'
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
 
     /internal/hazards/{hazardId}:
         get:
             summary: Get a canonical hazard event
             operationId: getInternalHazardById
             tags: [Hazards]
+            security:
+                - BNPBInternalApiKey: []
             parameters:
                 - name: hazardId
                   in: path
@@ -86,8 +92,15 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/ErrorResponse'
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
 
 components:
+    securitySchemes:
+        BNPBInternalApiKey:
+            type: apiKey
+            in: header
+            name: X-BNPB-Internal-Key
     schemas:
         HazardEvent:
             type: object

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { TYPES } from '../constants/types';
 import { IHazardEventService } from '../services/hazard-event.service';
 
-@controller('/internal/hazards')
+@controller('/internal/hazards', TYPES.InternalAuthMiddleware)
 export class HazardEventController {
     constructor(@inject(TYPES.IHazardEventService) private readonly hazardEventService: IHazardEventService) {}
 

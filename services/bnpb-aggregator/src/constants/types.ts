@@ -25,4 +25,7 @@ export const TYPES = {
 
     // Message Queue
     IMessagePublisher: Symbol.for('IMessagePublisher'),
+
+    // Middlewares
+    InternalAuthMiddleware: Symbol.for('InternalAuthMiddleware'),
 };

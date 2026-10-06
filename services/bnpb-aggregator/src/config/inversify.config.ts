@@ -23,6 +23,7 @@ import { IPollingService, PollingService } from '../services/polling.service';
 // Source REST clients
 import { BmkgClient, IBmkgClient } from '../clients/bmkg.client';
 import { IPvmbgClient, PvmbgClient } from '../clients/pvmbg.client';
+import { InternalAuthMiddleware } from '../middlewares/internal-auth.middleware';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     // Database
@@ -52,4 +53,7 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
 
     // Message Queue
     bind<IMessagePublisher>(TYPES.IMessagePublisher).to(MessagePublisher).inSingletonScope();
+
+    // Middlewares
+    bind<InternalAuthMiddleware>(TYPES.InternalAuthMiddleware).to(InternalAuthMiddleware);
 });

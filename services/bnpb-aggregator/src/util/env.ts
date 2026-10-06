@@ -17,6 +17,9 @@ const envSchema = z.object({
     KAFKA_CLIENT_ID: z.string().default('bnpb-aggregator'),
     KAFKA_TOPIC: z.string().default('hazard-events'),
 
+    // Shared only with trusted BNPB services that read canonical hazards.
+    BNPB_INTERNAL_API_KEY: z.string().min(32),
+
     // Source REST clients
     BMKG_BASE_URL: z.string().url(),
     BMKG_API_KEY: z.string().min(1),
