@@ -40,13 +40,27 @@ paths:
             summary: List canonical hazard events
             operationId: getInternalHazards
             tags: [Hazards]
+            parameters:
+                - name: since
+                  in: query
+                  required: false
+                  description: Return hazards ingested at or after this ISO 8601 timestamp, ordered oldest ingestion first.
+                  schema:
+                      type: string
+                      format: date-time
             responses:
                 '200':
-                    description: Canonical hazard events, newest occurrence first
+                    description: Canonical hazard events; without since, newest occurrence first.
                     content:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/HazardEventListResponse'
+                '400':
+                    description: Invalid since timestamp
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
 
     /internal/hazards/{hazardId}:
         get:

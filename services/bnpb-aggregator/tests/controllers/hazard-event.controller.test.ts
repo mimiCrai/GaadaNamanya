@@ -61,6 +61,24 @@ describe('HazardEventController', () => {
         expect(response.status).toBe(200);
         expect(response.body.data).toHaveLength(1);
         expect(response.body.meta.pollingStatus[SourceStream.PvmbgVolcanic].status).toBe(SourceSyncStatus.Stale);
+        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined);
+    });
+
+    it('filters hazards by canonical ingestion time', async () => {
+        mockHazardEventService.getAllHazardEvents.mockResolvedValue([]);
+
+        const response = await request(app).get('/internal/hazards?since=2026-10-04T10:00:00.000Z');
+
+        expect(response.status).toBe(200);
+        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(new Date('2026-10-04T10:00:00.000Z'));
+    });
+
+    it('rejects an invalid since value', async () => {
+        const response = await request(app).get('/internal/hazards?since=yesterday');
+
+        expect(response.status).toBe(400);
+        expect(response.body.error.message).toBe('since must be an ISO 8601 timestamp');
+        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
     });
 
     it('returns 404 when a hazard event does not exist', async () => {

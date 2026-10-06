@@ -3,6 +3,8 @@ import { z } from 'zod';
 export const PVMBG_TOKEN_PATTERN = /^pvmbg\.[A-Za-z0-9-]{1,32}\.[0-9a-f]{32}$/;
 
 const DELAY_MAX_MS = 60_000;
+const DELAY_DEFAULT_MIN_MS = 500;
+const DELAY_DEFAULT_MAX_MS = 3_000;
 const REPORT_INTERVAL_MAX_MS = 10_000;
 const generationProbability = z.coerce.number().min(0).max(1);
 
@@ -49,6 +51,17 @@ const envSchema = z
                 code: z.ZodIssueCode.custom,
                 path: ['PVMBG_DELAY_MIN_MS'],
                 message: 'PVMBG_DELAY_MIN_MS must be <= PVMBG_DELAY_MAX_MS',
+            });
+        }
+
+        if (
+            env.NODE_ENV !== 'test' &&
+            (env.PVMBG_DELAY_MIN_MS < DELAY_DEFAULT_MIN_MS || env.PVMBG_DELAY_MAX_MS > DELAY_DEFAULT_MAX_MS)
+        ) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['PVMBG_DELAY_MIN_MS'],
+                message: `delay must satisfy ${DELAY_DEFAULT_MIN_MS} <= min <= max <= ${DELAY_DEFAULT_MAX_MS} (relaxed only when NODE_ENV=test)`,
             });
         }
     });

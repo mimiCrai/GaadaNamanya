@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gte } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
@@ -34,7 +34,7 @@ export interface HazardEventUpsertResult {
 }
 
 export interface IHazardEventRepository {
-    findAll(): Promise<HazardEvent[]>;
+    findAll(ingestedSince?: Date): Promise<HazardEvent[]>;
     findByHazardId(hazardId: string): Promise<HazardEvent | undefined>;
     findBySourceAndRefId(source: HazardSource, sourceRefId: string): Promise<HazardEvent | undefined>;
     upsertAndEnqueue(input: UpsertHazardEventInput): Promise<HazardEventUpsertResult>;
@@ -44,7 +44,15 @@ export interface IHazardEventRepository {
 export class HazardEventRepository implements IHazardEventRepository {
     constructor(@inject(TYPES.Database) private readonly db: NodePgDatabase<typeof schema>) {}
 
-    async findAll(): Promise<HazardEvent[]> {
+    async findAll(ingestedSince?: Date): Promise<HazardEvent[]> {
+        if (ingestedSince) {
+            return this.db
+                .select()
+                .from(hazardEvents)
+                .where(gte(hazardEvents.ingestedAt, ingestedSince))
+                .orderBy(asc(hazardEvents.ingestedAt), asc(hazardEvents.hazardId));
+        }
+
         return this.db.select().from(hazardEvents).orderBy(desc(hazardEvents.occurredAt));
     }
 
