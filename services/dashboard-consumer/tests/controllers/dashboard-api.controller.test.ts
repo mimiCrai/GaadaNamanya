@@ -12,6 +12,7 @@ describe('DashboardApiController', () => {
                 hazardType: 'SEISMIC',
                 severity: 'SIAGA',
                 areaName: 'Aceh',
+                attributes: { magnitude: 6.8, potential_tsunami: true },
                 occurredAt: new Date('2026-10-04T10:00:00.000Z'),
                 lastEventId: '11111111-1111-4111-8111-111111111111',
                 lastEventType: 'hazard.created',

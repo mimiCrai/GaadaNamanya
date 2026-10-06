@@ -4,6 +4,7 @@ export const PVMBG_TOKEN_PATTERN = /^pvmbg\.[A-Za-z0-9-]{1,32}\.[0-9a-f]{32}$/;
 
 const DELAY_MAX_MS = 60_000;
 const REPORT_INTERVAL_MAX_MS = 10_000;
+const generationProbability = z.coerce.number().min(0).max(1);
 
 const tokenList = z
     .string()
@@ -39,6 +40,7 @@ const envSchema = z
         PVMBG_DELAY_MIN_MS: delayMs.default(500),
         PVMBG_DELAY_MAX_MS: delayMs.default(3000),
         PVMBG_REPORT_INTERVAL_MS: z.coerce.number().int().min(0).max(REPORT_INTERVAL_MAX_MS).default(5000),
+        PVMBG_REPORT_GENERATION_PROBABILITY: generationProbability.default(0.3),
         RANDOM_SEED: optionalString,
     })
     .superRefine((env, ctx) => {
@@ -60,6 +62,7 @@ export interface AppConfig {
     delayMinMs: number;
     delayMaxMs: number;
     reportIntervalMs: number;
+    reportGenerationProbability: number;
     randomSeed?: string;
 }
 
@@ -75,6 +78,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         delayMinMs: env.PVMBG_DELAY_MIN_MS,
         delayMaxMs: env.PVMBG_DELAY_MAX_MS,
         reportIntervalMs: env.PVMBG_REPORT_INTERVAL_MS,
+        reportGenerationProbability: env.PVMBG_REPORT_GENERATION_PROBABILITY,
         randomSeed: env.RANDOM_SEED,
     };
 }

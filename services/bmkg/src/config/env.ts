@@ -5,6 +5,7 @@ export const BMKG_API_KEY_PATTERN = /^bmkg_[A-Za-z0-9]{1,32}_[0-9a-f]{32}$/;
 const DELAY_DEFAULT_MIN_MS = 50;
 const DELAY_DEFAULT_MAX_MS = 150;
 const EVENT_INTERVAL_MAX_MS = 10_000;
+const generationProbability = z.coerce.number().min(0).max(1);
 
 const commaList = z
     .string()
@@ -38,6 +39,7 @@ const envSchema = z
         BMKG_DELAY_MIN_MS: z.coerce.number().int().min(0).default(100),
         BMKG_DELAY_MAX_MS: z.coerce.number().int().min(0).default(100),
         BMKG_EVENT_INTERVAL_MS: z.coerce.number().int().min(0).max(EVENT_INTERVAL_MAX_MS).default(5000),
+        BMKG_EVENT_GENERATION_PROBABILITY: generationProbability.default(0.3),
         BMKG_WARNING_LAG_MS: z.coerce.number().int().min(0).default(0),
         RANDOM_SEED: optionalString,
     })
@@ -71,6 +73,7 @@ export interface AppConfig {
     delayMinMs: number;
     delayMaxMs: number;
     eventIntervalMs: number;
+    eventGenerationProbability: number;
     warningLagMs: number;
     randomSeed?: string;
 }
@@ -87,6 +90,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         delayMinMs: env.BMKG_DELAY_MIN_MS,
         delayMaxMs: env.BMKG_DELAY_MAX_MS,
         eventIntervalMs: env.BMKG_EVENT_INTERVAL_MS,
+        eventGenerationProbability: env.BMKG_EVENT_GENERATION_PROBABILITY,
         warningLagMs: env.BMKG_WARNING_LAG_MS,
         randomSeed: env.RANDOM_SEED,
     };

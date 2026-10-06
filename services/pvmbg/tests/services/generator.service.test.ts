@@ -95,7 +95,9 @@ describe('GeneratorService', () => {
 
 describe('Generator during an outage', () => {
     it('keeps producing reports while the outage is active', async () => {
-        const { generator, outage, reports } = await buildApp({ env: { PVMBG_REPORT_INTERVAL_MS: '20' } });
+        const { generator, outage, reports } = await buildApp({
+            env: { PVMBG_REPORT_INTERVAL_MS: '20', PVMBG_REPORT_GENERATION_PROBABILITY: '1' },
+        });
         outage.set(true, 'hang');
         generator.start();
 

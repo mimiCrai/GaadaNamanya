@@ -31,16 +31,34 @@ services:
             KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR}
             KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS}
             KAFKA_AUTO_CREATE_TOPICS_ENABLE: ${KAFKA_AUTO_CREATE_TOPICS_ENABLE}
+            KAFKA_INTERNAL_BOOTSTRAP_SERVER: ${KAFKA_INTERNAL_BOOTSTRAP_SERVER}
             CLUSTER_ID: ${KAFKA_CLUSTER_ID}
         ports:
             - '${KAFKA_HOST_PORT}:9092'
         volumes:
             - kafka_data:/var/lib/kafka/data
         healthcheck:
-            test: ['CMD', 'kafka-topics', '--bootstrap-server', '$${KAFKA_INTERNAL_BOOTSTRAP_SERVER}', '--list']
+            test: ['CMD-SHELL', 'kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --list']
             interval: 10s
             timeout: 10s
             retries: 10
+
+    # Creates the application topic before either consumer subscribes to it.
+    # --if-not-exists makes this safe on subsequent `docker compose up` runs.
+    kafka-topic-init:
+        image: confluentinc/cp-kafka:7.7.1
+        environment:
+            KAFKA_INTERNAL_BOOTSTRAP_SERVER: ${KAFKA_INTERNAL_BOOTSTRAP_SERVER}
+            KAFKA_TOPIC: ${BNPB_AGGREGATOR_KAFKA_TOPIC}
+        command:
+            [
+                'bash',
+                '-ec',
+                'kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$KAFKA_TOPIC" --partitions 1 --replication-factor 1',
+            ]
+        depends_on:
+            kafka:
+                condition: service_healthy
 
     dashboard-store:
         image: postgres:16-alpine
@@ -52,7 +70,6 @@ services:
             - '${DASHBOARD_STORE_HOST_PORT}:5432'
         volumes:
             - dashboard_store_data:/var/lib/postgresql/data
-            - ./services/dashboard-consumer/src/db/migrations/0000_orange_meltdown.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
@@ -69,7 +86,6 @@ services:
             - '${NOTIFICATION_STORE_HOST_PORT}:5432'
         volumes:
             - notification_store_data:/var/lib/postgresql/data
-            - ./services/notification-consumer/src/db/migrations/0000_futuristic_swarm.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
@@ -103,6 +119,8 @@ services:
                 condition: service_healthy
             kafka:
                 condition: service_healthy
+            kafka-topic-init:
+                condition: service_completed_successfully
 
     dashboard-consumer:
         build: ./services/dashboard-consumer
@@ -120,6 +138,8 @@ services:
         depends_on:
             kafka:
                 condition: service_healthy
+            kafka-topic-init:
+                condition: service_completed_successfully
             dashboard-store:
                 condition: service_healthy
 
@@ -139,6 +159,8 @@ services:
         depends_on:
             kafka:
                 condition: service_healthy
+            kafka-topic-init:
+                condition: service_completed_successfully
             notification-store:
                 condition: service_healthy
 
@@ -152,7 +174,6 @@ services:
             - '${BMKG_STORE_HOST_PORT}:5432'
         volumes:
             - bmkg_store_data:/var/lib/postgresql/data
-            - ./services/bmkg/src/db/migrations/0000_init.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
@@ -171,6 +192,7 @@ services:
             BMKG_DELAY_MIN_MS: ${BMKG_DELAY_MIN_MS:-100}
             BMKG_DELAY_MAX_MS: ${BMKG_DELAY_MAX_MS:-100}
             BMKG_EVENT_INTERVAL_MS: ${BMKG_EVENT_INTERVAL_MS:-5000}
+            BMKG_EVENT_GENERATION_PROBABILITY: ${BMKG_EVENT_GENERATION_PROBABILITY:-0.3}
             BMKG_WARNING_LAG_MS: ${BMKG_WARNING_LAG_MS:-0}
             RANDOM_SEED: ${BMKG_RANDOM_SEED:-}
         ports:
@@ -196,7 +218,6 @@ services:
             - '${PVMBG_STORE_HOST_PORT}:5432'
         volumes:
             - pvmbg_store_data:/var/lib/postgresql/data
-            - ./services/pvmbg/src/db/migrations/0000_init.sql:/docker-entrypoint-initdb.d/0000_init.sql:ro
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
@@ -215,6 +236,7 @@ services:
             PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS:-500}
             PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS:-3000}
             PVMBG_REPORT_INTERVAL_MS: ${PVMBG_REPORT_INTERVAL_MS:-5000}
+            PVMBG_REPORT_GENERATION_PROBABILITY: ${PVMBG_REPORT_GENERATION_PROBABILITY:-0.3}
             RANDOM_SEED: ${PVMBG_RANDOM_SEED:-}
         ports:
             - '${PVMBG_PORT:-8082}:8082'

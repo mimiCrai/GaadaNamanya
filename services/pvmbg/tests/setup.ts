@@ -9,6 +9,7 @@ process.env.PVMBG_CLIENT_TOKENS ??= `${PVMBG_TOKEN},${ROTATED_PVMBG_TOKEN}`;
 process.env.PVMBG_DELAY_MIN_MS ??= '0';
 process.env.PVMBG_DELAY_MAX_MS ??= '0';
 process.env.PVMBG_REPORT_INTERVAL_MS ??= '0';
+process.env.PVMBG_REPORT_GENERATION_PROBABILITY ??= '1';
 
 jest.setTimeout(30000);
 

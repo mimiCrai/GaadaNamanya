@@ -9,6 +9,7 @@ process.env.BMKG_API_KEYS ??= `${BMKG_KEY},${ROTATED_BMKG_KEY}`;
 process.env.BMKG_DELAY_MIN_MS ??= '0';
 process.env.BMKG_DELAY_MAX_MS ??= '0';
 process.env.BMKG_EVENT_INTERVAL_MS ??= '0';
+process.env.BMKG_EVENT_GENERATION_PROBABILITY ??= '1';
 
 jest.setTimeout(30000);
 

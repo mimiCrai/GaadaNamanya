@@ -136,10 +136,19 @@ export class GeneratorService {
     start(): void {
         if (this.config.eventIntervalMs === 0 || this.interval) return;
         this.interval = setInterval(() => {
+            if (
+                this.config.eventGenerationProbability === 0 ||
+                (this.config.eventGenerationProbability < 1 &&
+                    this.faker.number.float({ min: 0, max: 1 }) >= this.config.eventGenerationProbability)
+            )
+                return;
             this.generate(1).catch((error) => this.logger.error({ err: error }, 'Seismic event generation failed'));
         }, this.config.eventIntervalMs);
         this.interval.unref();
-        this.logger.info({ interval_ms: this.config.eventIntervalMs }, 'Seismic event generator started');
+        this.logger.info(
+            { interval_ms: this.config.eventIntervalMs, generation_probability: this.config.eventGenerationProbability },
+            'Seismic event generator started'
+        );
     }
 
     stop(): void {
