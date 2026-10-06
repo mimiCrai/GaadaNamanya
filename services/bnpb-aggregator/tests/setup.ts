@@ -1,8 +1,5 @@
-// Jest setup file
 import 'reflect-metadata';
 
-// The controller tests mock database-backed services, but importing those
-// services still validates the application's configuration.
 process.env.DATABASE_URL ??= 'postgresql://postgres:postgres@localhost:5432/canonical_store_test';
 process.env.KAFKA_BROKERS ??= 'localhost:9092';
 process.env.BNPB_INTERNAL_API_KEY ??= 'test-bnpb-internal-key-0123456789';
@@ -15,5 +12,4 @@ process.env.POLL_OVERLAP_MS ??= '1000';
 process.env.OUTBOX_RELAY_INTERVAL_MS ??= '250';
 process.env.OUTBOX_BATCH_SIZE ??= '100';
 
-// Increase timeout for integration tests
 jest.setTimeout(10000);

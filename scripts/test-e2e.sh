@@ -9,14 +9,8 @@ if [[ ! -f .env ]]; then
     exit 1
 fi
 
-# The separate project name creates isolated containers, networks, and volumes.
-# docker-compose.e2e.yml removes host port bindings, so this can run alongside
-# the normal local stack.
+# Isolated project plus the test-only override.
 compose=(docker compose -p bnpb-e2e -f docker-compose.yml -f docker-compose.e2e.yml)
-
-# Building five TypeScript services concurrently can make Docker Desktop cancel
-# build contexts on constrained machines. Callers can raise this if desired.
-export COMPOSE_PARALLEL_LIMIT="${COMPOSE_PARALLEL_LIMIT:-1}"
 
 cleanup() {
     "${compose[@]}" down -v --remove-orphans
@@ -25,4 +19,5 @@ trap cleanup EXIT
 
 cleanup
 "${compose[@]}" up --build -d
-"${compose[@]}" --profile test run --build --rm e2e
+"${compose[@]}" --profile test build e2e
+"${compose[@]}" --profile test run --rm e2e

@@ -1,5 +1,4 @@
-# Test-only override for `bash scripts/test-e2e.sh`.
-# It changes timing/generation only; docker-compose.yml remains the normal stack.
+# Test-only Compose override.
 services:
     canonical-store:
         ports: !reset []

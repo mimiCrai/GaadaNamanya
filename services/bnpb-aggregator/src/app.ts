@@ -1,4 +1,3 @@
-// Must be at the top for Inversify decorators to work
 import 'reflect-metadata';
 
 import express, { Request, Response, NextFunction } from 'express';
@@ -13,38 +12,24 @@ import path from 'path';
 import { bindings } from './config/inversify.config';
 import { logger } from './libs/logger';
 
-// Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
 import './controllers/hazard-event.controller';
 
-/**
- * Create and configure the Express application
- */
 export async function createContainer(): Promise<Container> {
     const container = new Container();
     await container.loadAsync(bindings);
     return container;
 }
 
-/**
- * Passing a container lets the HTTP server and background services share one
- * dependency graph. Tests may omit it for an isolated application.
- */
 export async function createApp(existingContainer?: Container): Promise<express.Application> {
     const container = existingContainer ?? (await createContainer());
 
-    // Create base Express app
     const app = express();
-
-    // Disable x-powered-by header for security
     app.disable('x-powered-by');
-
-    // Middleware
     app.use(compression());
     app.use(bodyParser.json({ limit: '5mb' }));
     app.use(bodyParser.urlencoded({ extended: true }));
 
-    // Request logging
     app.use((req: Request, res: Response, next: NextFunction) => {
         const correlationId = req.header('x-correlation-id') ?? randomUUID();
         res.setHeader('X-Correlation-ID', correlationId);
@@ -52,7 +37,6 @@ export async function createApp(existingContainer?: Container): Promise<express.
         next();
     });
 
-    // OpenAPI validation
     app.use(
         OpenApiValidator.middleware({
             apiSpec: path.join(process.cwd(), 'docs/openapi.yaml'),
@@ -61,12 +45,8 @@ export async function createApp(existingContainer?: Container): Promise<express.
         })
     );
 
-    // Build Inversify Express server
     const server = new InversifyExpressServer(container, null, null, app);
-
-    // Error handling (must be after routes)
     server.setErrorConfig((app) => {
-        // OpenAPI validation error handler
         app.use(
             (
                 err: Error & { status?: number; errors?: unknown[] },

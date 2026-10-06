@@ -43,8 +43,7 @@ services:
             timeout: 10s
             retries: 10
 
-    # Creates the application topic before either consumer subscribes to it.
-    # --if-not-exists makes this safe on subsequent `docker compose up` runs.
+    # One-shot bootstrap for the Kafka topic.
     kafka-topic-init:
         image: confluentinc/cp-kafka:7.7.1
         environment:
@@ -181,7 +180,6 @@ services:
             timeout: 5s
             retries: 5
 
-    # BMKG Mock
     bmkg:
         build: ./services/bmkg
         environment:
@@ -225,7 +223,6 @@ services:
             timeout: 5s
             retries: 5
 
-    # PVMBG Mock
     pvmbg:
         build: ./services/pvmbg
         environment:
