@@ -1,0 +1,66 @@
+# Test-only override for `bash scripts/test-e2e.sh`.
+# It changes timing/generation only; docker-compose.yml remains the normal stack.
+services:
+    canonical-store:
+        ports: !reset []
+    kafka:
+        ports: !reset []
+    dashboard-store:
+        ports: !reset []
+    notification-store:
+        ports: !reset []
+    bmkg-store:
+        ports: !reset []
+    pvmbg-store:
+        ports: !reset []
+
+    bnpb-aggregator:
+        ports: !reset []
+        environment:
+            POLL_INTERVAL_MS: 2000
+            POLL_OVERLAP_MS: 0
+            PVMBG_REQUEST_TIMEOUT_MS: 1000
+
+    dashboard-consumer:
+        ports: !reset []
+
+    notification-consumer:
+        ports: !reset []
+
+    bmkg:
+        ports: !reset []
+        environment:
+            BMKG_EVENT_INTERVAL_MS: 2000
+            BMKG_EVENT_GENERATION_PROBABILITY: 1
+
+    pvmbg:
+        ports: !reset []
+        environment:
+            PVMBG_DELAY_MIN_MS: 500
+            PVMBG_DELAY_MAX_MS: 500
+            PVMBG_REPORT_INTERVAL_MS: 2000
+            PVMBG_REPORT_GENERATION_PROBABILITY: 1
+
+    e2e:
+        profiles: [test]
+        build: ./tests/e2e
+        environment:
+            BMKG_URL: http://bmkg:8081
+            PVMBG_URL: http://pvmbg:8082
+            AGGREGATOR_URL: http://bnpb-aggregator:3000
+            DASHBOARD_URL: http://dashboard-consumer:3000
+            NOTIFICATION_URL: http://notification-consumer:3000
+            BMKG_API_KEY: ${BNPB_AGGREGATOR_BMKG_API_KEY}
+            PVMBG_TOKEN: ${BNPB_AGGREGATOR_PVMBG_TOKEN}
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+        depends_on:
+            bmkg:
+                condition: service_healthy
+            pvmbg:
+                condition: service_healthy
+            bnpb-aggregator:
+                condition: service_started
+            dashboard-consumer:
+                condition: service_started
+            notification-consumer:
+                condition: service_started

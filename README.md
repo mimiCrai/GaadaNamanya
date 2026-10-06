@@ -17,7 +17,7 @@ Downstream client ─> BNPB Client API ─> Aggregator internal API
        └───────────────> BNPB Auth Service (token / refresh only)
 ```
 
-The Aggregator polls the source services in the background, normalises source records into `HazardEvent` records, writes them to the Canonical Store, and publishes newly ingested events. The Client API validates JWTs and applies scope-based field filtering before returning canonical hazard data.
+The Aggregator polls the source services in the background, normalises source records into `HazardEvent` records, writes them to the Canonical Store, and publishes newly ingested events. The Client API validates JWTs and applies scope-based field filtering before returning canonical hazard data. It reads from the Aggregator with the separate `X-BNPB-Internal-Key` credential; a client JWT is never accepted as that service-to-service credential.
 
 BMKG and PVMBG are source mocks: each seeds historical data, then evaluates whether to generate one new source record every five seconds. The default `*_GENERATION_PROBABILITY=0.3` means most intervals intentionally produce no new record; set it to `1` for a guaranteed record each interval or `0` to disable live generation.
 
@@ -80,6 +80,16 @@ Open the running services at:
 - `http://localhost:3005/notifications` — Notification inbox.
 
 Services run directly on the host use `KAFKA_BROKERS=localhost:9092`. Services inside root Compose use `KAFKA_BROKERS=kafka:29092`.
+
+## End-to-end checks
+
+Run the isolated E2E suite with one command after creating `.env`:
+
+```bash
+bash scripts/test-e2e.sh
+```
+
+The script combines the normal Compose file with `docker-compose.e2e.yml`, builds an isolated `bnpb-e2e` project, and removes its test containers and volumes afterward. The override removes host port mappings, so it can run while the normal stack is up. It verifies internal-API authentication, both initial source ingestions, cross-provider credential rejection, PVMBG schema evolution, dashboard and notification projections, and PVMBG error/hang outages without interrupting BMKG ingestion.
 
 ## Repository layout
 
