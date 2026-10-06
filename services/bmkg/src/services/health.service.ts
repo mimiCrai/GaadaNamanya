@@ -1,43 +1,35 @@
-import { injectable } from 'inversify';
-import { pool } from '../db';
+import { sql } from 'drizzle-orm';
+import { inject, injectable } from 'inversify';
+import { TYPES } from '../constants/types';
+import { Database } from '../db';
+import { SERVICE_NAME } from '../libs/logger';
 
 export interface HealthStatus {
-    status: 'healthy' | 'unhealthy';
-    timestamp: string;
-    services: {
-        database: 'connected' | 'disconnected';
-    };
+    status: 'ok' | 'error';
+    service: string;
+    database: 'connected' | 'disconnected';
+    uptime_s: number;
+    time: string;
 }
 
 @injectable()
 export class HealthService {
-    async check(): Promise<HealthStatus> {
-        let dbStatus: 'connected' | 'disconnected' = 'disconnected';
+    constructor(@inject(TYPES.Database) private readonly db: Database) {}
 
+    async check(): Promise<HealthStatus> {
+        let database: HealthStatus['database'] = 'connected';
         try {
-            const client = await pool.connect();
-            await client.query('SELECT 1');
-            client.release();
-            dbStatus = 'connected';
+            await this.db.execute(sql`select 1`);
         } catch {
-            dbStatus = 'disconnected';
+            database = 'disconnected';
         }
 
         return {
-            status: dbStatus === 'connected' ? 'healthy' : 'unhealthy',
-            timestamp: new Date().toISOString(),
-            services: {
-                database: dbStatus,
-            },
+            status: database === 'connected' ? 'ok' : 'error',
+            service: SERVICE_NAME,
+            database,
+            uptime_s: Math.round(process.uptime()),
+            time: new Date().toISOString(),
         };
-    }
-
-    async liveness(): Promise<{ status: 'ok' }> {
-        return { status: 'ok' };
-    }
-
-    async readiness(): Promise<{ status: 'ok' | 'error' }> {
-        const health = await this.check();
-        return { status: health.status === 'healthy' ? 'ok' : 'error' };
     }
 }
