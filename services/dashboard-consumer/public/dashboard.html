@@ -44,6 +44,13 @@
             .NORMAL {
                 color: #027a48;
             }
+            .attributes {
+                max-width: 22rem;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.8rem;
+            }
         </style>
     </head>
     <body>
@@ -57,6 +64,7 @@
                     <th>Type</th>
                     <th>Area</th>
                     <th>Source</th>
+                    <th>Attributes</th>
                     <th>Occurred</th>
                     <th>Last event</th>
                 </tr>
@@ -66,6 +74,12 @@
 
         <script>
             const format = (value) => new Date(value).toLocaleString();
+            const formatAttributes = (attributes) => {
+                if (!attributes || Object.keys(attributes).length === 0) return '—';
+                return Object.entries(attributes)
+                    .map(([key, value]) => `${key}: ${typeof value === 'string' ? value : JSON.stringify(value)}`)
+                    .join('\n');
+            };
 
             async function refresh() {
                 const response = await fetch('/api/hazards');
@@ -74,7 +88,7 @@
 
                 rows.replaceChildren();
                 if (data.length === 0) {
-                    rows.innerHTML = '<tr><td colspan="6">No hazard events received yet.</td></tr>';
+                    rows.innerHTML = '<tr><td colspan="7">No hazard events received yet.</td></tr>';
                     return;
                 }
 
@@ -86,6 +100,9 @@
                     row.insertCell().textContent = hazard.hazardType;
                     row.insertCell().textContent = hazard.areaName;
                     row.insertCell().textContent = hazard.source;
+                    const attributes = row.insertCell();
+                    attributes.className = 'attributes';
+                    attributes.textContent = formatAttributes(hazard.attributes);
                     row.insertCell().textContent = format(hazard.occurredAt);
                     row.insertCell().textContent = hazard.lastEventType;
                 }

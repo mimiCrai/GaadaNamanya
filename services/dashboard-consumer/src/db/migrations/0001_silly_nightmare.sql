@@ -1,0 +1,1 @@
+ALTER TABLE "dashboard_hazards" ADD COLUMN "attributes" jsonb DEFAULT '{}'::jsonb NOT NULL;

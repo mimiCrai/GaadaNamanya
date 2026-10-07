@@ -105,10 +105,19 @@ export class GeneratorService {
     start(): void {
         if (this.config.reportIntervalMs === 0 || this.interval) return;
         this.interval = setInterval(() => {
+            if (
+                this.config.reportGenerationProbability === 0 ||
+                (this.config.reportGenerationProbability < 1 &&
+                    this.faker.number.float({ min: 0, max: 1 }) >= this.config.reportGenerationProbability)
+            )
+                return;
             this.generate(1).catch((error) => this.logger.error({ err: error }, 'Volcanic report generation failed'));
         }, this.config.reportIntervalMs);
         this.interval.unref();
-        this.logger.info({ interval_ms: this.config.reportIntervalMs }, 'Volcanic report generator started');
+        this.logger.info(
+            { interval_ms: this.config.reportIntervalMs, generation_probability: this.config.reportGenerationProbability },
+            'Volcanic report generator started'
+        );
     }
 
     stop(): void {

@@ -18,7 +18,7 @@ const message: HazardEventMessage = {
         longitude: 95.3,
         occurredAt: '2026-10-04T10:00:00.000Z',
         ingestedAt: '2026-10-04T10:00:01.000Z',
-        attributes: {},
+        attributes: { magnitude: 6.8, potential_tsunami: true },
     },
 };
 

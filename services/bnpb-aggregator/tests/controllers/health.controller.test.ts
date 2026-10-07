@@ -6,10 +6,8 @@ import { InversifyExpressServer } from 'inversify-express-utils';
 import { TYPES } from '../../src/constants/types';
 import { IHealthService } from '../../src/services/health.service';
 
-// Import controller to register routes
 import '../../src/controllers/health.controller';
 
-// Mock HealthService
 const mockHealthService = {
     check: jest.fn(),
     liveness: jest.fn(),

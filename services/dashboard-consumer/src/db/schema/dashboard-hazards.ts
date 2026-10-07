@@ -1,4 +1,5 @@
-import { timestamp, varchar } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { jsonb, timestamp, varchar } from 'drizzle-orm/pg-core';
 import { pgTable } from 'drizzle-orm/pg-core';
 
 export const dashboardHazards = pgTable('dashboard_hazards', {
@@ -7,6 +8,7 @@ export const dashboardHazards = pgTable('dashboard_hazards', {
     hazardType: varchar('hazard_type', { length: 16 }).notNull(),
     severity: varchar('severity', { length: 16 }).notNull(),
     areaName: varchar('area_name', { length: 255 }).notNull(),
+    attributes: jsonb('attributes').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
     lastEventId: varchar('last_event_id', { length: 36 }).notNull(),
     lastEventType: varchar('last_event_type', { length: 64 }).notNull(),

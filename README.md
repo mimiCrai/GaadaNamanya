@@ -17,7 +17,9 @@ Downstream client ─> BNPB Client API ─> Aggregator internal API
        └───────────────> BNPB Auth Service (token / refresh only)
 ```
 
-The Aggregator polls the source services in the background, normalises source records into `HazardEvent` records, writes them to the Canonical Store, and publishes newly ingested events. The Client API validates JWTs and applies scope-based field filtering before returning canonical hazard data.
+The Aggregator polls the source services in the background, normalises source records into `HazardEvent` records, writes them to the Canonical Store, and publishes newly ingested events. The Client API validates JWTs and applies scope-based field filtering before returning canonical hazard data. It reads from the Aggregator with the separate `X-BNPB-Internal-Key` credential; a client JWT is never accepted as that service-to-service credential.
+
+BMKG and PVMBG are source mocks: each seeds historical data, then evaluates whether to generate one new source record every five seconds. The default `*_GENERATION_PROBABILITY=0.3` means most intervals intentionally produce no new record; set it to `1` for a guaranteed record each interval or `0` to disable live generation.
 
 ## Services
 
@@ -59,15 +61,35 @@ Copy-Item .env.example .env
 
 Root Compose resolves its `${...}` variables from that `.env` file. The example values are a complete runnable local configuration, so no edits are needed before starting the current stack. For a deployed environment, replace the sample credentials and host-specific values in the local `.env`. `.env` is ignored by Git; commit only `.env.example`.
 
-## Local Kafka
+## Run the local stack
 
-Start the current BNPB event stack (Canonical PostgreSQL, Kafka, Aggregator, and both consumers):
+Start the complete runnable stack: BMKG, PVMBG, their separate PostgreSQL stores, Canonical Store, Kafka, BNPB Aggregator, and both consumers.
 
 ```bash
 docker compose up --build
 ```
 
+Each database-owning application runs `npm run db:migrate` after its database becomes healthy and before it starts its server. Compose also creates `hazard-events` before the Aggregator and consumers start, preventing a first-start Kafka topic race. No per-service migration command is needed.
+
+Open the running services at:
+
+- `http://localhost:8081/health` — BMKG mock.
+- `http://localhost:8082/health` — PVMBG mock.
+- `http://localhost:3003/health` — BNPB Aggregator.
+- `http://localhost:3004/dashboard` — Dashboard projection.
+- `http://localhost:3005/notifications` — Notification inbox.
+
 Services run directly on the host use `KAFKA_BROKERS=localhost:9092`. Services inside root Compose use `KAFKA_BROKERS=kafka:29092`.
+
+## End-to-end checks
+
+Run the isolated E2E suite with one command after creating `.env`:
+
+```bash
+bash scripts/test-e2e.sh
+```
+
+The script combines the normal Compose file with `docker-compose.e2e.yml`, builds an isolated `bnpb-e2e` project, and removes its test containers and volumes afterward. The override removes host port mappings, so it can run while the normal stack is up. It verifies internal-API authentication, both initial source ingestions, cross-provider credential rejection, PVMBG schema evolution, dashboard and notification projections, and PVMBG error/hang outages without interrupting BMKG ingestion.
 
 ## Repository layout
 
