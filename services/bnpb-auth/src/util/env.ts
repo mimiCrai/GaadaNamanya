@@ -12,7 +12,7 @@ const envSchema = z.object({
     // deployment environments that cannot store multiline values (including
     // values double-escaped by a configuration system).
     JWT_PRIVATE_KEY: z.string().min(1).optional(),
-    JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+    JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(60),
     JWT_REFRESH_TTL_SECONDS: z.coerce.number().int().positive().default(604800),
 
     // PostgreSQL
