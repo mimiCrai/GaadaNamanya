@@ -1,288 +1,103 @@
 openapi: 3.0.3
 info:
-    title: Repo Template API
-    description: A template Node.js API with Express, Inversify, and Drizzle ORM
+    title: BNPB Client API
+    description: Client-facing hazard API. JWTs are verified against the public key published by bnpb-auth.
     version: 1.0.0
-
 servers:
     - url: http://localhost:3000
       description: Local development server
-
 paths:
     /health:
         get:
             summary: Health check
-            description: Returns the health status of the service
-            operationId: getHealth
-            tags:
-                - Health
             responses:
-                '200':
-                    description: Service is healthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-                '503':
-                    description: Service is unhealthy
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/HealthResponse'
-
+                '200': { description: Service is healthy }
+                '503': { description: Service is unhealthy }
     /health/live:
         get:
             summary: Liveness probe
-            description: Returns OK if the service is running
-            operationId: getLiveness
-            tags:
-                - Health
             responses:
-                '200':
-                    description: Service is alive
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok]
-
+                '200': { description: Service is alive }
     /health/ready:
         get:
             summary: Readiness probe
-            description: Returns OK if the service is ready to accept traffic
-            operationId: getReadiness
-            tags:
-                - Health
             responses:
-                '200':
-                    description: Service is ready
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    status:
-                                        type: string
-                                        enum: [ok, error]
-                '503':
-                    description: Service is not ready
-
-    /items:
+                '200': { description: Service is ready }
+                '503': { description: Service is not ready }
+    /hazards:
         get:
-            summary: Get all items
-            description: Returns a list of all items
-            operationId: getAllItems
-            tags:
-                - Items
+            summary: List hazards visible to the authenticated user
+            tags: [Hazards]
+            security: [{ bearerAuth: [] }]
             responses:
                 '200':
-                    description: List of items
+                    description: Returns ringkasan for public users and mentah for lapangan/internal users. Data is sourced from the internal BNPB Aggregator API.
                     content:
                         application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        type: array
-                                        items:
-                                            $ref: '#/components/schemas/Item'
-
-        post:
-            summary: Create a new item
-            description: Creates a new item and returns it
-            operationId: createItem
-            tags:
-                - Items
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/CreateItemRequest'
-            responses:
-                '201':
-                    description: Item created successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '400':
-                    description: Invalid request body
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-    /items/{id}:
+                            schema: { $ref: '#/components/schemas/HazardListResponse' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '502': { $ref: '#/components/responses/UpstreamFailure' }
+    /hazards/{hazardId}:
         get:
-            summary: Get an item by ID
-            description: Returns a single item by its ID
-            operationId: getItemById
-            tags:
-                - Items
+            summary: Get a hazard visible to the authenticated user
+            tags: [Hazards]
+            security: [{ bearerAuth: [] }]
             parameters:
-                - name: id
+                - name: hazardId
                   in: path
                   required: true
-                  schema:
-                      type: string
-                      format: uuid
+                  schema: { type: string }
             responses:
                 '200':
-                    description: Item found
+                    description: Hazard record
                     content:
                         application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        put:
-            summary: Update an item
-            description: Updates an existing item
-            operationId: updateItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/UpdateItemRequest'
-            responses:
-                '200':
-                    description: Item updated successfully
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        delete:
-            summary: Delete an item
-            description: Deletes an item by its ID
-            operationId: deleteItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            responses:
-                '204':
-                    description: Item deleted successfully
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
+                            schema: { $ref: '#/components/schemas/HazardResponse' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '404': { description: Hazard is absent or unavailable in the caller's permitted classification }
+                '502': { $ref: '#/components/responses/UpstreamFailure' }
 components:
+    securitySchemes:
+        bearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT
     schemas:
-        Item:
+        Hazard:
             type: object
+            required: [Field, Tipe, Klasifikasi, Keterangan]
             properties:
-                id:
-                    type: string
-                    format: uuid
-                name:
-                    type: string
-                description:
-                    type: string
-                    nullable: true
-                createdAt:
-                    type: string
-                    format: date-time
-                updatedAt:
-                    type: string
-                    format: date-time
-            required:
-                - id
-                - name
-                - createdAt
-                - updatedAt
-
-        CreateItemRequest:
+                Field: { type: string }
+                Tipe: { type: string }
+                Klasifikasi: { type: string, enum: [ringkasan, mentah] }
+                Keterangan: { type: string }
+        HazardResponse:
             type: object
+            required: [data]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-            required:
-                - name
-
-        UpdateItemRequest:
+                data: { $ref: '#/components/schemas/Hazard' }
+        HazardListResponse:
             type: object
+            required: [data]
             properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-
-        HealthResponse:
-            type: object
-            properties:
-                status:
-                    type: string
-                    enum: [healthy, unhealthy]
-                timestamp:
-                    type: string
-                    format: date-time
-                services:
-                    type: object
-                    properties:
-                        database:
-                            type: string
-                            enum: [connected, disconnected]
-
+                data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Hazard' }
         ErrorResponse:
             type: object
             properties:
                 error:
                     type: object
                     properties:
-                        message:
-                            type: string
-                        details:
-                            type: array
-                            items:
-                                type: object
+                        message: { type: string }
+    responses:
+        Unauthorized:
+            description: Missing, expired, or invalid access token
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/ErrorResponse' }
+        UpstreamFailure:
+            description: bnpb-auth or BNPB Gateway could not be reached or returned an invalid response
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/ErrorResponse' }
