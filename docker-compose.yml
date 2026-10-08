@@ -18,8 +18,11 @@ services:
         environment:
             PORT: 3000
             SERVICE_NAME: bnpb-auth
-            NODE_ENV: test
+            NODE_ENV: local
             DATABASE_URL: postgresql://${AUTH_STORE_DB_USER}:${AUTH_STORE_DB_PASSWORD}@auth-store:5432/${AUTH_STORE_DB_NAME}
+            JWT_PRIVATE_KEY: ${BNPB_AUTH_JWT_PRIVATE_KEY}
+            JWT_ACCESS_TTL_SECONDS: ${BNPB_AUTH_JWT_ACCESS_TTL_SECONDS}
+            JWT_REFRESH_TTL_SECONDS: ${BNPB_AUTH_JWT_REFRESH_TTL_SECONDS}
         ports:
             - '${BNPB_AUTH_HOST_PORT}:3000'
         depends_on:

@@ -4,6 +4,7 @@ import { JwtAuthenticator } from '../../src/services/jwt-authenticator.service';
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const privatePem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
 const publicPem = publicKey.export({ format: 'pem', type: 'spki' }).toString();
+const correlationId = '11111111-1111-4111-8111-111111111111';
 
 function accessToken(role: string): string {
     const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
@@ -23,12 +24,13 @@ describe('JwtAuthenticator', () => {
 
     it('fetches the auth public key for every request and verifies an RS256 access token', async () => {
         const authenticator = new JwtAuthenticator();
-        await expect(authenticator.authenticate(`Bearer ${accessToken('public')}`)).resolves.toEqual({ sub: 'user-id', sid: 'session-id', role: 'public' });
-        await authenticator.authenticate(`Bearer ${accessToken('lapangan')}`);
+        await expect(authenticator.authenticate(`Bearer ${accessToken('public')}`, correlationId)).resolves.toEqual({ sub: 'user-id', sid: 'session-id', role: 'public' });
+        await authenticator.authenticate(`Bearer ${accessToken('lapangan')}`, correlationId);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[0][1]).toMatchObject({ headers: { 'X-Correlation-ID': correlationId } });
     });
 
     it('rejects an unknown role', async () => {
-        await expect(new JwtAuthenticator().authenticate(`Bearer ${accessToken('admin')}`)).rejects.toMatchObject({ status: 401 });
+        await expect(new JwtAuthenticator().authenticate(`Bearer ${accessToken('admin')}`, correlationId)).rejects.toMatchObject({ status: 401 });
     });
 });

@@ -16,8 +16,8 @@ export class HazardController {
     @httpGet('/')
     async list(@request() request: Request, @response() res: Response) {
         try {
-            const auth = await this.jwtAuthenticator.authenticate(request.header('authorization'));
-            const hazards = await this.hazardGateway.list(classificationForRole(auth.role));
+            const auth = await this.jwtAuthenticator.authenticate(request.header('authorization'), res.locals.correlationId);
+            const hazards = await this.hazardGateway.list(classificationForRole(auth.role), res.locals.correlationId);
             return res.json({ data: hazards });
         } catch (error) {
             return handleError(error, res);
@@ -27,8 +27,8 @@ export class HazardController {
     @httpGet('/:hazardId')
     async getById(@requestParam('hazardId') hazardId: string, @request() request: Request, @response() res: Response) {
         try {
-            const auth = await this.jwtAuthenticator.authenticate(request.header('authorization'));
-            const hazard = await this.hazardGateway.getById(hazardId, classificationForRole(auth.role));
+            const auth = await this.jwtAuthenticator.authenticate(request.header('authorization'), res.locals.correlationId);
+            const hazard = await this.hazardGateway.getById(hazardId, classificationForRole(auth.role), res.locals.correlationId);
             return res.json({ data: hazard });
         } catch (error) {
             return handleError(error, res);

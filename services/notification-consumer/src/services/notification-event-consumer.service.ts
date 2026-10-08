@@ -27,6 +27,7 @@ export class NotificationEventConsumer implements INotificationEventConsumer {
                     eventId: message.eventId,
                     hazardId: message.hazard.hazardId,
                     severity: message.hazard.severity,
+                    correlationId: message.correlationId,
                     result,
                 },
                 result === 'created' ? 'Created notification inbox entry' : 'Processed notification event'

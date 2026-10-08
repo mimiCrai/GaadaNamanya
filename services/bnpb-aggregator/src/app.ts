@@ -31,7 +31,8 @@ export async function createApp(existingContainer?: Container): Promise<express.
     app.use(bodyParser.urlencoded({ extended: true }));
 
     app.use((req: Request, res: Response, next: NextFunction) => {
-        const correlationId = req.header('x-correlation-id') ?? randomUUID();
+        const incoming = req.header('x-correlation-id');
+        const correlationId = incoming !== undefined && UUID_PATTERN.test(incoming) ? incoming : randomUUID();
         res.setHeader('X-Correlation-ID', correlationId);
         logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
@@ -54,7 +55,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
                 res: Response,
                 _next: NextFunction
             ) => {
-                logger.error({ err, path: req.path }, 'Request error');
+                logger.error({ err, path: req.path, correlationId: res.getHeader('X-Correlation-ID') }, 'Request error');
 
                 const status = err.status || 500;
                 res.status(status).json({
@@ -69,3 +70,5 @@ export async function createApp(existingContainer?: Container): Promise<express.
 
     return server.build();
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
