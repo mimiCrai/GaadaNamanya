@@ -7,6 +7,8 @@ const config = {
     aggregatorUrl: required('AGGREGATOR_URL'),
     dashboardUrl: required('DASHBOARD_URL'),
     notificationUrl: required('NOTIFICATION_URL'),
+    authUrl: required('AUTH_URL'),
+    clientApiUrl: required('CLIENT_API_URL'),
     bmkgApiKey: required('BMKG_API_KEY'),
     pvmbgToken: required('PVMBG_TOKEN'),
     internalApiKey: required('BNPB_INTERNAL_API_KEY'),
@@ -25,6 +27,14 @@ async function fetchJson(url, options = {}) {
     const response = await fetch(url, { signal: AbortSignal.timeout(10_000), ...options });
     const body = await response.json().catch(() => undefined);
     return { response, body };
+}
+
+async function createJson(url, body, headers = {}) {
+    return fetchJson(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+    });
 }
 
 async function waitFor(description, predicate, timeoutMs = 75_000) {
@@ -74,6 +84,28 @@ after(async () => {
 });
 
 test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_000 }, async (t) => {
+    let accessToken;
+    let refreshToken;
+
+    await t.test('publishes an RSA public key and registers a public client user', async () => {
+        await waitFor('bnpb-auth public key endpoint', async () => {
+            const publicKey = await fetch(`${config.authUrl}/public-key`);
+            return publicKey.status === 200 && /-----BEGIN PUBLIC KEY-----/.test(await publicKey.text());
+        });
+
+        const registered = await waitFor('bnpb-auth registration', async () => {
+            const result = await createJson(`${config.authUrl}/auth/register`, {
+                email: `e2e-${Date.now()}@example.test`,
+                password: 'correct horse battery staple',
+            });
+            return result.response.status === 201 ? result : undefined;
+        });
+        assert.equal(registered.body.data.user.role, 'public');
+        assert.equal(registered.body.data.accessToken.split('.').length, 3);
+        accessToken = registered.body.data.accessToken;
+        refreshToken = registered.body.data.refreshToken;
+    });
+
     await t.test('rejects unauthenticated access to the Aggregator internal API', async () => {
         const { response } = await fetchJson(`${config.aggregatorUrl}/internal/hazards`);
         assert.equal(response.status, 401);
@@ -89,6 +121,49 @@ test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_0
             );
             return sources.has('BMKG') && sources.has('PVMBG') && allHealthy ? payload : undefined;
         });
+    });
+
+    await t.test('authorises the client API and exposes only public hazard summaries', async () => {
+        const unauthenticated = await fetchJson(`${config.clientApiUrl}/hazards`);
+        assert.equal(unauthenticated.response.status, 401);
+
+        const clientResult = await waitFor('bnpb-client-api authorised hazard response', async () => {
+            const result = await fetchJson(`${config.clientApiUrl}/hazards`, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            return result.response.status === 200 ? result : undefined;
+        });
+        const { body } = clientResult;
+        assert.ok(body.data.length > 0);
+        assert.ok(body.data.every((hazard) => hazard.Klasifikasi === 'ringkasan'));
+        assert.ok(body.data.every((hazard) => !hazard.Keterangan.includes('sourceRefId')));
+
+        const canonical = await getHazards();
+        const hazardId = canonical.data[0].hazardId;
+        const byId = await fetchJson(`${config.clientApiUrl}/hazards/${hazardId}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        assert.equal(byId.response.status, 200, `Client API by-id response: ${JSON.stringify(byId.body)}`);
+        assert.equal(byId.body.data.Klasifikasi, 'ringkasan');
+
+        const invalidToken = `${accessToken.slice(0, -1)}${accessToken.endsWith('a') ? 'b' : 'a'}`;
+        const rejected = await fetchJson(`${config.clientApiUrl}/hazards`, {
+            headers: { Authorization: `Bearer ${invalidToken}` },
+        });
+        assert.equal(rejected.response.status, 401);
+    });
+
+    await t.test('rotates and revokes the Auth refresh session', async () => {
+        const refreshed = await createJson(`${config.authUrl}/auth/refresh`, { refreshToken });
+        assert.equal(refreshed.response.status, 200, `Auth refresh response: ${JSON.stringify(refreshed.body)}`);
+        assert.notEqual(refreshed.body.data.refreshToken, refreshToken);
+        refreshToken = refreshed.body.data.refreshToken;
+
+        const loggedOut = await createJson(`${config.authUrl}/auth/logout`, { refreshToken });
+        assert.equal(loggedOut.response.status, 204);
+
+        const revoked = await createJson(`${config.authUrl}/auth/refresh`, { refreshToken });
+        assert.equal(revoked.response.status, 401);
     });
 
     await t.test('rejects credentials from the other provider', async () => {
