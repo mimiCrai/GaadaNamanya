@@ -30,17 +30,18 @@ src/
 │   └── types.ts           # DI symbols
 ├── controllers/           # HTTP route handlers
 │   ├── health.controller.ts
-│   └── item.controller.ts
+│   └── auth.controller.ts
 ├── services/              # Business logic (includes interface)
 │   ├── health.service.ts
-│   ├── item.service.ts    # IItemService + ItemService
+│   ├── auth.service.ts
 │   ├── message-publisher.service.ts
 │   └── message-subscriber.service.ts
 ├── repositories/          # Data access layer (includes interface)
-│   └── item.repository.ts # IItemRepository + ItemRepository
+│   ├── user.repository.ts
+│   └── session.repository.ts
 ├── types/                 # DTOs only
 │   ├── index.ts
-│   └── item.ts            # CreateItemDto, UpdateItemDto
+│   └── auth.ts            # Authentication DTOs
 ├── db/
 │   ├── index.ts           # Database connection
 │   ├── schema/            # Drizzle table definitions
@@ -93,6 +94,14 @@ docs/
    npm run db:migrate # Run migrations (prod)
    ```
 
+5. **Provision the initial administrator**
+   ```bash
+   # Set ADMIN_EMAIL and ADMIN_PASSWORD in .env, then:
+   npm run build
+   npm run db:seed-admin
+   ```
+   The command creates the account if absent or promotes the matching existing account to `admin` without changing its password. Public registration can create only `public` accounts; administrators use the admin API to provision other roles.
+
 5. **Start the server**
    ```bash
    npm run dev    # Development with watch mode
@@ -115,6 +124,7 @@ The API will be available at http://localhost:3000
 | `npm run format` | Format code with Prettier |
 | `npm run db:generate` | Generate migration from schema changes |
 | `npm run db:migrate` | Run pending migrations |
+| `npm run db:seed-admin` | Create or promote the configured initial administrator |
 | `npm run db:push` | Push schema directly to database |
 | `npm run db:studio` | Open Drizzle Studio (DB GUI) |
 
@@ -124,13 +134,6 @@ The API will be available at http://localhost:3000
 - `GET /health` - Service health status
 - `GET /health/live` - Liveness probe
 - `GET /health/ready` - Readiness probe
-
-### Items (Example CRUD)
-- `GET /items` - List all items
-- `GET /items/:id` - Get item by ID
-- `POST /items` - Create new item
-- `PUT /items/:id` - Update item
-- `DELETE /items/:id` - Delete item
 
 See `docs/openapi.yaml` for full API specification.
 
@@ -337,7 +340,7 @@ npm test
 npm test -- --coverage
 
 # Run specific test file
-npm test -- tests/services/item.service.test.ts
+npm test -- tests/services/auth.service.test.ts
 
 # Watch mode
 npm run test:watch

@@ -1,4 +1,60 @@
 services:
+    auth-store:
+        image: postgres:16-alpine
+        environment:
+            POSTGRES_USER: ${AUTH_STORE_DB_USER}
+            POSTGRES_PASSWORD: ${AUTH_STORE_DB_PASSWORD}
+            POSTGRES_DB: ${AUTH_STORE_DB_NAME}
+        volumes:
+            - auth_store_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+
+    bnpb-auth:
+        build: ./services/bnpb-auth
+        environment:
+            PORT: 3000
+            SERVICE_NAME: bnpb-auth
+            NODE_ENV: test
+            DATABASE_URL: postgresql://${AUTH_STORE_DB_USER}:${AUTH_STORE_DB_PASSWORD}@auth-store:5432/${AUTH_STORE_DB_NAME}
+        ports:
+            - '${BNPB_AUTH_HOST_PORT}:3000'
+        depends_on:
+            auth-store:
+                condition: service_healthy
+        healthcheck:
+            test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/live').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+            interval: 5s
+            timeout: 5s
+            start_period: 15s
+            retries: 12
+
+    bnpb-client-api:
+        build: ./services/bnpb-client-api
+        environment:
+            PORT: 3000
+            SERVICE_NAME: bnpb-client-api
+            NODE_ENV: test
+            BNPB_AUTH_PUBLIC_KEY_URL: http://bnpb-auth:3000/public-key
+            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator:3000
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+        ports:
+            - '${BNPB_CLIENT_API_HOST_PORT}:3000'
+        depends_on:
+            bnpb-auth:
+                condition: service_healthy
+            bnpb-aggregator:
+                condition: service_started
+        healthcheck:
+            test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/live').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+            interval: 5s
+            timeout: 5s
+            start_period: 10s
+            retries: 12
+
     canonical-store:
         image: postgres:16-alpine
         environment:
@@ -250,6 +306,7 @@ services:
         restart: unless-stopped
 
 volumes:
+    auth_store_data:
     canonical_store_data:
     kafka_data:
     dashboard_store_data:

@@ -9,6 +9,19 @@ servers:
       description: Local development server
 
 paths:
+    /public-key:
+        get:
+            summary: Get the JWT signing public key
+            description: Returns the RSA public key used to verify RS256 access and refresh tokens.
+            tags: [Authentication]
+            responses:
+                '200':
+                    description: RSA public key in PEM format
+                    content:
+                        application/x-pem-file:
+                            schema:
+                                type: string
+
     /health:
         get:
             summary: Health check
@@ -70,193 +83,288 @@ paths:
                 '503':
                     description: Service is not ready
 
-    /items:
-        get:
-            summary: Get all items
-            description: Returns a list of all items
-            operationId: getAllItems
-            tags:
-                - Items
-            responses:
-                '200':
-                    description: List of items
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        type: array
-                                        items:
-                                            $ref: '#/components/schemas/Item'
-
+    /auth/register:
         post:
-            summary: Create a new item
-            description: Creates a new item and returns it
-            operationId: createItem
-            tags:
-                - Items
+            summary: Register a public user
+            tags: [Authentication]
             requestBody:
                 required: true
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/CreateItemRequest'
+                            $ref: '#/components/schemas/RegisterRequest'
             responses:
                 '201':
-                    description: Item created successfully
+                    description: Public user registered and session created
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
+                                $ref: '#/components/schemas/AuthResponse'
                 '400':
                     description: Invalid request body
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                '409':
+                    description: Email already registered
 
-    /items/{id}:
-        get:
-            summary: Get an item by ID
-            description: Returns a single item by its ID
-            operationId: getItemById
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
-            responses:
-                '200':
-                    description: Item found
-                    content:
-                        application/json:
-                            schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-
-        put:
-            summary: Update an item
-            description: Updates an existing item
-            operationId: updateItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
+    /auth/login:
+        post:
+            summary: Log in and create a session
+            tags: [Authentication]
             requestBody:
                 required: true
                 content:
                     application/json:
                         schema:
-                            $ref: '#/components/schemas/UpdateItemRequest'
+                            $ref: '#/components/schemas/LoginRequest'
             responses:
                 '200':
-                    description: Item updated successfully
+                    description: Session created
                     content:
                         application/json:
                             schema:
-                                type: object
-                                properties:
-                                    data:
-                                        $ref: '#/components/schemas/Item'
-                '404':
-                    description: Item not found
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                                $ref: '#/components/schemas/AuthResponse'
+                '400':
+                    description: Invalid request body
+                '401':
+                    description: Invalid credentials
 
-        delete:
-            summary: Delete an item
-            description: Deletes an item by its ID
-            operationId: deleteItem
-            tags:
-                - Items
-            parameters:
-                - name: id
-                  in: path
-                  required: true
-                  schema:
-                      type: string
-                      format: uuid
+    /auth/refresh:
+        post:
+            summary: Rotate a refresh session
+            tags: [Authentication]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RefreshRequest'
+            responses:
+                '200':
+                    description: New access and refresh tokens
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TokenResponse'
+                '400':
+                    description: Invalid request body
+                '401':
+                    description: Invalid refresh token
+
+    /auth/logout:
+        post:
+            summary: Revoke a refresh session
+            tags: [Authentication]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/RefreshRequest'
             responses:
                 '204':
-                    description: Item deleted successfully
-                '404':
-                    description: Item not found
+                    description: Session revoked
+                '400':
+                    description: Invalid request body
+                '401':
+                    description: Invalid refresh token
+
+    /admin/users:
+        get:
+            summary: List user accounts
+            tags: [Administration]
+            security: [{ bearerAuth: [] }]
+            responses:
+                '200':
+                    description: User accounts
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ErrorResponse'
+                                $ref: '#/components/schemas/UserListResponse'
+                '401': { description: Missing or invalid access token }
+                '403': { description: Administrator role required }
+        post:
+            summary: Create a user account
+            tags: [Administration]
+            security: [{ bearerAuth: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: '#/components/schemas/AdminCreateUserRequest' }
+            responses:
+                '201':
+                    description: User account created
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/UserResponse' }
+                '401': { description: Missing or invalid access token }
+                '403': { description: Administrator role required }
+                '409': { description: Email already registered }
+
+    /admin/users/{id}:
+        get:
+            summary: Get a user account
+            tags: [Administration]
+            security: [{ bearerAuth: [] }]
+            parameters: [{ $ref: '#/components/parameters/UserId' }]
+            responses:
+                '200':
+                    description: User account
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/UserResponse' }
+                '401': { description: Missing or invalid access token }
+                '403': { description: Administrator role required }
+                '404': { description: User not found }
+        patch:
+            summary: Update a user account
+            tags: [Administration]
+            security: [{ bearerAuth: [] }]
+            parameters: [{ $ref: '#/components/parameters/UserId' }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema: { $ref: '#/components/schemas/AdminUpdateUserRequest' }
+            responses:
+                '200':
+                    description: Updated user account
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/UserResponse' }
+                '401': { description: Missing or invalid access token }
+                '403': { description: Administrator role required }
+                '404': { description: User not found }
+                '409': { description: Email already registered }
+        delete:
+            summary: Delete a user account
+            tags: [Administration]
+            security: [{ bearerAuth: [] }]
+            parameters: [{ $ref: '#/components/parameters/UserId' }]
+            responses:
+                '204': { description: User account deleted }
+                '400': { description: Administrators cannot delete their own account }
+                '401': { description: Missing or invalid access token }
+                '403': { description: Administrator role required }
+                '404': { description: User not found }
 
 components:
+    securitySchemes:
+        bearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT
+    parameters:
+        UserId:
+            name: id
+            in: path
+            required: true
+            schema: { type: string, format: uuid }
     schemas:
-        Item:
+        RegisterRequest:
             type: object
+            required: [email, password]
+            additionalProperties: false
+            properties:
+                email:
+                    type: string
+                    format: email
+                password:
+                    type: string
+                    format: password
+                    minLength: 8
+
+        LoginRequest:
+            type: object
+            required: [email, password]
+            properties:
+                email:
+                    type: string
+                    format: email
+                password:
+                    type: string
+                    format: password
+                    minLength: 8
+
+        RefreshRequest:
+            type: object
+            required: [refreshToken]
+            properties:
+                refreshToken:
+                    type: string
+                    minLength: 1
+
+        AuthUser:
+            type: object
+            required: [id, email, role]
             properties:
                 id:
                     type: string
                     format: uuid
-                name:
+                email:
                     type: string
-                description:
+                    format: email
+                role:
                     type: string
-                    nullable: true
-                createdAt:
-                    type: string
-                    format: date-time
-                updatedAt:
-                    type: string
-                    format: date-time
-            required:
-                - id
-                - name
-                - createdAt
-                - updatedAt
+                    enum: [public, lapangan, internal, admin]
 
-        CreateItemRequest:
-            type: object
-            properties:
-                name:
-                    type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
-                    type: string
-                    nullable: true
-            required:
-                - name
+        AdminCreateUserRequest:
+            allOf:
+                - $ref: '#/components/schemas/RegisterRequest'
+                - type: object
+                  required: [role]
+                  properties:
+                      role: { type: string, enum: [public, lapangan, internal, admin] }
 
-        UpdateItemRequest:
+        AdminUpdateUserRequest:
             type: object
+            minProperties: 1
             properties:
-                name:
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+                role: { type: string, enum: [public, lapangan, internal, admin] }
+
+        UserResponse:
+            type: object
+            required: [data]
+            properties:
+                data: { $ref: '#/components/schemas/AuthUser' }
+
+        UserListResponse:
+            type: object
+            required: [data]
+            properties:
+                data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuthUser' }
+
+        Tokens:
+            type: object
+            required: [accessToken, refreshToken]
+            properties:
+                accessToken:
                     type: string
-                    minLength: 1
-                    maxLength: 255
-                description:
+                refreshToken:
                     type: string
-                    nullable: true
+
+        TokenResponse:
+            type: object
+            required: [data]
+            properties:
+                data:
+                    $ref: '#/components/schemas/Tokens'
+
+        AuthResponse:
+            type: object
+            required: [data]
+            properties:
+                data:
+                    allOf:
+                        - $ref: '#/components/schemas/Tokens'
+                        - type: object
+                          required: [user]
+                          properties:
+                              user:
+                                  $ref: '#/components/schemas/AuthUser'
 
         HealthResponse:
             type: object

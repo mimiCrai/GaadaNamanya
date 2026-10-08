@@ -6,9 +6,10 @@ export const TYPES = {
     Database: Symbol.for('Database'),
 
     // Repositories (bind to interfaces)
-    IItemRepository: Symbol.for('IItemRepository'),
+    IUserRepository: Symbol.for('IUserRepository'),
+    ISessionRepository: Symbol.for('ISessionRepository'),
 
     // Services (bind to interfaces)
     HealthService: Symbol.for('HealthService'),
-    IItemService: Symbol.for('IItemService'),
+    IAuthService: Symbol.for('IAuthService'),
 };
