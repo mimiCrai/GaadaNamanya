@@ -3,20 +3,22 @@ import { db } from '../db';
 import { TYPES } from '../constants/types';
 
 // Repositories
-import { IItemRepository, ItemRepository } from '../repositories/item.repository';
+import { ISessionRepository, SessionRepository } from '../repositories/session.repository';
+import { IUserRepository, UserRepository } from '../repositories/user.repository';
 
 // Services
 import { HealthService } from '../services/health.service';
-import { IItemService, ItemService } from '../services/item.service';
+import { AuthService, IAuthService } from '../services/auth.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     // Database
     bind(TYPES.Database).toConstantValue(db);
 
     // Repositories (bind interface to implementation)
-    bind<IItemRepository>(TYPES.IItemRepository).to(ItemRepository).inSingletonScope();
+    bind<IUserRepository>(TYPES.IUserRepository).to(UserRepository).inSingletonScope();
+    bind<ISessionRepository>(TYPES.ISessionRepository).to(SessionRepository).inSingletonScope();
 
     // Services (bind interface to implementation)
     bind<HealthService>(TYPES.HealthService).to(HealthService).inSingletonScope();
-    bind<IItemService>(TYPES.IItemService).to(ItemService).inSingletonScope();
+    bind<IAuthService>(TYPES.IAuthService).to(AuthService).inSingletonScope();
 });

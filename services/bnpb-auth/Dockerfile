@@ -13,11 +13,13 @@ FROM node:22-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production
+COPY --from=builder /app/node_modules ./node_modules
 
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
+COPY --from=builder /app/src/db ./src/db
 COPY docs ./docs
 
 EXPOSE 3000
 
-CMD ["node", "./dist/src/server.js"]
+CMD ["sh", "-c", "npm run db:migrate && exec node ./dist/src/server.js"]

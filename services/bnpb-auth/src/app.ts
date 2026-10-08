@@ -14,7 +14,9 @@ import { logger } from './libs/logger';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
-import './controllers/item.controller';
+import './controllers/auth.controller';
+import './controllers/admin-users.controller';
+import './controllers/public-key.controller';
 
 /**
  * Create and configure the Express application
