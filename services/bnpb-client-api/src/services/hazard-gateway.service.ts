@@ -119,7 +119,6 @@ function validateCanonicalHazard(value: unknown): CanonicalHazardEvent {
 }
 
 function toClientHazard(hazard: CanonicalHazardEvent, classification: HazardClassification): Hazard {
-    // TODO: Confirm whether the client label `Field` should map to `areaName`.
     const summary = `Kejadian ${hazard.hazardType} berstatus ${hazard.severity} di ${hazard.areaName} pada ${hazard.occurredAt}.`;
 
     return {

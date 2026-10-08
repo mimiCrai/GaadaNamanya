@@ -26,8 +26,6 @@ export class JwtAuthenticator implements IJwtAuthenticator {
     }
 
     private async fetchPublicKey(correlationId: string): Promise<string> {
-        // TODO: Add bounded key caching with key-rotation support if the auth service permits it.
-        // This deliberately fetches the key for every request during development.
         let response: Response;
         const startedAt = Date.now();
         try {
