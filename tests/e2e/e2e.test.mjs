@@ -146,7 +146,8 @@ test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_0
         assert.equal(byId.response.status, 200, `Client API by-id response: ${JSON.stringify(byId.body)}`);
         assert.equal(byId.body.data.Klasifikasi, 'ringkasan');
 
-        const invalidToken = `${accessToken.slice(0, -1)}${accessToken.endsWith('a') ? 'b' : 'a'}`;
+        const [header, payload, signature] = accessToken.split('.');
+        const invalidToken = `${header}.${payload}.${signature.startsWith('a') ? 'b' : 'a'}${signature.slice(1)}`;
         const rejected = await fetchJson(`${config.clientApiUrl}/hazards`, {
             headers: { Authorization: `Bearer ${invalidToken}` },
         });
