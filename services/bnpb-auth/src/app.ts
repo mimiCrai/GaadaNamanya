@@ -7,10 +7,12 @@ import compression from 'compression';
 import * as OpenApiValidator from 'express-openapi-validator';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
+import { randomUUID } from 'node:crypto';
 import path from 'path';
 
 import { bindings } from './config/inversify.config';
 import { logger } from './libs/logger';
+import './types/locals';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
@@ -37,9 +39,11 @@ export async function createApp(): Promise<express.Application> {
     app.use(bodyParser.json({ limit: '5mb' }));
     app.use(bodyParser.urlencoded({ extended: true }));
 
-    // Request logging
-    app.use((req: Request, _res: Response, next: NextFunction) => {
-        logger.info({ method: req.method, path: req.path }, 'Incoming request');
+    app.use((req: Request, res: Response, next: NextFunction) => {
+        const correlationId = readCorrelationId(req.header('x-correlation-id'));
+        res.locals.correlationId = correlationId;
+        res.setHeader('X-Correlation-ID', correlationId);
+        logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
     });
 
@@ -65,7 +69,7 @@ export async function createApp(): Promise<express.Application> {
                 res: Response,
                 _next: NextFunction
             ) => {
-                logger.error({ err, path: req.path }, 'Request error');
+                logger.error({ err, path: req.path, correlationId: res.locals.correlationId }, 'Request error');
 
                 const status = err.status || 500;
                 res.status(status).json({
@@ -80,3 +84,9 @@ export async function createApp(): Promise<express.Application> {
 
     return server.build();
 }
+
+function readCorrelationId(value: string | undefined): string {
+    return value !== undefined && UUID_PATTERN.test(value) ? value : randomUUID();
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

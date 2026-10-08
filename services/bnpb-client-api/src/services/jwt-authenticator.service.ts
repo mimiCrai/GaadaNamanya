@@ -1,6 +1,7 @@
 import { verify } from 'crypto';
 import { injectable } from 'inversify';
 import { ApiError } from '../errors/api-error';
+import { logger } from '../libs/logger';
 import { AuthContext, USER_ROLES, UserRole } from '../types/auth';
 import env from '../util/env';
 
@@ -11,28 +12,46 @@ interface JwtPayload extends AuthContext {
 }
 
 export interface IJwtAuthenticator {
-    authenticate(authorization: string | undefined): Promise<AuthContext>;
+    authenticate(authorization: string | undefined, correlationId: string): Promise<AuthContext>;
 }
 
 @injectable()
 export class JwtAuthenticator implements IJwtAuthenticator {
-    async authenticate(authorization: string | undefined): Promise<AuthContext> {
+    async authenticate(authorization: string | undefined, correlationId: string): Promise<AuthContext> {
         const token = readBearerToken(authorization);
-        const publicKey = await this.fetchPublicKey();
+        const publicKey = await this.fetchPublicKey(correlationId);
         const payload = verifyAccessToken(token, publicKey);
 
         return { sub: payload.sub, sid: payload.sid, role: payload.role };
     }
 
-    private async fetchPublicKey(): Promise<string> {
+    private async fetchPublicKey(correlationId: string): Promise<string> {
         // TODO: Add bounded key caching with key-rotation support if the auth service permits it.
         // This deliberately fetches the key for every request during development.
         let response: Response;
+        const startedAt = Date.now();
         try {
-            response = await fetch(env.BNPB_AUTH_PUBLIC_KEY_URL, { headers: { accept: 'application/x-pem-file' } });
+            response = await fetch(env.BNPB_AUTH_PUBLIC_KEY_URL, {
+                headers: { accept: 'application/x-pem-file', 'X-Correlation-ID': correlationId },
+            });
         } catch {
+            logger.error(
+                { target: 'bnpb-auth', path: '/public-key', correlationId, latencyMs: Date.now() - startedAt },
+                'Outgoing request failed'
+            );
             throw new ApiError('Authentication service is unavailable', 502);
         }
+
+        logger.info(
+            {
+                target: 'bnpb-auth',
+                path: '/public-key',
+                status: response.status,
+                correlationId,
+                latencyMs: Date.now() - startedAt,
+            },
+            'Outgoing request completed'
+        );
 
         if (!response.ok) throw new ApiError('Authentication service is unavailable', 502);
 

@@ -28,6 +28,7 @@ export class DashboardEventConsumer implements IDashboardEventConsumer {
                     eventId: message.eventId,
                     hazardId: message.hazard.hazardId,
                     eventType: message.eventType,
+                    correlationId: message.correlationId,
                     applied,
                 },
                 applied ? 'Updated dashboard projection' : 'Skipped already processed dashboard event'

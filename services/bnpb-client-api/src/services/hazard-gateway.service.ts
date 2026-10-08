@@ -1,5 +1,6 @@
 import { injectable } from 'inversify';
 import { ApiError } from '../errors/api-error';
+import { logger } from '../libs/logger';
 import { UserRole } from '../types/auth';
 import env from '../util/env';
 
@@ -27,37 +28,47 @@ interface CanonicalHazardEvent {
 }
 
 export interface IHazardGateway {
-    list(classification: HazardClassification): Promise<Hazard[]>;
-    getById(hazardId: string, classification: HazardClassification): Promise<Hazard>;
+    list(classification: HazardClassification, correlationId: string): Promise<Hazard[]>;
+    getById(hazardId: string, classification: HazardClassification, correlationId: string): Promise<Hazard>;
 }
 
 @injectable()
 export class HazardGateway implements IHazardGateway {
-    async list(classification: HazardClassification): Promise<Hazard[]> {
-        const result = await this.request('/internal/hazards');
+    async list(classification: HazardClassification, correlationId: string): Promise<Hazard[]> {
+        const result = await this.request('/internal/hazards', correlationId);
         if (!Array.isArray(result)) throw new ApiError('BNPB Gateway returned an invalid response', 502);
         return result.map((hazard) => toClientHazard(validateCanonicalHazard(hazard), classification));
     }
 
-    async getById(hazardId: string, classification: HazardClassification): Promise<Hazard> {
-        const result = await this.request(`/internal/hazards/${encodeURIComponent(hazardId)}`);
+    async getById(hazardId: string, classification: HazardClassification, correlationId: string): Promise<Hazard> {
+        const result = await this.request(`/internal/hazards/${encodeURIComponent(hazardId)}`, correlationId);
         return toClientHazard(validateCanonicalHazard(result), classification);
     }
 
-    private async request(path: string): Promise<unknown> {
+    private async request(path: string, correlationId: string): Promise<unknown> {
         const url = new URL(path, `${env.BNPB_GATEWAY_BASE_URL}/`);
 
         let response: Response;
+        const startedAt = Date.now();
         try {
             response = await fetch(url, {
                 headers: {
                     accept: 'application/json',
                     'X-BNPB-Internal-Key': env.BNPB_INTERNAL_API_KEY,
+                    'X-Correlation-ID': correlationId,
                 },
             });
         } catch {
+            logger.error(
+                { target: 'bnpb-aggregator', path, correlationId, latencyMs: Date.now() - startedAt },
+                'Outgoing request failed'
+            );
             throw new ApiError('BNPB Gateway is unavailable', 502);
         }
+        logger.info(
+            { target: 'bnpb-aggregator', path, status: response.status, correlationId, latencyMs: Date.now() - startedAt },
+            'Outgoing request completed'
+        );
         if (response.status === 404) throw new ApiError('Hazard not found', 404);
         if (!response.ok) throw new ApiError('BNPB Gateway request failed', 502);
 

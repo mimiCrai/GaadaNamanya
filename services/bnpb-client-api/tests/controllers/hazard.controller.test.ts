@@ -1,12 +1,14 @@
 import 'reflect-metadata';
 import express from 'express';
 import { Container } from 'inversify';
-import { InversifyExpressServer } from 'inversify-express-utils';
 import request from 'supertest';
+import { createApp } from '../../src/app';
+import { bindings } from '../../src/config/inversify.config';
 import { TYPES } from '../../src/constants/types';
-import '../../src/controllers/hazard.controller';
 import { IHazardGateway } from '../../src/services/hazard-gateway.service';
 import { IJwtAuthenticator } from '../../src/services/jwt-authenticator.service';
+
+const correlationId = '11111111-1111-4111-8111-111111111111';
 
 describe('HazardController', () => {
     const jwtAuthenticator = {
@@ -18,11 +20,12 @@ describe('HazardController', () => {
     };
     let app: express.Application;
 
-    beforeAll(() => {
+    beforeAll(async () => {
         const container = new Container();
-        container.bind<IJwtAuthenticator>(TYPES.JwtAuthenticator).toConstantValue(jwtAuthenticator);
-        container.bind<IHazardGateway>(TYPES.HazardGateway).toConstantValue(hazardGateway);
-        app = new InversifyExpressServer(container).build();
+        await container.loadAsync(bindings);
+        container.rebind<IJwtAuthenticator>(TYPES.JwtAuthenticator).toConstantValue(jwtAuthenticator);
+        container.rebind<IHazardGateway>(TYPES.HazardGateway).toConstantValue(hazardGateway);
+        app = await createApp(container);
     });
 
     beforeEach(() => {
@@ -35,11 +38,15 @@ describe('HazardController', () => {
             { Field: 'Bandung', Tipe: 'SEISMIC', Klasifikasi: 'ringkasan', Keterangan: 'Public summary' },
         ]);
 
-        const response = await request(app).get('/hazards').set('Authorization', 'Bearer access-token');
+        const response = await request(app)
+            .get('/hazards')
+            .set('Authorization', 'Bearer access-token')
+            .set('x-correlation-id', correlationId);
 
         expect(response.status).toBe(200);
-        expect(jwtAuthenticator.authenticate).toHaveBeenCalledWith('Bearer access-token');
-        expect(hazardGateway.list).toHaveBeenCalledWith('ringkasan');
+        expect(response.headers['x-correlation-id']).toBe(correlationId);
+        expect(jwtAuthenticator.authenticate).toHaveBeenCalledWith('Bearer access-token', correlationId);
+        expect(hazardGateway.list).toHaveBeenCalledWith('ringkasan', correlationId);
         expect(response.body.data).toHaveLength(1);
     });
 });
