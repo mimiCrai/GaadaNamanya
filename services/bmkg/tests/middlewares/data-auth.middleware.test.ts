@@ -11,23 +11,23 @@ describe('DataAuthMiddleware', () => {
 
     it.each([
         ['no credential', {}, 401, 'missing_credential'],
-        ['a malformed key', { 'X-BMKG-Key': 'local-bmkg-api-key' }, 401, 'malformed_credential'],
+        ['a malformed key', { 'X-BMKG-Key': 'local-bmkg-api-key' }, 403, 'invalid_credential'],
         ['an unknown key', { 'X-BMKG-Key': WRONG_BMKG_KEY }, 403, 'invalid_credential'],
-        ['a PVMBG bearer token', { Authorization: `Bearer ${PVMBG_TOKEN}` }, 403, 'foreign_credential'],
+        ['a PVMBG bearer token', { Authorization: `Bearer ${PVMBG_TOKEN}` }, 403, 'invalid_credential'],
         [
             'a PVMBG token next to a valid BMKG key',
             { 'X-BMKG-Key': BMKG_KEY, Authorization: `Bearer ${PVMBG_TOKEN}` },
             403,
-            'foreign_credential',
+            'invalid_credential',
         ],
-        ['a BNPB client JWT', { Authorization: `Bearer ${BNPB_JWT}` }, 403, 'foreign_credential'],
+        ['a BNPB client JWT', { Authorization: `Bearer ${BNPB_JWT}` }, 403, 'invalid_credential'],
     ])('rejects %s', async (_case, headers, status, error) => {
         const response = await request(app).get('/seismic-events').set(headers);
 
         expect(response.status).toBe(status);
         expect(response.body).toEqual({
             error,
-            message: expect.any(String),
+            message: error === 'invalid_credential' ? 'Invalid credential' : expect.any(String),
             correlation_id: response.headers['x-correlation-id'],
         });
         if (status === 401) {

@@ -1,11 +1,11 @@
 import { inject, injectable } from 'inversify';
 import { TYPES } from '../constants/types';
-import { HazardEvent } from '../db/schema/hazard-events';
+import { HazardEvent, HazardSource } from '../db/schema/hazard-events';
 import { IHazardEventRepository } from '../repositories/hazard-event.repository';
 import { ISourceSyncStateService, PollingStatus } from './source-sync-state.service';
 
 export interface IHazardEventService {
-    getAllHazardEvents(ingestedSince?: Date): Promise<HazardEvent[]>;
+    getAllHazardEvents(ingestedSince?: Date, source?: HazardSource): Promise<HazardEvent[]>;
     getHazardEventById(hazardId: string): Promise<HazardEvent | null>;
     getPollingStatus(): Promise<Record<string, PollingStatus>>;
 }
@@ -17,8 +17,8 @@ export class HazardEventService implements IHazardEventService {
         @inject(TYPES.ISourceSyncStateService) private readonly sourceSyncStateService: ISourceSyncStateService
     ) {}
 
-    async getAllHazardEvents(ingestedSince?: Date): Promise<HazardEvent[]> {
-        return this.hazardEventRepository.findAll(ingestedSince);
+    async getAllHazardEvents(ingestedSince?: Date, source?: HazardSource): Promise<HazardEvent[]> {
+        return this.hazardEventRepository.findAll(ingestedSince, source);
     }
 
     async getHazardEventById(hazardId: string): Promise<HazardEvent | null> {

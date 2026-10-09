@@ -169,7 +169,7 @@ components:
                 application/json:
                     schema: { $ref: '#/components/schemas/Error' }
         Unauthorized:
-            description: Bearer token missing (`missing_credential`) or malformed (`malformed_credential`)
+            description: Bearer token missing (`missing_credential`)
             headers:
                 WWW-Authenticate:
                     schema: { type: string, example: 'Bearer realm="pvmbg"' }
@@ -178,8 +178,9 @@ components:
                     schema: { $ref: '#/components/schemas/Error' }
         Forbidden:
             description: |
-                Unknown token (`invalid_credential`), or a credential from another domain of trust
-                (`foreign_credential`: BMKG key or BNPB client JWT).
+                Any refused credential (`invalid_credential`): malformed or unknown token, or a credential from
+                another domain of trust (BMKG key, BNPB client JWT). The response deliberately does not say which;
+                the reason is recorded only in the request log (`auth_result`).
             content:
                 application/json:
                     schema: { $ref: '#/components/schemas/Error' }
@@ -263,9 +264,7 @@ components:
                     type: string
                     enum:
                         - missing_credential
-                        - malformed_credential
                         - invalid_credential
-                        - foreign_credential
                         - invalid_query
                         - invalid_body
                         - not_found

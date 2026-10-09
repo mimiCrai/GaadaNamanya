@@ -29,14 +29,22 @@ paths:
             summary: List hazards visible to the authenticated user
             tags: [Hazards]
             security: [{ bearerAuth: [] }]
+            parameters:
+                - name: source
+                  in: query
+                  required: false
+                  description: Return only hazards from this provider (BMKG = seismic, PVMBG = volcanic). meta.sources then describes only that provider.
+                  schema: { type: string, enum: [BMKG, PVMBG] }
             responses:
                 '200':
-                    description: Returns ringkasan for public users and mentah for lapangan/internal users. Data is sourced from the internal BNPB Aggregator API.
+                    description: Returns ringkasan for public users and mentah for lapangan/internal users. Data is the last canonical state held by BNPB; meta.sources tells whether each provider's data is current or stale.
                     content:
                         application/json:
                             schema: { $ref: '#/components/schemas/HazardListResponse' }
+                '400': { description: Invalid source value }
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
+                '504': { $ref: '#/components/responses/UpstreamTimeout' }
     /hazards/{hazardId}:
         get:
             summary: Get a hazard visible to the authenticated user
@@ -56,6 +64,7 @@ paths:
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '404': { description: Hazard is absent or unavailable in the caller's permitted classification }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
+                '504': { $ref: '#/components/responses/UpstreamTimeout' }
 components:
     securitySchemes:
         bearerAuth:
@@ -71,18 +80,39 @@ components:
                 Tipe: { type: string }
                 Klasifikasi: { type: string, enum: [ringkasan, mentah] }
                 Keterangan: { type: string }
+        SourceFreshness:
+            type: object
+            required: [status, lastSuccessfulPollAt, staleSince]
+            properties:
+                status:
+                    type: string
+                    enum: [HEALTHY, STALE, UNAVAILABLE]
+                    description: HEALTHY = latest poll succeeded; STALE = serving the last stored data because recent polls failed; UNAVAILABLE = no successful poll yet.
+                lastSuccessfulPollAt: { type: string, format: date-time, nullable: true }
+                staleSince: { type: string, format: date-time, nullable: true, description: When the provider's data stopped being refreshed; null while HEALTHY. }
+        HazardMeta:
+            type: object
+            required: [sources]
+            properties:
+                sources:
+                    type: object
+                    properties:
+                        BMKG: { $ref: '#/components/schemas/SourceFreshness' }
+                        PVMBG: { $ref: '#/components/schemas/SourceFreshness' }
         HazardResponse:
             type: object
-            required: [data]
+            required: [data, meta]
             properties:
                 data: { $ref: '#/components/schemas/Hazard' }
+                meta: { $ref: '#/components/schemas/HazardMeta' }
         HazardListResponse:
             type: object
-            required: [data]
+            required: [data, meta]
             properties:
                 data:
                     type: array
                     items: { $ref: '#/components/schemas/Hazard' }
+                meta: { $ref: '#/components/schemas/HazardMeta' }
         ErrorResponse:
             type: object
             properties:
@@ -98,6 +128,11 @@ components:
                     schema: { $ref: '#/components/schemas/ErrorResponse' }
         UpstreamFailure:
             description: bnpb-auth or BNPB Gateway could not be reached or returned an invalid response
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/ErrorResponse' }
+        UpstreamTimeout:
+            description: BNPB Gateway did not answer within BNPB_GATEWAY_TIMEOUT_MS
             content:
                 application/json:
                     schema: { $ref: '#/components/schemas/ErrorResponse' }

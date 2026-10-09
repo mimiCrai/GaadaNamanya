@@ -2,9 +2,7 @@ import { Response } from 'express';
 
 export type ErrorCode =
     | 'missing_credential'
-    | 'malformed_credential'
     | 'invalid_credential'
-    | 'foreign_credential'
     | 'invalid_query'
     | 'not_found'
     | 'internal_error';

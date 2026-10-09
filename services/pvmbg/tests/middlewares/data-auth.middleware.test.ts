@@ -11,16 +11,16 @@ const WRONG_PVMBG_TOKEN = 'pvmbg.bnpb.ffffffffffffffffffffffffffffffff';
 const REJECTED: [string, Record<string, string>, number, string][] = [
     ['no credential', {}, 401, 'missing_credential'],
     ['a non-bearer Authorization header', { Authorization: `Basic ${PVMBG_TOKEN}` }, 401, 'missing_credential'],
-    ['a malformed token', { Authorization: 'Bearer local-pvmbg-token' }, 401, 'malformed_credential'],
+    ['a malformed token', { Authorization: 'Bearer local-pvmbg-token' }, 403, 'invalid_credential'],
     ['an unknown token', { Authorization: `Bearer ${WRONG_PVMBG_TOKEN}` }, 403, 'invalid_credential'],
-    ['a BMKG key', { 'X-BMKG-Key': BMKG_KEY }, 403, 'foreign_credential'],
+    ['a BMKG key', { 'X-BMKG-Key': BMKG_KEY }, 403, 'invalid_credential'],
     [
         'a BMKG key next to a valid PVMBG token',
         { 'X-BMKG-Key': BMKG_KEY, Authorization: `Bearer ${PVMBG_TOKEN}` },
         403,
-        'foreign_credential',
+        'invalid_credential',
     ],
-    ['a BNPB client JWT', { Authorization: `Bearer ${BNPB_JWT}` }, 403, 'foreign_credential'],
+    ['a BNPB client JWT', { Authorization: `Bearer ${BNPB_JWT}` }, 403, 'invalid_credential'],
 ];
 
 describe('DataAuthMiddleware', () => {
@@ -34,7 +34,7 @@ describe('DataAuthMiddleware', () => {
             expect(response.status).toBe(status);
             expect(response.body).toEqual({
                 error,
-                message: expect.any(String),
+                message: error === 'invalid_credential' ? 'Invalid credential' : expect.any(String),
                 correlation_id: response.headers['x-correlation-id'],
             });
             if (status === 401) {

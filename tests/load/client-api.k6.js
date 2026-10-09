@@ -1,7 +1,8 @@
 import http from 'k6/http';
-import { check, fail, sleep } from 'k6';
+import { check, sleep } from 'k6';
 import execution from 'k6/execution';
 import { Counter, Rate, Trend } from 'k6/metrics';
+import { refreshSession, registerSessions, withoutTrailingSlash } from './lib/sessions.js';
 
 const clientApiBaseUrl = withoutTrailingSlash(__ENV.CLIENT_API_BASE_URL || 'http://localhost:3000');
 const authBaseUrl = withoutTrailingSlash(__ENV.AUTH_BASE_URL || 'http://localhost:3001');
@@ -29,30 +30,7 @@ export const options = {
 };
 
 export function setup() {
-    const sessions = [];
-
-    for (let index = 0; index < vus; index += 1) {
-        const email = `k6-${Date.now()}-${index}-${Math.floor(Math.random() * 1_000_000)}@example.test`;
-        const registration = http.post(
-            `${authBaseUrl}/auth/register`,
-            JSON.stringify({ email, password: 'correct horse battery staple' }),
-            { headers: { 'Content-Type': 'application/json' }, tags: { endpoint: 'auth-register' } }
-        );
-
-        if (!check(registration, { 'k6 user registered': (response) => response.status === 201 })) {
-            fail(`Could not register load-test user: HTTP ${registration.status}`);
-        }
-
-        const accessToken = registration.json('data.accessToken');
-        const refreshToken = registration.json('data.refreshToken');
-        if (typeof accessToken !== 'string' || typeof refreshToken !== 'string') {
-            fail('Registration did not return an access and refresh token');
-        }
-
-        sessions.push({ accessToken, refreshToken });
-    }
-
-    return { sessions };
+    return { sessions: registerSessions(authBaseUrl, vus) };
 }
 
 export default function ({ sessions }) {
@@ -60,7 +38,7 @@ export default function ({ sessions }) {
 
     let response = requestHazards(session.accessToken);
     if (response.status === 401) {
-        session = refreshSession(session.refreshToken);
+        session = refreshSession(authBaseUrl, session.refreshToken);
         response = requestHazards(session.accessToken);
     }
 
@@ -83,28 +61,4 @@ function requestHazards(accessToken) {
         tags: { endpoint: 'hazards' },
         responseCallback: http.expectedStatuses(200, 401, 429),
     });
-}
-
-function refreshSession(refreshToken) {
-    const response = http.post(
-        `${authBaseUrl}/auth/refresh`,
-        JSON.stringify({ refreshToken }),
-        { headers: { 'Content-Type': 'application/json' }, tags: { endpoint: 'auth-refresh' } }
-    );
-
-    if (!check(response, { 'k6 session refreshed': (result) => result.status === 200 })) {
-        fail(`Could not refresh load-test session: HTTP ${response.status}`);
-    }
-
-    const accessToken = response.json('data.accessToken');
-    const nextRefreshToken = response.json('data.refreshToken');
-    if (typeof accessToken !== 'string' || typeof nextRefreshToken !== 'string') {
-        fail('Refresh did not return an access and refresh token');
-    }
-
-    return { accessToken, refreshToken: nextRefreshToken };
-}
-
-function withoutTrailingSlash(value) {
-    return value.replace(/\/$/, '');
 }

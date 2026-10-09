@@ -47,6 +47,14 @@ describe('HazardEventService', () => {
         await expect(hazardEventService.getAllHazardEvents()).resolves.toEqual(hazardEvents);
     });
 
+    it('passes the source filter to the repository', async () => {
+        mockHazardEventRepository.findAll.mockResolvedValue([]);
+
+        await hazardEventService.getAllHazardEvents(undefined, HazardSource.Pvmbg);
+
+        expect(mockHazardEventRepository.findAll).toHaveBeenCalledWith(undefined, HazardSource.Pvmbg);
+    });
+
     it('returns null when a hazard event does not exist', async () => {
         mockHazardEventRepository.findByHazardId.mockResolvedValue(undefined);
 

@@ -10,6 +10,7 @@ import '../types/locals';
 const WWW_AUTHENTICATE = 'Bearer realm="pvmbg"';
 const BEARER_PATTERN = /^Bearer\s+(\S+)\s*$/i;
 const JWT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+const INVALID_CREDENTIAL_MESSAGE = 'Invalid credential';
 
 @injectable()
 export class DataAuthMiddleware extends BaseMiddleware {
@@ -26,7 +27,7 @@ export class DataAuthMiddleware extends BaseMiddleware {
             (bearer !== undefined && !isPvmbgShaped && JWT_PATTERN.test(bearer))
         ) {
             res.locals.authResult = 'foreign_credential';
-            sendError(res, 403, 'foreign_credential', 'Credentials issued by another agency are not accepted by PVMBG');
+            sendError(res, 403, 'invalid_credential', INVALID_CREDENTIAL_MESSAGE);
             return;
         }
 
@@ -37,16 +38,9 @@ export class DataAuthMiddleware extends BaseMiddleware {
             return;
         }
 
-        if (!PVMBG_TOKEN_PATTERN.test(bearer)) {
+        if (!PVMBG_TOKEN_PATTERN.test(bearer) || !matchesAny(bearer, this.config.clientTokens)) {
             res.locals.authResult = 'invalid';
-            res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE);
-            sendError(res, 401, 'malformed_credential', 'Bearer token must have the format pvmbg.<client_id>.<32 hex>');
-            return;
-        }
-
-        if (!matchesAny(bearer, this.config.clientTokens)) {
-            res.locals.authResult = 'invalid';
-            sendError(res, 403, 'invalid_credential', 'Bearer token is not recognised');
+            sendError(res, 403, 'invalid_credential', INVALID_CREDENTIAL_MESSAGE);
             return;
         }
 

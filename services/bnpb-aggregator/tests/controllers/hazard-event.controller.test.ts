@@ -65,7 +65,7 @@ describe('HazardEventController', () => {
         expect(response.status).toBe(200);
         expect(response.body.data).toHaveLength(1);
         expect(response.body.meta.pollingStatus[SourceStream.PvmbgVolcanic].status).toBe(SourceSyncStatus.Stale);
-        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined);
+        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined, undefined);
     });
 
     it('filters hazards by canonical ingestion time', async () => {
@@ -76,7 +76,32 @@ describe('HazardEventController', () => {
             .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
 
         expect(response.status).toBe(200);
-        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(new Date('2026-10-04T10:00:00.000Z'));
+        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(
+            new Date('2026-10-04T10:00:00.000Z'),
+            undefined
+        );
+    });
+
+    it('filters hazards by source', async () => {
+        mockHazardEventService.getAllHazardEvents.mockResolvedValue([]);
+
+        const response = await request(app)
+            .get('/internal/hazards?source=BMKG')
+            .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
+
+        expect(response.status).toBe(200);
+        expect(response.body.meta.pollingStatus[SourceStream.PvmbgVolcanic].status).toBe(SourceSyncStatus.Stale);
+        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined, HazardSource.Bmkg);
+    });
+
+    it('rejects an unknown source', async () => {
+        const response = await request(app)
+            .get('/internal/hazards?source=USGS')
+            .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
+
+        expect(response.status).toBe(400);
+        expect(response.body.error.message).toBe('source must be BMKG or PVMBG');
+        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
     });
 
     it('rejects an invalid since value', async () => {

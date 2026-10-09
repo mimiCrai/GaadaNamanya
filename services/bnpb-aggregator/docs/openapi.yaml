@@ -50,6 +50,13 @@ paths:
                   schema:
                       type: string
                       format: date-time
+                - name: source
+                  in: query
+                  required: false
+                  description: Return only hazards from this provider.
+                  schema:
+                      type: string
+                      enum: [BMKG, PVMBG]
             responses:
                 '200':
                     description: Canonical hazard events; without since, newest occurrence first.
@@ -58,7 +65,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/HazardEventListResponse'
                 '400':
-                    description: Invalid since timestamp
+                    description: Invalid since timestamp or source
                     content:
                         application/json:
                             schema:

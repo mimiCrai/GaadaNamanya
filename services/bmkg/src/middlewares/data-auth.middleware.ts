@@ -10,7 +10,7 @@ import '../types/locals';
 const WWW_AUTHENTICATE = 'ApiKey realm="bmkg", header="X-BMKG-Key"';
 const BEARER_PATTERN = /^Bearer\s+(\S+)\s*$/i;
 const JWT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
-
+const INVALID_CREDENTIAL_MESSAGE = 'Invalid credential';
 
 @injectable()
 export class DataAuthMiddleware extends BaseMiddleware {
@@ -22,7 +22,7 @@ export class DataAuthMiddleware extends BaseMiddleware {
         const bearer = req.header('authorization')?.match(BEARER_PATTERN)?.[1];
         if (bearer !== undefined && (bearer.toLowerCase().startsWith('pvmbg.') || JWT_PATTERN.test(bearer))) {
             res.locals.authResult = 'foreign_credential';
-            sendError(res, 403, 'foreign_credential', 'Credentials issued by another agency are not accepted by BMKG');
+            sendError(res, 403, 'invalid_credential', INVALID_CREDENTIAL_MESSAGE);
             return;
         }
 
@@ -34,16 +34,9 @@ export class DataAuthMiddleware extends BaseMiddleware {
             return;
         }
 
-        if (!BMKG_API_KEY_PATTERN.test(apiKey)) {
+        if (!BMKG_API_KEY_PATTERN.test(apiKey) || !matchesAny(apiKey, this.config.apiKeys)) {
             res.locals.authResult = 'invalid';
-            res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE);
-            sendError(res, 401, 'malformed_credential', 'X-BMKG-Key must have the format bmkg_<keyid>_<32 hex>');
-            return;
-        }
-
-        if (!matchesAny(apiKey, this.config.apiKeys)) {
-            res.locals.authResult = 'invalid';
-            sendError(res, 403, 'invalid_credential', 'X-BMKG-Key is not recognised');
+            sendError(res, 403, 'invalid_credential', INVALID_CREDENTIAL_MESSAGE);
             return;
         }
 

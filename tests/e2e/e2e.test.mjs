@@ -78,6 +78,49 @@ async function assertBmkgContinuesAfter(timestamp) {
     });
 }
 
+let clientToken;
+
+async function getClientHazards(source) {
+    if (!clientToken || Date.now() - clientToken.issuedAt > 30_000) {
+        const { response, body } = await createJson(`${config.authUrl}/auth/register`, {
+            email: `e2e-client-${Date.now()}@example.test`,
+            password: 'correct horse battery staple',
+        });
+        assert.equal(response.status, 201, `Auth registration response: ${JSON.stringify(body)}`);
+        clientToken = { value: body.data.accessToken, issuedAt: Date.now() };
+    }
+
+    const url = new URL('/hazards', config.clientApiUrl);
+    if (source) url.searchParams.set('source', source);
+    const startedAt = Date.now();
+    const { response, body } = await fetchJson(url, { headers: { Authorization: `Bearer ${clientToken.value}` } });
+    return { status: response.status, body, latencyMs: Date.now() - startedAt };
+}
+
+async function assertClientServesStalePvmbg() {
+    const volcanic = await waitFor('Client API flags PVMBG data as stale', async () => {
+        const result = await getClientHazards('PVMBG');
+        return result.body?.meta?.sources?.PVMBG?.status === 'STALE' ? result : undefined;
+    });
+    assert.equal(volcanic.status, 200);
+    assert.ok(volcanic.body.data.length > 0, 'the last known PVMBG hazards are still served');
+    assert.ok(volcanic.body.data.every((hazard) => hazard.Tipe === 'VOLCANIC'));
+    assert.equal(typeof volcanic.body.meta.sources.PVMBG.staleSince, 'string');
+    assert.ok(volcanic.latencyMs < 2_000, `stale PVMBG data took ${volcanic.latencyMs}ms`);
+
+    const seismic = await getClientHazards('BMKG');
+    assert.equal(seismic.status, 200, `Client API BMKG response: ${JSON.stringify(seismic.body)}`);
+    assert.ok(seismic.body.data.every((hazard) => hazard.Tipe === 'SEISMIC'));
+    assert.equal(seismic.body.meta.sources.BMKG.status, 'HEALTHY');
+}
+
+async function waitForClientPvmbgRecovery() {
+    await waitFor('Client API PVMBG freshness recovery', async () => {
+        const freshness = (await getClientHazards('PVMBG')).body?.meta?.sources?.PVMBG;
+        return freshness?.status === 'HEALTHY' && freshness.staleSince === null;
+    });
+}
+
 after(async () => {
     // A failed assertion must not leave the process in simulated outage mode.
     await setPvmbgOutage(false).catch(() => undefined);
@@ -216,6 +259,24 @@ test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_0
         });
     });
 
+    await t.test('filters client hazards by provider and reports their freshness', async () => {
+        const seismic = await getClientHazards('BMKG');
+        assert.equal(seismic.status, 200, `Client API BMKG response: ${JSON.stringify(seismic.body)}`);
+        assert.ok(seismic.body.data.length > 0);
+        assert.ok(seismic.body.data.every((hazard) => hazard.Tipe === 'SEISMIC'));
+        assert.deepEqual(Object.keys(seismic.body.meta.sources), ['BMKG']);
+        assert.equal(seismic.body.meta.sources.BMKG.status, 'HEALTHY');
+
+        const volcanic = await getClientHazards('PVMBG');
+        assert.equal(volcanic.status, 200, `Client API PVMBG response: ${JSON.stringify(volcanic.body)}`);
+        assert.ok(volcanic.body.data.length > 0);
+        assert.ok(volcanic.body.data.every((hazard) => hazard.Tipe === 'VOLCANIC'));
+        assert.equal(volcanic.body.meta.sources.PVMBG.status, 'HEALTHY');
+        assert.equal(volcanic.body.meta.sources.PVMBG.staleSince, null);
+
+        assert.equal((await getClientHazards('USGS')).status, 400);
+    });
+
     await t.test('marks only PVMBG stale during an error outage and recovers', async () => {
         const marker = new Date().toISOString();
         await setPvmbgOutage(true, 'error');
@@ -226,9 +287,11 @@ test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_0
             return status.PVMBG_VOLCANIC?.status === 'STALE' && status.BMKG_SEISMIC?.status === 'HEALTHY';
         });
         await assertBmkgContinuesAfter(marker);
+        await assertClientServesStalePvmbg();
 
         await setPvmbgOutage(false);
         await waitFor('PVMBG recovery', async () => (await getHazards()).meta.pollingStatus.PVMBG_VOLCANIC?.status === 'HEALTHY');
+        await waitForClientPvmbgRecovery();
     });
 
     await t.test('times out a hanging PVMBG request without stopping BMKG polling', async () => {
@@ -240,10 +303,12 @@ test('BNPB polling, canonicalisation, and Kafka consumer flow', { timeout: 180_0
             return payload.meta.pollingStatus.PVMBG_VOLCANIC?.status === 'STALE';
         });
         await assertBmkgContinuesAfter(marker);
+        await assertClientServesStalePvmbg();
 
         await setPvmbgOutage(false);
         await waitFor('PVMBG recovery after hang outage', async () =>
             (await getHazards()).meta.pollingStatus.PVMBG_VOLCANIC?.status === 'HEALTHY'
         );
+        await waitForClientPvmbgRecovery();
     });
 });

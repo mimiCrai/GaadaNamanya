@@ -34,7 +34,7 @@ export interface HazardEventUpsertResult {
 }
 
 export interface IHazardEventRepository {
-    findAll(ingestedSince?: Date): Promise<HazardEvent[]>;
+    findAll(ingestedSince?: Date, source?: HazardSource): Promise<HazardEvent[]>;
     findByHazardId(hazardId: string): Promise<HazardEvent | undefined>;
     findBySourceAndRefId(source: HazardSource, sourceRefId: string): Promise<HazardEvent | undefined>;
     upsertAndEnqueue(input: UpsertHazardEventInput): Promise<HazardEventUpsertResult>;
@@ -44,16 +44,17 @@ export interface IHazardEventRepository {
 export class HazardEventRepository implements IHazardEventRepository {
     constructor(@inject(TYPES.Database) private readonly db: NodePgDatabase<typeof schema>) {}
 
-    async findAll(ingestedSince?: Date): Promise<HazardEvent[]> {
+    async findAll(ingestedSince?: Date, source?: HazardSource): Promise<HazardEvent[]> {
+        const sourceCondition = source ? eq(hazardEvents.source, source) : undefined;
         if (ingestedSince) {
             return this.db
                 .select()
                 .from(hazardEvents)
-                .where(gte(hazardEvents.ingestedAt, ingestedSince))
+                .where(and(gte(hazardEvents.ingestedAt, ingestedSince), sourceCondition))
                 .orderBy(asc(hazardEvents.ingestedAt), asc(hazardEvents.hazardId));
         }
 
-        return this.db.select().from(hazardEvents).orderBy(desc(hazardEvents.occurredAt));
+        return this.db.select().from(hazardEvents).where(sourceCondition).orderBy(desc(hazardEvents.occurredAt));
     }
 
     async findByHazardId(hazardId: string): Promise<HazardEvent | undefined> {

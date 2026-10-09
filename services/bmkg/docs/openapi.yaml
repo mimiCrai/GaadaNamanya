@@ -128,7 +128,7 @@ components:
                 application/json:
                     schema: { $ref: '#/components/schemas/Error' }
         Unauthorized:
-            description: Credential missing (`missing_credential`) or malformed (`malformed_credential`)
+            description: X-BMKG-Key header missing (`missing_credential`)
             headers:
                 WWW-Authenticate:
                     schema: { type: string }
@@ -137,8 +137,9 @@ components:
                     schema: { $ref: '#/components/schemas/Error' }
         Forbidden:
             description: |
-                Unknown credential (`invalid_credential`), or a credential from another domain of trust
-                (`foreign_credential`: PVMBG bearer token or BNPB client JWT).
+                Any refused credential (`invalid_credential`): malformed or unknown key, or a credential from
+                another domain of trust (PVMBG bearer token, BNPB client JWT). The response deliberately does not
+                say which; the reason is recorded only in the request log (`auth_result`).
             content:
                 application/json:
                     schema: { $ref: '#/components/schemas/Error' }
@@ -211,9 +212,7 @@ components:
                     type: string
                     enum:
                         - missing_credential
-                        - malformed_credential
                         - invalid_credential
-                        - foreign_credential
                         - invalid_query
                         - not_found
                         - internal_error
