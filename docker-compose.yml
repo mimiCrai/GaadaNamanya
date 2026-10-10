@@ -64,8 +64,6 @@ services:
             POSTGRES_USER: ${CANONICAL_STORE_DB_USER}
             POSTGRES_PASSWORD: ${CANONICAL_STORE_DB_PASSWORD}
             POSTGRES_DB: ${CANONICAL_STORE_DB_NAME}
-        ports:
-            - '${CANONICAL_STORE_HOST_PORT}:5432'
         volumes:
             - canonical_store_data:/var/lib/postgresql/data
         healthcheck:
@@ -124,8 +122,6 @@ services:
             POSTGRES_USER: ${DASHBOARD_STORE_DB_USER}
             POSTGRES_PASSWORD: ${DASHBOARD_STORE_DB_PASSWORD}
             POSTGRES_DB: ${DASHBOARD_STORE_DB_NAME}
-        ports:
-            - '${DASHBOARD_STORE_HOST_PORT}:5432'
         volumes:
             - dashboard_store_data:/var/lib/postgresql/data
         healthcheck:
@@ -140,8 +136,6 @@ services:
             POSTGRES_USER: ${NOTIFICATION_STORE_DB_USER}
             POSTGRES_PASSWORD: ${NOTIFICATION_STORE_DB_PASSWORD}
             POSTGRES_DB: ${NOTIFICATION_STORE_DB_NAME}
-        ports:
-            - '${NOTIFICATION_STORE_HOST_PORT}:5432'
         volumes:
             - notification_store_data:/var/lib/postgresql/data
         healthcheck:
@@ -229,8 +223,6 @@ services:
             POSTGRES_USER: ${BMKG_STORE_DB_USER}
             POSTGRES_PASSWORD: ${BMKG_STORE_DB_PASSWORD}
             POSTGRES_DB: ${BMKG_STORE_DB_NAME}
-        ports:
-            - '${BMKG_STORE_HOST_PORT}:5432'
         volumes:
             - bmkg_store_data:/var/lib/postgresql/data
         healthcheck:
@@ -272,8 +264,6 @@ services:
             POSTGRES_USER: ${PVMBG_STORE_DB_USER}
             POSTGRES_PASSWORD: ${PVMBG_STORE_DB_PASSWORD}
             POSTGRES_DB: ${PVMBG_STORE_DB_NAME}
-        ports:
-            - '${PVMBG_STORE_HOST_PORT}:5432'
         volumes:
             - pvmbg_store_data:/var/lib/postgresql/data
         healthcheck:

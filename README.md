@@ -30,7 +30,7 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | BNPB Client API | `services/bnpb-client-api` | `http://localhost:3000/` |
 | BNPB Auth | `services/bnpb-auth` | `http://localhost:3001/` |
 | Dashboard Consumer | `services/dashboard-consumer` | `http://localhost:3004/` |
-| Notification Consumer | `services/notification-consumer` | `http://localhost:3004/` |
+| Notification Consumer | `services/notification-consumer` | `http://localhost:3005/` |
 
 ## Cara Menjalankan
 Sebelum menjalankan sistem, pastikan Anda sudah memiliki Docker.
@@ -276,7 +276,6 @@ Berikut adalah daftar variabel konfigurasi yang digunakan pada file `.env`. Nila
 CANONICAL_STORE_DB_USER=
 CANONICAL_STORE_DB_PASSWORD=
 CANONICAL_STORE_DB_NAME=
-CANONICAL_STORE_HOST_PORT=
 
 # Auth Store (PostgreSQL; digunakan oleh bnpb-auth)
 AUTH_STORE_DB_USER=
@@ -333,7 +332,6 @@ BNPB_AGGREGATOR_OUTBOX_BATCH_SIZE=
 DASHBOARD_STORE_DB_USER=
 DASHBOARD_STORE_DB_PASSWORD=
 DASHBOARD_STORE_DB_NAME=
-DASHBOARD_STORE_HOST_PORT=
 DASHBOARD_CONSUMER_HOST_PORT=
 DASHBOARD_CONSUMER_CONTAINER_PORT=
 DASHBOARD_CONSUMER_SERVICE_NAME=
@@ -348,7 +346,6 @@ DASHBOARD_CONSUMER_KAFKA_TOPIC=
 NOTIFICATION_STORE_DB_USER=
 NOTIFICATION_STORE_DB_PASSWORD=
 NOTIFICATION_STORE_DB_NAME=
-NOTIFICATION_STORE_HOST_PORT=
 NOTIFICATION_CONSUMER_HOST_PORT=
 NOTIFICATION_CONSUMER_CONTAINER_PORT=
 NOTIFICATION_CONSUMER_SERVICE_NAME=
@@ -366,7 +363,6 @@ BMKG_LOG_LEVEL=
 BMKG_STORE_DB_USER=
 BMKG_STORE_DB_PASSWORD=
 BMKG_STORE_DB_NAME=
-BMKG_STORE_HOST_PORT=
 BMKG_DATABASE_URL=
 BMKG_API_KEYS=
 BMKG_DELAY_MIN_MS=
@@ -383,7 +379,6 @@ PVMBG_LOG_LEVEL=
 PVMBG_STORE_DB_USER=
 PVMBG_STORE_DB_PASSWORD=
 PVMBG_STORE_DB_NAME=
-PVMBG_STORE_HOST_PORT=
 PVMBG_DATABASE_URL=
 PVMBG_CLIENT_TOKENS=
 PVMBG_DELAY_MIN_MS=
