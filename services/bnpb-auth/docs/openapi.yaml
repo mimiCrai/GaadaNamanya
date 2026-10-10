@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-    title: Repo Template API
-    description: A template Node.js API with Express, Inversify, and Drizzle ORM
+    title: BNPB Authentication Service API
+    description: Issues RS256 access tokens, manages opaque refresh sessions, and administers BNPB user identities.
     version: 1.0.0
 
 servers:
@@ -308,12 +308,18 @@ components:
                     enum: [public, lapangan, internal, admin]
 
         AdminCreateUserRequest:
-            allOf:
-                - $ref: '#/components/schemas/RegisterRequest'
-                - type: object
-                  required: [role]
-                  properties:
-                      role: { type: string, enum: [public, lapangan, internal, admin] }
+            type: object
+            required: [email, password, role]
+            additionalProperties: false
+            properties:
+                email:
+                    type: string
+                    format: email
+                password:
+                    type: string
+                    format: password
+                    minLength: 8
+                role: { type: string, enum: [public, lapangan, internal, admin] }
 
         AdminUpdateUserRequest:
             type: object

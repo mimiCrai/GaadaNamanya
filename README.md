@@ -75,11 +75,36 @@ Open the running services at:
 
 - `http://localhost:8081/health` — BMKG mock.
 - `http://localhost:8082/health` — PVMBG mock.
+- `http://localhost:3000/health` — BNPB Client API.
+- `http://localhost:3001/health` — BNPB Auth Service.
 - `http://localhost:3003/health` — BNPB Aggregator.
 - `http://localhost:3004/dashboard` — Dashboard projection.
 - `http://localhost:3005/notifications` — Notification inbox.
 
 Services run directly on the host use `KAFKA_BROKERS=localhost:9092`. Services inside root Compose use `KAFKA_BROKERS=kafka:29092`.
+
+## Authentication and Client API
+
+BNPB Auth (`http://localhost:3001`) owns user credentials and refresh sessions. It signs short-lived RS256 access tokens (60 seconds by default) using its private key; BNPB Client API receives only Auth's public key for verification. Refresh tokens are stored as hashes by Auth, rotate on refresh, and are never sent to Aggregator, BMKG, or PVMBG.
+
+Registering creates a `public` user and immediately returns an access/refresh-token pair:
+
+```bash
+curl -X POST http://localhost:3001/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"media@example.com","password":"Password123!"}'
+```
+
+Use `POST /auth/login` to obtain a new pair from existing credentials, `POST /auth/refresh` with `{ "refreshToken": "..." }` after the access token expires, and `POST /auth/logout` to revoke a refresh session. Auth also exposes `GET /public-key`, which is used internally by Client API, and administrator-only `/admin/users` endpoints for creating `lapangan` and `internal` identities.
+
+BNPB Client API (`http://localhost:3000`) is the only downstream hazard endpoint. Send the Auth access token with every request:
+
+```bash
+curl http://localhost:3000/hazards \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+`GET /hazards` lists visible hazards, while `GET /hazards/:hazardId` returns one. A `public` user receives the summary representation; `lapangan` and `internal` receive the full representation. Client API forwards the request correlation ID to Auth and Aggregator, and uses its separate `X-BNPB-Internal-Key` only for its internal Aggregator call. It returns `401` for missing, invalid, or expired access tokens and `502` if Auth or Aggregator is unavailable.
 
 ## End-to-end checks
 
