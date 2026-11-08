@@ -1,13 +1,14 @@
 import { Db } from 'mongodb';
 import { createCollectionsAndIndexes } from './migrations/0001-create-collections-and-indexes';
 import { seedSourceSyncStates } from './migrations/0002-seed-source-sync-states';
+import { auditReadIndexes } from './migrations/0003-audit-read-indexes';
 
 export interface Migration {
     id: string;
     up(database: Db): Promise<void>;
 }
 
-export const migrations: Migration[] = [createCollectionsAndIndexes, seedSourceSyncStates];
+export const migrations: Migration[] = [createCollectionsAndIndexes, seedSourceSyncStates, auditReadIndexes];
 
 export async function runMigrations(database: Db, pending: Migration[] = migrations): Promise<string[]> {
     const history = database.collection<{ _id: string; appliedAt: Date }>('schema_migrations');

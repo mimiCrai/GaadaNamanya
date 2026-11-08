@@ -9,6 +9,10 @@ const { OutboxEventRepository } = require('../../dist/src/repositories/outbox-ev
 const { SourceSyncStateRepository } = require('../../dist/src/repositories/source-sync-state.repository');
 const { PendingTsunamiWarningRepository } = require('../../dist/src/repositories/pending-tsunami-warning.repository');
 const { OutboxRelayService } = require('../../dist/src/services/outbox-relay.service');
+const { StorageTopologyService } = require('../../dist/src/services/storage-topology.service');
+const { CanonicalReadRepository } = require('../../dist/src/repositories/canonical-read.repository');
+const { CanonicalQueryService } = require('../../dist/src/services/canonical-query.service');
+const { createHash } = require('node:crypto');
 
 test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, async (t) => {
     const name = process.env.DATABASE_NAME;
@@ -133,7 +137,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             const outboxCount = await outboxCollection.countDocuments();
             const history = store.database.collection('schema_migrations');
             const applied = await history.find().sort({ _id: 1 }).toArray();
-            assert.equal(applied.length, 2);
+            assert.equal(applied.length, migrations.length);
             assert.deepEqual(await runMigrations(store.database), []);
             await store.connect();
             assert.deepEqual(await history.find().sort({ _id: 1 }).toArray(), applied);
@@ -146,7 +150,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
 
             // Adopt a database created by the previous initializer without resetting its data.
             await history.deleteMany({});
-            assert.equal((await runMigrations(store.database)).length, 2);
+            assert.equal((await runMigrations(store.database)).length, migrations.length);
             assert.deepEqual(await snapshot(), before);
             assert.equal(await hazardCollection.countDocuments(), hazardCount);
             assert.equal(await outboxCollection.countDocuments(), outboxCount);
@@ -220,6 +224,73 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
                 assert.equal((await new OutboxEventRepository(second).findUnpublished(100)).length, 1);
             } finally {
                 await second.close();
+            }
+        });
+
+        await t.test('audit pagination, byte-ordered streaming checksum, and real replica locations', async () => {
+            const topology = new StorageTopologyService(store);
+            const reader = new CanonicalReadRepository(store, topology);
+            const audit = new CanonicalQueryService(reader, topology);
+            try {
+                const fixtures = Array.from({ length: 1005 }, (_, index) => ({
+                    _id: `audit-${String(index).padStart(4, '0')}`,
+                    hazardId: `audit-${String(index).padStart(4, '0')}`,
+                    source: 'SATELIT',
+                    sourceRefId: index === 0 ? 'é' : index === 1 ? 'Z' : `ref-${index}`,
+                    hazardType: 'WILDFIRE',
+                    severity: 'WASPADA',
+                    areaName: 'Audit Test',
+                    latitude: 0,
+                    longitude: 0,
+                    occurredAt: new Date('2026-01-01T00:00:00Z'),
+                    ingestedAt: new Date('2026-01-02T00:00:00Z'),
+                    attributes: { detection_keys: ['N20|2026-01-01|243|-2.51230|113.80440'] },
+                }));
+                await hazardCollection.insertMany(fixtures);
+                const seen = [];
+                let cursor;
+                do {
+                    const page = await audit.events({ source: 'SATELIT', limit: 200, cursor });
+                    assert.equal(page.partial, false);
+                    assert.ok(page.items.length <= 200);
+                    seen.push(...page.items.map((row) => row.hazard_id));
+                    cursor = page.next_cursor;
+                } while (cursor);
+                assert.deepEqual(
+                    seen,
+                    fixtures.map((row) => row.hazardId)
+                );
+                assert.equal(new Set(seen).size, fixtures.length);
+                const checksum = await audit.checksum('SATELIT');
+                const refs = fixtures
+                    .map((row) => row.sourceRefId)
+                    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+                assert.equal(checksum.count, fixtures.length);
+                assert.equal(checksum.partial, false);
+                assert.equal(checksum.checksum, createHash('sha256').update(refs.join('\n')).digest('hex'));
+                const empty = await audit.checksum('SENSOR_PANTAI');
+                assert.equal(empty.count, 0);
+                assert.equal(empty.checksum, createHash('sha256').update('').digest('hex'));
+                const first = await audit.events({ source: 'SATELIT', limit: 1 });
+                await assert.rejects(audit.events({ source: 'BMKG', cursor: first.next_cursor }), /does not match/);
+                await assert.rejects(
+                    audit.events({ source: 'SATELIT', cursor: `${first.next_cursor}x` }),
+                    /Invalid cursor/
+                );
+                const filtered = await audit.events({ source: 'SATELIT', since: '2026-01-03T00:00:00Z' });
+                assert.equal(filtered.items.length, 0);
+                const location = await audit.location(fixtures[0].hazardId);
+                assert.equal(location.partial, false);
+                assert.equal(location.locations.length, 3);
+                assert.equal(location.locations.filter((row) => row.role === 'primary').length, 1);
+                assert.equal(await audit.location('does-not-exist'), null);
+                const latest = await audit.hazards({ source: 'SATELIT', limit: 50 });
+                assert.equal(latest.data.length, 50);
+                assert.ok(latest.meta.nextCursor);
+                const second = await audit.hazards({ source: 'SATELIT', limit: 50, cursor: latest.meta.nextCursor });
+                assert.equal(second.data[0].hazardId, fixtures[50].hazardId);
+            } finally {
+                await topology.close();
             }
         });
 

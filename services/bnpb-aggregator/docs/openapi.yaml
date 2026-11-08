@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://spec.openapis.org/oas/3.0/schema/2024-10-18
 openapi: 3.0.3
 info:
     title: BNPB Aggregator Internal API
@@ -35,6 +36,85 @@ paths:
                 '200': { description: Service is ready }
                 '503': { description: Service is not ready }
 
+    /internal/audit/events:
+        get:
+            summary: Audit canonical hazards in ingestion order
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
+                - name: since
+                  in: query
+                  schema: { type: string, format: date-time }
+            responses:
+                '200':
+                    description: Complete or explicitly partial page
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/AuditPage' }
+                '400': { description: Invalid query or cursor }
+                '401': { description: Invalid or missing audit token }
+
+    /internal/audit/checksum:
+        get:
+            summary: SHA-256 of source_ref_id values in UTF-8 byte order
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+            responses:
+                '200':
+                    description: Count and checksum, with partial status
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [source, count, checksum, algorithm, as_of, partial, unavailable_units]
+                                properties:
+                                    source: { type: string, nullable: true }
+                                    count: { type: integer }
+                                    checksum: { type: string, pattern: '^[a-f0-9]{64}$' }
+                                    algorithm: { type: string, enum: [sha256] }
+                                    as_of: { type: string, format: date-time }
+                                    partial: { type: boolean }
+                                    unavailable_units: { type: array, items: { type: string } }
+                '400': { description: Invalid source }
+                '401': { description: Invalid or missing audit token }
+
+    /internal/audit/location:
+        get:
+            summary: Owning shard and replica locations from MongoDB metadata
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - name: hazard_id
+                  in: query
+                  required: true
+                  schema: { type: string, minLength: 1, maxLength: 128 }
+            responses:
+                '200':
+                    description: Locations, or partial result when existence or placement is unknown
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [hazard_id, locations, partial]
+                                properties:
+                                    hazard_id: { type: string }
+                                    partial: { type: boolean }
+                                    unavailable_units: { type: array, items: { type: string } }
+                                    locations:
+                                        type: array
+                                        items:
+                                            type: object
+                                            required: [node, unit, role]
+                                            properties:
+                                                node: { type: string }
+                                                unit: { type: string }
+                                                role: { type: string, enum: [primary, replica] }
+                '400': { description: Invalid hazard_id }
+                '401': { description: Invalid or missing audit token }
+                '404': { description: Hazard absent from a complete storage read }
+
     /internal/hazards:
         get:
             summary: List canonical hazard events
@@ -43,6 +123,8 @@ paths:
             security:
                 - BNPBInternalApiKey: []
             parameters:
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
                 - name: since
                   in: query
                   required: false
@@ -56,7 +138,7 @@ paths:
                   description: Return only hazards from this provider.
                   schema:
                       type: string
-                      enum: [BMKG, PVMBG]
+                      enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI]
             responses:
                 '200':
                     description: Canonical hazard events; without since, newest occurrence first.
@@ -103,12 +185,65 @@ paths:
                 '403': { description: Unrecognised internal API key }
 
 components:
+    parameters:
+        AuditSource:
+            name: source
+            in: query
+            schema: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] }
+        PageLimit:
+            name: limit
+            in: query
+            schema: { type: integer, minimum: 1, maximum: 1000 }
+        PageCursor:
+            name: cursor
+            in: query
+            schema: { type: string, minLength: 1, maxLength: 4096 }
     securitySchemes:
+        AuditBearer:
+            type: http
+            scheme: bearer
         BNPBInternalApiKey:
             type: apiKey
             in: header
             name: X-BNPB-Internal-Key
     schemas:
+        AuditPage:
+            type: object
+            required: [items, next_cursor, partial, unavailable_units]
+            properties:
+                items:
+                    type: array
+                    items:
+                        type: object
+                        required:
+                            [
+                                hazard_id,
+                                source,
+                                source_ref_id,
+                                hazard_type,
+                                severity,
+                                area_name,
+                                latitude,
+                                longitude,
+                                occurred_at,
+                                ingested_at,
+                                attributes,
+                            ]
+                        properties:
+                            hazard_id: { type: string }
+                            source: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] }
+                            source_ref_id: { type: string }
+                            hazard_type: { type: string, enum: [SEISMIC, VOLCANIC, WILDFIRE, COASTAL] }
+                            severity: { type: string, enum: [NORMAL, WASPADA, SIAGA, AWAS] }
+                            area_name: { type: string }
+                            latitude: { type: number }
+                            longitude: { type: number }
+                            occurred_at: { type: string, format: date-time }
+                            ingested_at: { type: string, format: date-time }
+                            attributes: { type: object, additionalProperties: true }
+                next_cursor: { type: string, nullable: true }
+                partial: { type: boolean }
+                unavailable_units: { type: array, items: { type: string } }
         HazardEvent:
             type: object
             required:
@@ -129,13 +264,13 @@ components:
                     description: BNPB-generated canonical identifier
                 source:
                     type: string
-                    enum: [BMKG, PVMBG]
+                    enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI]
                 sourceRefId:
                     type: string
                     description: Original source event_id or report_id
                 hazardType:
                     type: string
-                    enum: [SEISMIC, VOLCANIC]
+                    enum: [SEISMIC, VOLCANIC, WILDFIRE, COASTAL]
                 severity:
                     type: string
                     enum: [NORMAL, WASPADA, SIAGA, AWAS]
@@ -181,6 +316,9 @@ components:
             type: object
             required: [pollingStatus]
             properties:
+                partial: { type: boolean }
+                unavailable_units: { type: array, items: { type: string } }
+                nextCursor: { type: string, nullable: true }
                 pollingStatus:
                     type: object
                     additionalProperties:

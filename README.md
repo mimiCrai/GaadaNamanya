@@ -56,6 +56,8 @@ Cek keberjalanan setiap services dengan `docker compose ps`.
 
 Canonical Store menggunakan MongoDB dengan dua shard (masing-masing tiga replica), tiga config server, dan router `canonical-store`. Bootstrap replica set/user dan service migration `canonical-store-migrate` berjalan otomatis; Aggregator menunggu migration selesai. Migration berversi membuat collection, sharding, index, dan seed, lalu mencatatnya di `schema_migrations`. Lihat [detail MongoDB dan transactional outbox](docs/mongodb-canonical-store.md). Data Canonical Store PostgreSQL lama tidak dihapus, tetapi tidak diimpor otomatis ke MongoDB; sumber BMKG/PVMBG akan dipoll ulang dengan checkpoint MongoDB yang baru.
 
+Audit API M2 tersedia melalui `GET /internal/audit/events`, `/internal/audit/checksum`, dan `/internal/audit/location`, memakai `Authorization: Bearer <BNPB_AGGREGATOR_AUDIT_TOKEN>`. Events mendukung `source`, `since`, `limit`, serta cursor; pembacaan storage yang tidak lengkap ditandai `partial` dan `unavailable_units`. Endpoint `/internal/hazards?limit=50` juga mendukung pagination lintas shard. Lihat [kontrak, konfigurasi, dan pengujian Audit API](docs/bnpb-audit-api.md).
+
 ## Autentikasi dan Client API
 
 BNPB Auth (`http://localhost:3001`) mengelola kredensial pengguna dan sesi refresh. Service ini menandatangani access token RS256 berumur pendek (secara default 60 detik) menggunakan private key miliknya; BNPB Client API hanya menerima public key milik Auth untuk keperluan verifikasi. Refresh token disimpan oleh Auth dalam bentuk hash, dirotasi setiap kali refresh, dan tidak pernah dikirimkan ke Aggregator, BMKG, maupun PVMBG.
@@ -321,6 +323,9 @@ BNPB_AGGREGATOR_CONTAINER_PORT=
 BNPB_AGGREGATOR_SERVICE_NAME=
 BNPB_AGGREGATOR_NODE_ENV=
 BNPB_AGGREGATOR_DATABASE_URL=
+BNPB_AGGREGATOR_AUDIT_TOKEN=
+BNPB_AGGREGATOR_STORAGE_READ_TIMEOUT_MS=
+BNPB_AGGREGATOR_MONGO_NODE_MAP=
 BNPB_AGGREGATOR_KAFKA_BROKERS=
 BNPB_AGGREGATOR_KAFKA_CLIENT_ID=
 BNPB_AGGREGATOR_KAFKA_TOPIC=

@@ -14,6 +14,7 @@ import { logger } from './libs/logger';
 
 import './controllers/health.controller';
 import './controllers/hazard-event.controller';
+import './controllers/audit.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();
@@ -50,16 +51,36 @@ export async function createApp(existingContainer?: Container): Promise<express.
     server.setErrorConfig((app) => {
         app.use(
             (
-                err: Error & { status?: number; errors?: unknown[] },
+                err: Error & { status?: number; errors?: unknown[]; code?: string },
                 req: Request,
                 res: Response,
                 _next: NextFunction
             ) => {
-                logger.error({ err, path: req.path, correlationId: res.getHeader('X-Correlation-ID') }, 'Request error');
+                logger.error(
+                    { err, path: req.path, correlationId: res.getHeader('X-Correlation-ID') },
+                    'Request error'
+                );
 
                 const status = err.status || 500;
                 res.status(status).json({
                     error: {
+                        ...(req.path.startsWith('/internal/audit')
+                            ? {
+                                  code:
+                                      typeof err.code === 'string'
+                                          ? err.code
+                                          : ((
+                                                {
+                                                    400: 'bad_request',
+                                                    401: 'unauthorized',
+                                                    403: 'forbidden',
+                                                    404: 'not_found',
+                                                    429: 'too_many_requests',
+                                                    503: 'unavailable',
+                                                } as Record<number, string>
+                                            )[status] ?? 'internal_error'),
+                              }
+                            : {}),
                         message: err.message,
                         ...(err.errors && { details: err.errors }),
                     },

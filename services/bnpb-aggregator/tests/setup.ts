@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 process.env.DATABASE_URL ??= 'mongodb://localhost:27017/canonical_store_test';
 process.env.KAFKA_BROKERS ??= 'localhost:9092';
+process.env.BNPB_AUDIT_TOKEN ??= 'test-audit-token-0123456789abcdef012345';
 process.env.BNPB_INTERNAL_API_KEY ??= 'test-bnpb-internal-key-0123456789';
 process.env.BMKG_BASE_URL ??= 'http://localhost:8081';
 process.env.BMKG_API_KEY ??= 'test-bmkg-api-key';

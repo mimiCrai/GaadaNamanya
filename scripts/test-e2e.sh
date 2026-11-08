@@ -22,3 +22,8 @@ cleanup
 "${compose[@]}" --profile test build e2e canonical-store-tests
 "${compose[@]}" --profile test run --rm --no-deps canonical-store-tests
 "${compose[@]}" --profile test run --rm --no-deps e2e
+"${compose[@]}" --profile test run --rm --no-deps e2e node --test audit-storage.test.mjs
+"${compose[@]}" stop canonical-shard-b-1 canonical-shard-b-2 canonical-shard-b-3
+"${compose[@]}" --profile test run --rm --no-deps -e STORAGE_TEST_STAGE=outage e2e node --test audit-storage.test.mjs
+"${compose[@]}" start canonical-shard-b-1 canonical-shard-b-2 canonical-shard-b-3
+"${compose[@]}" --profile test run --rm --no-deps -e STORAGE_TEST_STAGE=recovery e2e node --test audit-storage.test.mjs

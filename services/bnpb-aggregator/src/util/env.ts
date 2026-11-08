@@ -9,12 +9,23 @@ const envSchema = z.object({
     // MongoDB replica set or mongos router.
     DATABASE_URL: z.string().regex(/^mongodb(?:\+srv)?:\/\//),
     DATABASE_NAME: z.string().min(1).default('canonical_store'),
+    STORAGE_READ_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(2_000),
+    MONGO_NODE_MAP: z
+        .string()
+        .default('{}')
+        .transform((value) => z.record(z.string()).parse(JSON.parse(value))),
+    BNPB_AUDIT_TOKEN: z.string().min(32),
 
     // Kafka
     KAFKA_BROKERS: z
         .string()
         .min(1)
-        .transform((value) => value.split(',').map((broker) => broker.trim()).filter(Boolean)),
+        .transform((value) =>
+            value
+                .split(',')
+                .map((broker) => broker.trim())
+                .filter(Boolean)
+        ),
     KAFKA_CLIENT_ID: z.string().default('bnpb-aggregator'),
     KAFKA_TOPIC: z.string().default('hazard-events'),
 

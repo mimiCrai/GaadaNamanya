@@ -1,11 +1,15 @@
 export enum HazardSource {
     Bmkg = 'BMKG',
     Pvmbg = 'PVMBG',
+    Satelit = 'SATELIT',
+    SensorPantai = 'SENSOR_PANTAI',
 }
 
 export enum HazardType {
     Seismic = 'SEISMIC',
     Volcanic = 'VOLCANIC',
+    Wildfire = 'WILDFIRE',
+    Coastal = 'COASTAL',
 }
 
 export enum HazardSeverity {

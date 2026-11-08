@@ -5,6 +5,7 @@ import { logger } from './libs/logger';
 import { IMessagePublisher } from './services/message-publisher.service';
 import { IOutboxRelayService } from './services/outbox-relay.service';
 import { IPollingService } from './services/polling.service';
+import { IStorageTopologyService } from './services/storage-topology.service';
 import env from './util/env';
 
 async function main() {
@@ -32,6 +33,7 @@ async function main() {
             poller.stop();
             outboxRelay.stop();
             await messagePublisher.close();
+            await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();
             server.close(() => process.exit(0));
         };

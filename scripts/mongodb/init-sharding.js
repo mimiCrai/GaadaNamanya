@@ -25,4 +25,5 @@ if (!database.getUser(username)) {
         roles: [{ role: 'readWrite', db: databaseName }],
     });
 }
+database.grantRolesToUser(username, [{ role: 'clusterMonitor', db: 'admin' }, { role: 'read', db: 'config' }]);
 print('Canonical Store: two shards and application user ready; collections are managed by migrations');

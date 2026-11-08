@@ -11,13 +11,26 @@ describe('HazardGateway', () => {
     });
 
     const canonicalHazard = {
-        hazardId: 'hazard-1', source: 'BMKG', sourceRefId: 'source-1', hazardType: 'SEISMIC', severity: 'WASPADA',
-        areaName: 'Bandung', latitude: -6.9175, longitude: 107.6191, occurredAt: '2026-01-01T00:00:00.000Z',
-        ingestedAt: '2026-01-01T00:01:00.000Z', attributes: { depth: 10 },
+        hazardId: 'hazard-1',
+        source: 'BMKG',
+        sourceRefId: 'source-1',
+        hazardType: 'SEISMIC',
+        severity: 'WASPADA',
+        areaName: 'Bandung',
+        latitude: -6.9175,
+        longitude: 107.6191,
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        ingestedAt: '2026-01-01T00:01:00.000Z',
+        attributes: { depth: 10 },
     };
 
     it('uses the aggregator internal endpoint and produces a public-safe summary', async () => {
-        fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [canonicalHazard] }), { status: 200, headers: { 'content-type': 'application/json' } }));
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ data: [canonicalHazard] }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })
+        );
         const { data: hazards } = await new HazardGateway().list(classificationForRole('public'), correlationId);
         expect(hazards).toHaveLength(1);
         const requestUrl = new URL(fetchMock.mock.calls[0][0] as string);
@@ -30,8 +43,17 @@ describe('HazardGateway', () => {
     });
 
     it('returns the raw canonical event only to permitted non-public roles', async () => {
-        fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: canonicalHazard }), { status: 200, headers: { 'content-type': 'application/json' } }));
-        const { data: hazard } = await new HazardGateway().getById('hazard-1', classificationForRole('internal'), correlationId);
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ data: canonicalHazard }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            })
+        );
+        const { data: hazard } = await new HazardGateway().getById(
+            'hazard-1',
+            classificationForRole('internal'),
+            correlationId
+        );
         const requestUrl = new URL(fetchMock.mock.calls[0][0] as string);
         expect(requestUrl.pathname).toBe('/internal/hazards/hazard-1');
         expect(hazard.Klasifikasi).toBe('mentah');
@@ -87,7 +109,11 @@ describe('HazardGateway', () => {
 
         const result = await new HazardGateway().list('ringkasan', correlationId, 'BMKG');
 
-        expect(result.meta.sources.BMKG).toEqual({ status: 'UNAVAILABLE', lastSuccessfulPollAt: null, staleSince: null });
+        expect(result.meta.sources.BMKG).toEqual({
+            status: 'UNAVAILABLE',
+            lastSuccessfulPollAt: null,
+            staleSince: null,
+        });
     });
 
     it('reports the freshness of the hazard source on a single read', async () => {
@@ -96,6 +122,48 @@ describe('HazardGateway', () => {
         const result = await new HazardGateway().getById('hazard-1', 'ringkasan', correlationId);
 
         expect(Object.keys(result.meta.sources)).toEqual(['BMKG']);
+    });
+
+    it('preserves incomplete storage metadata without exposing raw fields to a public user', async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                data: [canonicalHazard],
+                meta: {
+                    pollingStatus,
+                    partial: true,
+                    unavailable_units: ['canonical-shard-b'],
+                    nextCursor: 'next-page',
+                },
+            })
+        );
+
+        const result = await new HazardGateway().list('ringkasan', correlationId);
+
+        expect(result.meta).toMatchObject({
+            partial: true,
+            unavailable_units: ['canonical-shard-b'],
+            nextCursor: 'next-page',
+        });
+        expect(result.data[0].Keterangan).not.toContain('attributes');
+        expect(result.data[0].Keterangan).not.toContain('sourceRefId');
+    });
+
+    it('returns 503 rather than claiming a missing hazard when storage cannot finish the lookup', async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ data: null, meta: { partial: true, unavailable_units: ['canonical-shard-b'] } })
+        );
+
+        await expect(new HazardGateway().getById('hazard-1', 'ringkasan', correlationId)).rejects.toMatchObject({
+            status: 503,
+        });
+    });
+
+    it('keeps an authoritative upstream 404 distinct from an incomplete lookup', async () => {
+        fetchMock.mockResolvedValue(jsonResponse({ error: { message: 'Hazard event not found' } }, 404));
+
+        await expect(new HazardGateway().getById('absent', 'ringkasan', correlationId)).rejects.toMatchObject({
+            status: 404,
+        });
     });
 
     it('turns an Aggregator timeout into an explicit 504', async () => {

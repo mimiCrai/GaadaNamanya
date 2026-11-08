@@ -21,9 +21,17 @@ import { IPollingService, PollingService } from '../services/polling.service';
 import { BmkgClient, IBmkgClient } from '../clients/bmkg.client';
 import { IPvmbgClient, PvmbgClient } from '../clients/pvmbg.client';
 import { InternalAuthMiddleware } from '../middlewares/internal-auth.middleware';
+import { AuditAuthMiddleware } from '../middlewares/audit-auth.middleware';
+import { CanonicalReadRepository, ICanonicalReadRepository } from '../repositories/canonical-read.repository';
+import { CanonicalQueryService, ICanonicalQueryService } from '../services/canonical-query.service';
+import { StorageTopologyService, IStorageTopologyService } from '../services/storage-topology.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind(TYPES.Database).toConstantValue(db);
+    bind<IStorageTopologyService>(TYPES.IStorageTopologyService).to(StorageTopologyService).inSingletonScope();
+    bind<ICanonicalReadRepository>(TYPES.ICanonicalReadRepository).to(CanonicalReadRepository).inSingletonScope();
+    bind<ICanonicalQueryService>(TYPES.ICanonicalQueryService).to(CanonicalQueryService).inSingletonScope();
+    bind<AuditAuthMiddleware>(TYPES.AuditAuthMiddleware).to(AuditAuthMiddleware);
 
     bind<IHazardEventRepository>(TYPES.IHazardEventRepository).to(HazardEventRepository).inSingletonScope();
     bind<ISourceSyncStateRepository>(TYPES.ISourceSyncStateRepository).to(SourceSyncStateRepository).inSingletonScope();
