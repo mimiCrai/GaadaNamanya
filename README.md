@@ -6,7 +6,7 @@
 
 ```text
 BMKG Mock ──┐
-           ├──> BNPB Aggregator ───> Canonical Store (PostgreSQL + JSONB)
+           ├──> BNPB Aggregator ───> Canonical Store (MongoDB sharded cluster)
 PVMBG Mock ─┘             │
                          └──> Kafka topic: hazard-events
                                      ├──> dashboard-consumer-group ───> Dashboard Consumer
@@ -53,6 +53,8 @@ cp -p .env.example .env          # Bash
 docker compose up -d --build
 ```
 Cek keberjalanan setiap services dengan `docker compose ps`.
+
+Canonical Store menggunakan MongoDB dengan dua shard (masing-masing tiga replica), tiga config server, dan router `canonical-store`. Bootstrap replica set/user dan service migration `canonical-store-migrate` berjalan otomatis; Aggregator menunggu migration selesai. Migration berversi membuat collection, sharding, index, dan seed, lalu mencatatnya di `schema_migrations`. Lihat [detail MongoDB dan transactional outbox](docs/mongodb-canonical-store.md). Data Canonical Store PostgreSQL lama tidak dihapus, tetapi tidak diimpor otomatis ke MongoDB; sumber BMKG/PVMBG akan dipoll ulang dengan checkpoint MongoDB yang baru.
 
 ## Autentikasi dan Client API
 
@@ -223,13 +225,16 @@ Hasil yang diharapkan: register mengembalikan `201`, seed mencetak `Admin accoun
    ```
    Hasil yang diharapkan: kedua request mengembalikan `200`; hanya `dashboard-consumer` yang di-build ulang dan di-restart (`docker compose ps`).
 
-2. Record PVMBG sebelum dan sesudah adanya `confidence_level`, berdampingan dalam satu tabel:
+2. Record PVMBG sebelum dan sesudah adanya `confidence_level`, berdampingan dalam satu collection:
    ```bash
-   docker compose exec canonical-store psql -U "$(dotenv CANONICAL_STORE_DB_USER)" -d "$(dotenv CANONICAL_STORE_DB_NAME)" -c \
-     "SELECT source_ref_id, attributes ? 'confidence_level' AS v2, attributes FROM hazard_events WHERE source = 'PVMBG' ORDER BY ingested_at DESC LIMIT 6;"
+   docker compose exec canonical-store mongosh --quiet --eval '
+     const store = db.getSiblingDB(process.env.CANONICAL_STORE_DB_NAME);
+     store.auth(process.env.CANONICAL_STORE_DB_USER, process.env.CANONICAL_STORE_DB_PASSWORD);
+     printjson(store.hazard_events.find({source: "PVMBG"}, {_id: 0, sourceRefId: 1, attributes: 1}).sort({ingestedAt: -1}).limit(6).toArray());
+   '
    ```
-   Hasil yang diharapkan: baris dengan `v2 = t` dan `v2 = f` berada pada kolom JSONB `attributes` yang sama, tanpa melibatkan migrasi.\
-   Catatan: Pastikan untuk menjalankan ini secepatnya setelah mengubah skema, karena data dengan `v2 = f` akan tenggelam apabila terlalu dibiarkan terlalu lama.
+   Hasil yang diharapkan: dokumen dengan dan tanpa `confidence_level` berada dalam collection yang sama, tanpa migrasi skema.\
+   Catatan: Jalankan segera setelah mengubah skema agar dokumen tanpa `confidence_level` masih terlihat dalam enam hasil terbaru.
 
 3. Hanya Aggregator yang dikonfigurasi untuk dapat mengakses Canonical Store:
    ```bash
@@ -237,7 +242,7 @@ Hasil yang diharapkan: register mengembalikan `201`, seed mencetak `Admin accoun
      echo "$s -> $(docker compose exec -T "$s" printenv DATABASE_URL | grep -o '@[^/]*' || echo 'no DATABASE_URL')"
    done
    ```
-   Hasil yang diharapkan: hanya `bnpb-aggregator -> @canonical-store:5432`; Client API tidak memiliki database, dan setiap service lainnya mengarah ke store miliknya sendiri.
+   Hasil yang diharapkan: hanya `bnpb-aggregator -> @canonical-store:27017`; Client API tidak memiliki database, dan setiap service lainnya mengarah ke store miliknya sendiri.
 
 ### P5 – Pub/Sub Fan-out
 
@@ -272,7 +277,10 @@ Catatan: Anda dapat melacak satu alur berdasarkan correlation ID-nya (dikembalik
 Berikut adalah daftar variabel konfigurasi yang digunakan pada file `.env`. Nilai default untuk setiap variabel dapat dilihat pada `.env.example`.
 
 ```env
-# Canonical Store (PostgreSQL)
+# Canonical Store (MongoDB)
+CANONICAL_STORE_ROOT_USER=
+CANONICAL_STORE_ROOT_PASSWORD=
+CANONICAL_STORE_CLUSTER_KEY=
 CANONICAL_STORE_DB_USER=
 CANONICAL_STORE_DB_PASSWORD=
 CANONICAL_STORE_DB_NAME=

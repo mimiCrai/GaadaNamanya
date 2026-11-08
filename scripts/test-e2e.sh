@@ -19,5 +19,6 @@ trap cleanup EXIT
 
 cleanup
 "${compose[@]}" up --build -d
-"${compose[@]}" --profile test build e2e
-"${compose[@]}" --profile test run --rm e2e
+"${compose[@]}" --profile test build e2e canonical-store-tests
+"${compose[@]}" --profile test run --rm --no-deps canonical-store-tests
+"${compose[@]}" --profile test run --rm --no-deps e2e

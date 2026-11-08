@@ -6,8 +6,9 @@ const envSchema = z.object({
     SERVICE_NAME: z.string().default('repo-template'),
     NODE_ENV: z.enum(['local', 'staging', 'production', 'test']).default('local'),
 
-    // PostgreSQL
-    DATABASE_URL: z.string().url(),
+    // MongoDB replica set or mongos router.
+    DATABASE_URL: z.string().regex(/^mongodb(?:\+srv)?:\/\//),
+    DATABASE_NAME: z.string().min(1).default('canonical_store'),
 
     // Kafka
     KAFKA_BROKERS: z

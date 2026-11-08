@@ -1,5 +1,5 @@
 import { injectable } from 'inversify';
-import { pool } from '../db';
+import { db } from '../db';
 
 export interface HealthStatus {
     status: 'healthy' | 'unhealthy';
@@ -21,9 +21,7 @@ export class HealthService implements IHealthService {
         let dbStatus: 'connected' | 'disconnected' = 'disconnected';
 
         try {
-            const client = await pool.connect();
-            await client.query('SELECT 1');
-            client.release();
+            await db.database.command({ ping: 1 });
             dbStatus = 'connected';
         } catch {
             dbStatus = 'disconnected';

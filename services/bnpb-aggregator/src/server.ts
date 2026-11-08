@@ -1,6 +1,6 @@
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
-import { pool } from './db';
+import { db } from './db';
 import { logger } from './libs/logger';
 import { IMessagePublisher } from './services/message-publisher.service';
 import { IOutboxRelayService } from './services/outbox-relay.service';
@@ -9,6 +9,7 @@ import env from './util/env';
 
 async function main() {
     try {
+        await db.connect();
         const container = await createContainer();
         const app = await createApp(container);
         const server = app.listen(env.PORT, () => {
@@ -31,7 +32,7 @@ async function main() {
             poller.stop();
             outboxRelay.stop();
             await messagePublisher.close();
-            await pool.end();
+            await db.close();
             server.close(() => process.exit(0));
         };
 

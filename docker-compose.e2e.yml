@@ -47,6 +47,24 @@ services:
             PVMBG_REPORT_INTERVAL_MS: 2000
             PVMBG_REPORT_GENERATION_PROBABILITY: 1
 
+    canonical-store-tests:
+        profiles: [test]
+        build: ./services/bnpb-aggregator
+        command: ['npm', 'run', 'test:integration']
+        environment:
+            DATABASE_URL: mongodb://${CANONICAL_STORE_ROOT_USER}:${CANONICAL_STORE_ROOT_PASSWORD}@canonical-store:27017/?authSource=admin
+            DATABASE_NAME: canonical_store_integration
+            NODE_ENV: test
+            KAFKA_BROKERS: kafka:29092
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+            BMKG_BASE_URL: http://bmkg:8081
+            BMKG_API_KEY: ${BNPB_AGGREGATOR_BMKG_API_KEY}
+            PVMBG_BASE_URL: http://pvmbg:8082
+            PVMBG_TOKEN: ${BNPB_AGGREGATOR_PVMBG_TOKEN}
+        depends_on:
+            canonical-store-init:
+                condition: service_completed_successfully
+
     e2e:
         profiles: [test]
         build: ./tests/e2e
