@@ -64,6 +64,7 @@ paths:
                             schema: { $ref: '#/components/schemas/HazardResponse' }
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '404': { description: Hazard is absent or unavailable in the caller's permitted classification }
+                '503': { description: Hazard lookup cannot be completed because storage is temporarily unavailable }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
                 '504': { $ref: '#/components/responses/UpstreamTimeout' }
 components:
@@ -95,11 +96,7 @@ components:
             type: object
             required: [sources]
             properties:
-                partial: { type: boolean, description: True when the storage read is incomplete. }
-                unavailable_units:
-                    type: array
-                    items: { type: string }
-                nextCursor: { type: string, nullable: true }
+                partial: { type: boolean, description: True when the result is incomplete. Internal storage locations are not exposed. }
                 sources:
                     type: object
                     properties:

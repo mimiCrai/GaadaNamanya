@@ -124,7 +124,7 @@ describe('HazardGateway', () => {
         expect(Object.keys(result.meta.sources)).toEqual(['BMKG']);
     });
 
-    it('preserves incomplete storage metadata without exposing raw fields to a public user', async () => {
+    it('keeps the partial flag while hiding storage topology and internal cursors from a public user', async () => {
         fetchMock.mockResolvedValue(
             jsonResponse({
                 data: [canonicalHazard],
@@ -139,13 +139,41 @@ describe('HazardGateway', () => {
 
         const result = await new HazardGateway().list('ringkasan', correlationId);
 
-        expect(result.meta).toMatchObject({
-            partial: true,
-            unavailable_units: ['canonical-shard-b'],
-            nextCursor: 'next-page',
-        });
+        expect(result.meta).toMatchObject({ partial: true, sources: expect.any(Object) });
+        expect(Object.keys(result.meta).sort()).toEqual(['partial', 'sources']);
         expect(result.data[0].Keterangan).not.toContain('attributes');
         expect(result.data[0].Keterangan).not.toContain('sourceRefId');
+    });
+
+    it('also hides storage metadata on a raw single-hazard response', async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({
+                data: canonicalHazard,
+                meta: {
+                    pollingStatus,
+                    partial: true,
+                    unavailable_units: ['canonical-shard-b'],
+                    nextCursor: 'internal-cursor',
+                },
+            })
+        );
+
+        const result = await new HazardGateway().getById('hazard-1', 'mentah', correlationId);
+
+        expect(result.meta.partial).toBe(true);
+        expect(Object.keys(result.meta).sort()).toEqual(['partial', 'sources']);
+        expect(JSON.parse(result.data.Keterangan).attributes).toEqual({ depth: 10 });
+    });
+
+    it('keeps a complete result explicitly complete', async () => {
+        fetchMock.mockResolvedValue(
+            jsonResponse({ data: [], meta: { partial: false, unavailable_units: [], nextCursor: null } })
+        );
+
+        const result = await new HazardGateway().list('ringkasan', correlationId);
+
+        expect(result.meta.partial).toBe(false);
+        expect(Object.keys(result.meta).sort()).toEqual(['partial', 'sources']);
     });
 
     it('returns 503 rather than claiming a missing hazard when storage cannot finish the lookup', async () => {

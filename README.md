@@ -81,6 +81,8 @@ curl http://localhost:3000/hazards \
 
 `GET /hazards` menampilkan daftar hazard yang dapat dilihat, sedangkan `GET /hazards/:hazardId` mengembalikan satu hazard. Pengguna `public` menerima representasi ringkasan, sedangkan `lapangan` dan `internal` menerima representasi lengkap. Client API meneruskan correlation ID dari request ke Auth dan Aggregator, serta menggunakan `X-BNPB-Internal-Key` miliknya yang terpisah hanya untuk pemanggilan internal ke Aggregator. Client API mengembalikan `401` untuk access token yang tidak ada, tidak valid, atau kedaluwarsa, dan `502` apabila Auth atau Aggregator tidak tersedia.
 
+Respons Client API mempertahankan `meta.sources` dan flag `meta.partial` tanpa nama storage atau cursor internal. Pesan error 5xx dibuat generik; detail aslinya hanya dicatat di log bersama correlation ID.
+
 ## Pengujian End-to-End
 
 Jalankan rangkaian pengujian E2E yang terisolasi dengan satu perintah setelah membuat `.env`:

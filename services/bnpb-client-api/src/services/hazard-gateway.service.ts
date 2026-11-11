@@ -26,8 +26,6 @@ export interface SourceFreshness {
 export interface HazardMeta {
     sources: Partial<Record<HazardSource, SourceFreshness>>;
     partial?: boolean;
-    unavailable_units?: string[];
-    nextCursor?: string | null;
 }
 
 export interface HazardListResult {
@@ -163,14 +161,7 @@ export function classificationForRole(role: UserRole): HazardClassification {
 
 function storageMetadata(value: unknown): Partial<HazardMeta> {
     if (!value || typeof value !== 'object' || !('partial' in value) || typeof value.partial !== 'boolean') return {};
-    const meta = value as Record<string, unknown>;
-    return {
-        partial: value.partial,
-        unavailable_units: Array.isArray(meta.unavailable_units)
-            ? meta.unavailable_units.filter((unit): unit is string => typeof unit === 'string')
-            : [],
-        ...(meta.nextCursor === null || typeof meta.nextCursor === 'string' ? { nextCursor: meta.nextCursor } : {}),
-    };
+    return { partial: value.partial };
 }
 
 function toSourceFreshness(meta: unknown, sources: readonly HazardSource[]): HazardMeta['sources'] {

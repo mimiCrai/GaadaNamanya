@@ -7,6 +7,7 @@ import * as OpenApiValidator from 'express-openapi-validator';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
 import { randomUUID } from 'node:crypto';
+import { STATUS_CODES } from 'node:http';
 import path from 'path';
 
 import { bindings } from './config/inversify.config';
@@ -62,27 +63,14 @@ export async function createApp(existingContainer?: Container): Promise<express.
                 );
 
                 const status = err.status || 500;
+                const serverError = status >= 500;
+                let auditCode = AUDIT_ERROR_CODES[status] ?? 'internal_error';
+                if (!serverError && typeof err.code === 'string') auditCode = err.code;
                 res.status(status).json({
                     error: {
-                        ...(req.path.startsWith('/internal/audit')
-                            ? {
-                                  code:
-                                      typeof err.code === 'string'
-                                          ? err.code
-                                          : ((
-                                                {
-                                                    400: 'bad_request',
-                                                    401: 'unauthorized',
-                                                    403: 'forbidden',
-                                                    404: 'not_found',
-                                                    429: 'too_many_requests',
-                                                    503: 'unavailable',
-                                                } as Record<number, string>
-                                            )[status] ?? 'internal_error'),
-                              }
-                            : {}),
-                        message: err.message,
-                        ...(err.errors && { details: err.errors }),
+                        ...(req.path.startsWith('/internal/audit') ? { code: auditCode } : {}),
+                        message: serverError ? (STATUS_CODES[status] ?? 'Internal Server Error') : err.message,
+                        ...(!serverError && err.errors && { details: err.errors }),
                     },
                 });
             }
@@ -93,3 +81,11 @@ export async function createApp(existingContainer?: Container): Promise<express.
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AUDIT_ERROR_CODES: Record<number, string> = {
+    400: 'bad_request',
+    401: 'unauthorized',
+    403: 'forbidden',
+    404: 'not_found',
+    429: 'too_many_requests',
+    503: 'unavailable',
+};

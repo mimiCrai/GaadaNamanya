@@ -6,6 +6,7 @@ import { createApp } from '../../src/app';
 import { bindings } from '../../src/config/inversify.config';
 import { TYPES } from '../../src/constants/types';
 import { ApiError } from '../../src/errors/api-error';
+import { logger } from '../../src/libs/logger';
 import { IHazardGateway } from '../../src/services/hazard-gateway.service';
 import { IJwtAuthenticator } from '../../src/services/jwt-authenticator.service';
 
@@ -54,7 +55,11 @@ describe('HazardController', () => {
 
     it('passes the source filter and returns the freshness metadata', async () => {
         jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'user-1', sid: 'session-1', role: 'public' });
-        const freshness = { status: 'STALE', lastSuccessfulPollAt: '2026-10-04T10:00:00.000Z', staleSince: '2026-10-04T10:02:00.000Z' };
+        const freshness = {
+            status: 'STALE',
+            lastSuccessfulPollAt: '2026-10-04T10:00:00.000Z',
+            staleSince: '2026-10-04T10:02:00.000Z',
+        };
         hazardGateway.list.mockResolvedValue({ data: [], meta: { sources: { PVMBG: freshness } } });
 
         const response = await request(app)
@@ -81,6 +86,59 @@ describe('HazardController', () => {
         const response = await request(app).get('/hazards').set('Authorization', 'Bearer access-token');
 
         expect(response.status).toBe(504);
-        expect(response.body.error.message).toBe('BNPB Gateway did not respond in time');
+        expect(response.body).toEqual({ error: { message: 'Gateway Timeout' } });
+    });
+
+    it.each([
+        [500, 'Internal Server Error'],
+        [502, 'Bad Gateway'],
+        [503, 'Service Unavailable'],
+    ])(
+        'returns generic text for an API error with status %i and keeps the details in the log',
+        async (status, message) => {
+            const error = new ApiError('MongoDB canonical-shard-b failed with sensitive details', status as number);
+            const log = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+            try {
+                jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'user-1', role: 'public' });
+                hazardGateway.list.mockRejectedValue(error);
+
+                const response = await request(app)
+                    .get('/hazards')
+                    .set('Authorization', 'Bearer access-token')
+                    .set('X-Correlation-ID', correlationId);
+
+                expect(response.status).toBe(status);
+                expect(response.body).toEqual({ error: { message } });
+                expect(log).toHaveBeenCalledWith(
+                    expect.objectContaining({ err: error, correlationId }),
+                    'Request error'
+                );
+            } finally {
+                log.mockRestore();
+            }
+        }
+    );
+
+    it('hides the message and details of an unexpected single-hazard failure', async () => {
+        const error = Object.assign(new Error('secret database connection string'), {
+            errors: [{ detail: 'private hostname' }],
+        });
+        jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'user-1', role: 'public' });
+        hazardGateway.getById.mockRejectedValue(error);
+
+        const response = await request(app).get('/hazards/hazard-1').set('Authorization', 'Bearer access-token');
+
+        expect(response.status).toBe(500);
+        expect(response.body).toEqual({ error: { message: 'Internal Server Error' } });
+    });
+
+    it.each([401, 403, 404])('preserves a safe client error with status %i', async (status) => {
+        jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'user-1', role: 'public' });
+        hazardGateway.getById.mockRejectedValue(new ApiError('Requested hazard is not available to this user', status));
+
+        const response = await request(app).get('/hazards/hazard-1').set('Authorization', 'Bearer access-token');
+
+        expect(response.status).toBe(status);
+        expect(response.body.error.message).toBe('Requested hazard is not available to this user');
     });
 });
