@@ -8,6 +8,7 @@ import * as OpenApiValidator from 'express-openapi-validator';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
 import { randomUUID } from 'node:crypto';
+import { STATUS_CODES } from 'node:http';
 import path from 'path';
 
 import { bindings } from './config/inversify.config';
@@ -70,10 +71,11 @@ export async function createApp(existingContainer?: Container): Promise<express.
                 logger.error({ err, path: req.path, correlationId: res.locals.correlationId }, 'Request error');
 
                 const status = err.status || 500;
+                const serverError = status >= 500;
                 res.status(status).json({
                     error: {
-                        message: err.message,
-                        ...(err.errors && { details: err.errors }),
+                        message: serverError ? (STATUS_CODES[status] ?? 'Internal Server Error') : err.message,
+                        ...(!serverError && err.errors && { details: err.errors }),
                     },
                 });
             }

@@ -6,14 +6,20 @@ import request from 'supertest';
 import { TYPES } from '../../src/constants/types';
 import { HazardEvent, HazardSeverity, HazardSource, HazardType } from '../../src/db/schema/hazard-events';
 import { SourceStream, SourceSyncStatus } from '../../src/db/schema/source-sync-states';
-import { IHazardEventService } from '../../src/services/hazard-event.service';
 import { InternalAuthMiddleware } from '../../src/middlewares/internal-auth.middleware';
 import '../../src/controllers/hazard-event.controller';
 
-const mockHazardEventService = {
-    getAllHazardEvents: jest.fn(),
-    getHazardEventById: jest.fn(),
-    getPollingStatus: jest.fn(),
+const query = { hazards: jest.fn(), hazard: jest.fn() };
+const meta = {
+    pollingStatus: {
+        [SourceStream.PvmbgVolcanic]: {
+            status: SourceSyncStatus.Stale,
+            lastSuccessfulPollAt: new Date('2026-10-04T10:00:00.000Z'),
+            staleSince: new Date('2026-10-04T10:02:00.000Z'),
+        },
+    },
+    partial: false,
+    unavailable_units: [],
 };
 
 describe('HazardEventController', () => {
@@ -21,9 +27,7 @@ describe('HazardEventController', () => {
 
     beforeAll(() => {
         const container = new Container();
-        container
-            .bind<IHazardEventService>(TYPES.IHazardEventService)
-            .toConstantValue(mockHazardEventService as IHazardEventService);
+        container.bind(TYPES.ICanonicalQueryService).toConstantValue(query);
         container.bind<InternalAuthMiddleware>(TYPES.InternalAuthMiddleware).to(InternalAuthMiddleware);
 
         app = new InversifyExpressServer(container).build();
@@ -31,13 +35,7 @@ describe('HazardEventController', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        mockHazardEventService.getPollingStatus.mockResolvedValue({
-            [SourceStream.PvmbgVolcanic]: {
-                status: SourceSyncStatus.Stale,
-                lastSuccessfulPollAt: new Date('2026-10-04T10:00:00.000Z'),
-                staleSince: new Date('2026-10-04T10:02:00.000Z'),
-            },
-        });
+        query.hazards.mockResolvedValue({ data: [], meta });
     });
 
     it('returns canonical hazard events', async () => {
@@ -56,7 +54,7 @@ describe('HazardEventController', () => {
                 attributes: {},
             },
         ];
-        mockHazardEventService.getAllHazardEvents.mockResolvedValue(hazardEvents);
+        query.hazards.mockResolvedValue({ data: hazardEvents, meta });
 
         const response = await request(app)
             .get('/internal/hazards')
@@ -65,33 +63,26 @@ describe('HazardEventController', () => {
         expect(response.status).toBe(200);
         expect(response.body.data).toHaveLength(1);
         expect(response.body.meta.pollingStatus[SourceStream.PvmbgVolcanic].status).toBe(SourceSyncStatus.Stale);
-        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined, undefined);
+        expect(query.hazards).toHaveBeenCalledWith({});
     });
 
     it('filters hazards by canonical ingestion time', async () => {
-        mockHazardEventService.getAllHazardEvents.mockResolvedValue([]);
-
         const response = await request(app)
             .get('/internal/hazards?since=2026-10-04T10:00:00.000Z')
             .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
 
         expect(response.status).toBe(200);
-        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(
-            new Date('2026-10-04T10:00:00.000Z'),
-            undefined
-        );
+        expect(query.hazards).toHaveBeenCalledWith({ since: '2026-10-04T10:00:00.000Z' });
     });
 
     it('filters hazards by source', async () => {
-        mockHazardEventService.getAllHazardEvents.mockResolvedValue([]);
-
         const response = await request(app)
             .get('/internal/hazards?source=BMKG')
             .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
 
         expect(response.status).toBe(200);
         expect(response.body.meta.pollingStatus[SourceStream.PvmbgVolcanic].status).toBe(SourceSyncStatus.Stale);
-        expect(mockHazardEventService.getAllHazardEvents).toHaveBeenCalledWith(undefined, HazardSource.Bmkg);
+        expect(query.hazards).toHaveBeenCalledWith({ source: HazardSource.Bmkg });
     });
 
     it('rejects an unknown source', async () => {
@@ -100,8 +91,8 @@ describe('HazardEventController', () => {
             .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
 
         expect(response.status).toBe(400);
-        expect(response.body.error.message).toBe('source must be BMKG or PVMBG');
-        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
+        expect(response.body.error.message).toContain('source');
+        expect(query.hazards).not.toHaveBeenCalled();
     });
 
     it('rejects an invalid since value', async () => {
@@ -110,12 +101,12 @@ describe('HazardEventController', () => {
             .set('X-BNPB-Internal-Key', process.env.BNPB_INTERNAL_API_KEY!);
 
         expect(response.status).toBe(400);
-        expect(response.body.error.message).toBe('since must be an ISO 8601 timestamp');
-        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
+        expect(response.body.error.message).toContain('since');
+        expect(query.hazards).not.toHaveBeenCalled();
     });
 
     it('returns 404 when a hazard event does not exist', async () => {
-        mockHazardEventService.getHazardEventById.mockResolvedValue(null);
+        query.hazard.mockResolvedValue(null);
 
         const response = await request(app)
             .get('/internal/hazards/missing')
@@ -130,7 +121,7 @@ describe('HazardEventController', () => {
 
         expect(response.status).toBe(401);
         expect(response.body.error.message).toBe('X-BNPB-Internal-Key header is required');
-        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
+        expect(query.hazards).not.toHaveBeenCalled();
     });
 
     it('rejects an unrecognised internal API key', async () => {
@@ -138,6 +129,6 @@ describe('HazardEventController', () => {
 
         expect(response.status).toBe(403);
         expect(response.body.error.message).toBe('X-BNPB-Internal-Key is not recognised');
-        expect(mockHazardEventService.getAllHazardEvents).not.toHaveBeenCalled();
+        expect(query.hazards).not.toHaveBeenCalled();
     });
 });

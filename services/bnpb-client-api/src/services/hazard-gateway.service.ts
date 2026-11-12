@@ -25,6 +25,7 @@ export interface SourceFreshness {
 
 export interface HazardMeta {
     sources: Partial<Record<HazardSource, SourceFreshness>>;
+    partial?: boolean;
 }
 
 export interface HazardListResult {
@@ -79,20 +80,34 @@ export class HazardGateway implements IHazardGateway {
         if (!Array.isArray(body.data)) throw new ApiError('BNPB Gateway returned an invalid response', 502);
         return {
             data: body.data.map((hazard) => toClientHazard(validateCanonicalHazard(hazard), classification)),
-            meta: { sources: toSourceFreshness(body.meta, source ? [source] : HAZARD_SOURCES) },
+            meta: {
+                sources: toSourceFreshness(body.meta, source ? [source] : HAZARD_SOURCES),
+                ...storageMetadata(body.meta),
+            },
         };
     }
 
-    async getById(hazardId: string, classification: HazardClassification, correlationId: string): Promise<HazardResult> {
+    async getById(
+        hazardId: string,
+        classification: HazardClassification,
+        correlationId: string
+    ): Promise<HazardResult> {
         const body = await this.request(`/internal/hazards/${encodeURIComponent(hazardId)}`, correlationId);
+        if (body.data === null && storageMetadata(body.meta).partial) {
+            throw new ApiError('Hazard storage is temporarily unavailable', 503);
+        }
         const hazard = validateCanonicalHazard(body.data);
         return {
             data: toClientHazard(hazard, classification),
-            meta: { sources: toSourceFreshness(body.meta, [hazard.source]) },
+            meta: { sources: toSourceFreshness(body.meta, [hazard.source]), ...storageMetadata(body.meta) },
         };
     }
 
-    private async request(path: string, correlationId: string, query: Record<string, string> = {}): Promise<GatewayBody> {
+    private async request(
+        path: string,
+        correlationId: string,
+        query: Record<string, string> = {}
+    ): Promise<GatewayBody> {
         const url = new URL(path, `${env.BNPB_GATEWAY_BASE_URL}/`);
         for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
 
@@ -121,7 +136,13 @@ export class HazardGateway implements IHazardGateway {
             throw new ApiError('BNPB Gateway is unavailable', 502);
         }
         logger.info(
-            { target: 'bnpb-aggregator', path, status: response.status, correlationId, latencyMs: Date.now() - startedAt },
+            {
+                target: 'bnpb-aggregator',
+                path,
+                status: response.status,
+                correlationId,
+                latencyMs: Date.now() - startedAt,
+            },
             'Outgoing request completed'
         );
         if (response.status === 404) throw new ApiError('Hazard not found', 404);
@@ -138,9 +159,18 @@ export function classificationForRole(role: UserRole): HazardClassification {
     return role === 'public' ? 'ringkasan' : 'mentah';
 }
 
+function storageMetadata(value: unknown): Partial<HazardMeta> {
+    if (!value || typeof value !== 'object' || !('partial' in value) || typeof value.partial !== 'boolean') return {};
+    return { partial: value.partial };
+}
+
 function toSourceFreshness(meta: unknown, sources: readonly HazardSource[]): HazardMeta['sources'] {
     const pollingStatus =
-        meta && typeof meta === 'object' && 'pollingStatus' in meta && meta.pollingStatus && typeof meta.pollingStatus === 'object'
+        meta &&
+        typeof meta === 'object' &&
+        'pollingStatus' in meta &&
+        meta.pollingStatus &&
+        typeof meta.pollingStatus === 'object'
             ? (meta.pollingStatus as Record<string, unknown>)
             : {};
 
@@ -155,8 +185,17 @@ function toSourceFreshness(meta: unknown, sources: readonly HazardSource[]): Haz
                 source,
                 {
                     status,
-                    lastSuccessfulPollAt: earliest(streams.map((stream) => stream.lastSuccessfulPollAt), true),
-                    staleSince: status === 'HEALTHY' ? null : earliest(streams.map((stream) => stream.staleSince), false),
+                    lastSuccessfulPollAt: earliest(
+                        streams.map((stream) => stream.lastSuccessfulPollAt),
+                        true
+                    ),
+                    staleSince:
+                        status === 'HEALTHY'
+                            ? null
+                            : earliest(
+                                  streams.map((stream) => stream.staleSince),
+                                  false
+                              ),
                 },
             ];
         })

@@ -1,3 +1,20 @@
+x-canonical-mongo: &canonical-mongo
+    image: mongo:7.0.32
+    entrypoint: ['/bin/sh', '/opt/mongodb/start.sh']
+    environment: &canonical-mongo-env
+        MONGO_INITDB_ROOT_USERNAME: ${CANONICAL_STORE_ROOT_USER}
+        MONGO_INITDB_ROOT_PASSWORD: ${CANONICAL_STORE_ROOT_PASSWORD}
+        MONGO_CLUSTER_KEY: ${CANONICAL_STORE_CLUSTER_KEY}
+    volumes:
+        - ./scripts/mongodb:/opt/mongodb:ro
+    healthcheck:
+        test: ['CMD', 'mongosh', '--quiet', '--eval', 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)']
+        interval: 5s
+        timeout: 5s
+        start_period: 15s
+        retries: 30
+    restart: unless-stopped
+
 services:
     auth-store:
         image: postgres:16-alpine
@@ -58,19 +75,130 @@ services:
             start_period: 10s
             retries: 12
 
-    canonical-store:
-        image: postgres:16-alpine
-        environment:
-            POSTGRES_USER: ${CANONICAL_STORE_DB_USER}
-            POSTGRES_PASSWORD: ${CANONICAL_STORE_DB_PASSWORD}
-            POSTGRES_DB: ${CANONICAL_STORE_DB_NAME}
+    canonical-config-1:
+        <<: *canonical-mongo
+        command: ['mongod', '--configsvr', '--replSet', 'canonical-config', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
         volumes:
-            - canonical_store_data:/var/lib/postgresql/data
-        healthcheck:
-            test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
-            interval: 5s
-            timeout: 5s
-            retries: 5
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_config_1_data:/data/db
+
+    canonical-config-2:
+        <<: *canonical-mongo
+        command: ['mongod', '--configsvr', '--replSet', 'canonical-config', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_config_2_data:/data/db
+
+    canonical-config-3:
+        <<: *canonical-mongo
+        command: ['mongod', '--configsvr', '--replSet', 'canonical-config', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_config_3_data:/data/db
+
+    canonical-shard-a-1:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-a', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_a_1_data:/data/db
+
+    canonical-shard-a-2:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-a', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_a_2_data:/data/db
+
+    canonical-shard-a-3:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-a', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_a_3_data:/data/db
+
+    canonical-shard-b-1:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-b', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_b_1_data:/data/db
+
+    canonical-shard-b-2:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-b', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_b_2_data:/data/db
+
+    canonical-shard-b-3:
+        <<: *canonical-mongo
+        command: ['mongod', '--shardsvr', '--replSet', 'canonical-shard-b', '--port', '27017', '--dbpath', '/data/db', '--bind_ip_all', '--wiredTigerCacheSizeGB', '0.25']
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+            - canonical_shard_b_3_data:/data/db
+
+    canonical-replica-init:
+        image: mongo:7.0.32
+        environment: *canonical-mongo-env
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+        entrypoint: ['mongosh', '--nodb', '--quiet', '/opt/mongodb/init-replica-sets.js']
+        depends_on:
+            canonical-config-1:
+                condition: service_healthy
+            canonical-config-2:
+                condition: service_healthy
+            canonical-config-3:
+                condition: service_healthy
+            canonical-shard-a-1:
+                condition: service_healthy
+            canonical-shard-a-2:
+                condition: service_healthy
+            canonical-shard-a-3:
+                condition: service_healthy
+            canonical-shard-b-1:
+                condition: service_healthy
+            canonical-shard-b-2:
+                condition: service_healthy
+            canonical-shard-b-3:
+                condition: service_healthy
+
+    canonical-store:
+        <<: *canonical-mongo
+        environment:
+            <<: *canonical-mongo-env
+            CANONICAL_STORE_DB_NAME: ${CANONICAL_STORE_DB_NAME}
+            CANONICAL_STORE_DB_USER: ${CANONICAL_STORE_DB_USER}
+            CANONICAL_STORE_DB_PASSWORD: ${CANONICAL_STORE_DB_PASSWORD}
+        command: ['mongos', '--configdb', 'canonical-config/canonical-config-1:27017,canonical-config-2:27017,canonical-config-3:27017', '--port', '27017', '--bind_ip_all']
+        depends_on:
+            canonical-replica-init:
+                condition: service_completed_successfully
+
+    canonical-store-init:
+        image: mongo:7.0.32
+        environment:
+            <<: *canonical-mongo-env
+            CANONICAL_STORE_DB_NAME: ${CANONICAL_STORE_DB_NAME}
+            CANONICAL_STORE_DB_USER: ${CANONICAL_STORE_DB_USER}
+            CANONICAL_STORE_DB_PASSWORD: ${CANONICAL_STORE_DB_PASSWORD}
+        volumes:
+            - ./scripts/mongodb:/opt/mongodb:ro
+        entrypoint: ['mongosh', '--nodb', '--quiet', '/opt/mongodb/init-sharding.js']
+        depends_on:
+            canonical-store:
+                condition: service_healthy
+
+    canonical-store-migrate:
+        build: ./services/bnpb-aggregator
+        command: ['npm', 'run', 'db:migrate']
+        environment:
+            DATABASE_URL: mongodb://${CANONICAL_STORE_ROOT_USER}:${CANONICAL_STORE_ROOT_PASSWORD}@canonical-store:27017/?authSource=admin
+            DATABASE_NAME: ${CANONICAL_STORE_DB_NAME}
+        depends_on:
+            canonical-store-init:
+                condition: service_completed_successfully
 
     kafka:
         image: confluentinc/cp-kafka:7.7.1
@@ -151,6 +279,10 @@ services:
             SERVICE_NAME: ${BNPB_AGGREGATOR_SERVICE_NAME}
             NODE_ENV: ${BNPB_AGGREGATOR_NODE_ENV}
             DATABASE_URL: ${BNPB_AGGREGATOR_DATABASE_URL}
+            DATABASE_NAME: ${CANONICAL_STORE_DB_NAME}
+            BNPB_AUDIT_TOKEN: ${BNPB_AGGREGATOR_AUDIT_TOKEN}
+            STORAGE_READ_TIMEOUT_MS: ${BNPB_AGGREGATOR_STORAGE_READ_TIMEOUT_MS}
+            MONGO_NODE_MAP: ${BNPB_AGGREGATOR_MONGO_NODE_MAP}
             KAFKA_BROKERS: ${BNPB_AGGREGATOR_KAFKA_BROKERS}
             KAFKA_CLIENT_ID: ${BNPB_AGGREGATOR_KAFKA_CLIENT_ID}
             KAFKA_TOPIC: ${BNPB_AGGREGATOR_KAFKA_TOPIC}
@@ -168,8 +300,8 @@ services:
         ports:
             - '${BNPB_AGGREGATOR_HOST_PORT}:${BNPB_AGGREGATOR_CONTAINER_PORT}'
         depends_on:
-            canonical-store:
-                condition: service_healthy
+            canonical-store-migrate:
+                condition: service_completed_successfully
             kafka:
                 condition: service_healthy
             kafka-topic-init:
@@ -300,7 +432,15 @@ services:
 
 volumes:
     auth_store_data:
-    canonical_store_data:
+    canonical_config_1_data:
+    canonical_config_2_data:
+    canonical_config_3_data:
+    canonical_shard_a_1_data:
+    canonical_shard_a_2_data:
+    canonical_shard_a_3_data:
+    canonical_shard_b_1_data:
+    canonical_shard_b_2_data:
+    canonical_shard_b_3_data:
     kafka_data:
     dashboard_store_data:
     notification_store_data:

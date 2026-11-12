@@ -7,6 +7,7 @@ import * as OpenApiValidator from 'express-openapi-validator';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
 import { randomUUID } from 'node:crypto';
+import { STATUS_CODES } from 'node:http';
 import path from 'path';
 
 import { bindings } from './config/inversify.config';
@@ -14,6 +15,7 @@ import { logger } from './libs/logger';
 
 import './controllers/health.controller';
 import './controllers/hazard-event.controller';
+import './controllers/audit.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();
@@ -50,18 +52,25 @@ export async function createApp(existingContainer?: Container): Promise<express.
     server.setErrorConfig((app) => {
         app.use(
             (
-                err: Error & { status?: number; errors?: unknown[] },
+                err: Error & { status?: number; errors?: unknown[]; code?: string },
                 req: Request,
                 res: Response,
                 _next: NextFunction
             ) => {
-                logger.error({ err, path: req.path, correlationId: res.getHeader('X-Correlation-ID') }, 'Request error');
+                logger.error(
+                    { err, path: req.path, correlationId: res.getHeader('X-Correlation-ID') },
+                    'Request error'
+                );
 
                 const status = err.status || 500;
+                const serverError = status >= 500;
+                let auditCode = AUDIT_ERROR_CODES[status] ?? 'internal_error';
+                if (!serverError && typeof err.code === 'string') auditCode = err.code;
                 res.status(status).json({
                     error: {
-                        message: err.message,
-                        ...(err.errors && { details: err.errors }),
+                        ...(req.path.startsWith('/internal/audit') ? { code: auditCode } : {}),
+                        message: serverError ? (STATUS_CODES[status] ?? 'Internal Server Error') : err.message,
+                        ...(!serverError && err.errors && { details: err.errors }),
                     },
                 });
             }
@@ -72,3 +81,11 @@ export async function createApp(existingContainer?: Container): Promise<express.
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AUDIT_ERROR_CODES: Record<number, string> = {
+    400: 'bad_request',
+    401: 'unauthorized',
+    403: 'forbidden',
+    404: 'not_found',
+    429: 'too_many_requests',
+    503: 'unavailable',
+};

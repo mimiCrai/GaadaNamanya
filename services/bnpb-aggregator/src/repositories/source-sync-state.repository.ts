@@ -1,8 +1,6 @@
-import { eq, sql } from 'drizzle-orm';
-import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { inject, injectable } from 'inversify';
 import { TYPES } from '../constants/types';
-import * as schema from '../db/schema';
+import { CanonicalStore } from '../db';
 import { SourceStream, SourceSyncState, SourceSyncStatus, sourceSyncStates } from '../db/schema/source-sync-states';
 
 export interface ISourceSyncStateRepository {
@@ -14,32 +12,29 @@ export interface ISourceSyncStateRepository {
 
 @injectable()
 export class SourceSyncStateRepository implements ISourceSyncStateRepository {
-    constructor(@inject(TYPES.Database) private readonly db: NodePgDatabase<typeof schema>) {}
+    constructor(@inject(TYPES.Database) private readonly db: CanonicalStore) {}
 
     async findAll(): Promise<SourceSyncState[]> {
-        return this.db.select().from(sourceSyncStates);
+        return this.db
+            .collection<SourceSyncState>(sourceSyncStates)
+            .find<SourceSyncState>({}, { projection: { _id: 0 } })
+            .toArray();
     }
 
     async findBySourceStream(sourceStream: SourceStream): Promise<SourceSyncState | undefined> {
-        const [state] = await this.db.select().from(sourceSyncStates).where(eq(sourceSyncStates.sourceStream, sourceStream));
-        return state;
+        return (
+            (await this.db
+                .collection<SourceSyncState>(sourceSyncStates)
+                .findOne<SourceSyncState>({ _id: sourceStream }, { projection: { _id: 0 } })) ?? undefined
+        );
     }
 
     async recordSuccessfulPoll(sourceStream: SourceStream, at: Date): Promise<SourceSyncState> {
-        const [state] = await this.db
-            .insert(sourceSyncStates)
-            .values({
-                sourceStream,
-                status: SourceSyncStatus.Healthy,
-                lastSuccessfulPollAt: at,
-                lastAttemptAt: at,
-                staleSince: null,
-                lastError: null,
-                consecutiveFailures: 0,
-            })
-            .onConflictDoUpdate({
-                target: sourceSyncStates.sourceStream,
-                set: {
+        return (await this.db.collection<SourceSyncState>(sourceSyncStates).findOneAndUpdate(
+            { _id: sourceStream },
+            {
+                $set: {
+                    sourceStream,
                     status: SourceSyncStatus.Healthy,
                     lastSuccessfulPollAt: at,
                     lastAttemptAt: at,
@@ -47,38 +42,40 @@ export class SourceSyncStateRepository implements ISourceSyncStateRepository {
                     lastError: null,
                     consecutiveFailures: 0,
                 },
-            })
-            .returning();
-        return state;
+            },
+            { upsert: true, returnDocument: 'after', projection: { _id: 0 } }
+        ))!;
     }
 
     async recordFailedPoll(sourceStream: SourceStream, errorMessage: string, at: Date): Promise<SourceSyncState> {
-        const currentState = await this.findBySourceStream(sourceStream);
-        const hasSuccessfulPoll = currentState?.lastSuccessfulPollAt !== null && currentState?.lastSuccessfulPollAt !== undefined;
-        const status = hasSuccessfulPoll ? SourceSyncStatus.Stale : SourceSyncStatus.Unavailable;
-        const staleSince = hasSuccessfulPoll ? (currentState.staleSince ?? at) : null;
-
-        const [state] = await this.db
-            .insert(sourceSyncStates)
-            .values({
-                sourceStream,
-                status,
-                lastAttemptAt: at,
-                staleSince,
-                lastError: errorMessage,
-                consecutiveFailures: 1,
-            })
-            .onConflictDoUpdate({
-                target: sourceSyncStates.sourceStream,
-                set: {
-                    status,
-                    lastAttemptAt: at,
-                    staleSince,
-                    lastError: errorMessage,
-                    consecutiveFailures: sql`${sourceSyncStates.consecutiveFailures} + 1`,
+        return (await this.db.collection<SourceSyncState>(sourceSyncStates).findOneAndUpdate(
+            { _id: sourceStream },
+            [
+                {
+                    $set: {
+                        sourceStream: { $literal: sourceStream },
+                        status: {
+                            $cond: [
+                                { $ne: [{ $ifNull: ['$lastSuccessfulPollAt', null] }, null] },
+                                SourceSyncStatus.Stale,
+                                SourceSyncStatus.Unavailable,
+                            ],
+                        },
+                        lastSuccessfulPollAt: { $ifNull: ['$lastSuccessfulPollAt', null] },
+                        lastAttemptAt: at,
+                        staleSince: {
+                            $cond: [
+                                { $ne: [{ $ifNull: ['$lastSuccessfulPollAt', null] }, null] },
+                                { $ifNull: ['$staleSince', at] },
+                                null,
+                            ],
+                        },
+                        lastError: { $literal: errorMessage },
+                        consecutiveFailures: { $add: [{ $ifNull: ['$consecutiveFailures', 0] }, 1] },
+                    },
                 },
-            })
-            .returning();
-        return state;
+            ],
+            { upsert: true, returnDocument: 'after', projection: { _id: 0 } }
+        ))!;
     }
 }

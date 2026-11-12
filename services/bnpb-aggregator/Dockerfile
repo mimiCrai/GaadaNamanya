@@ -15,10 +15,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
-COPY --from=builder /app/src/db ./src/db
 COPY docs ./docs
+COPY tests/integration ./tests/integration
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npm run db:migrate && exec node ./dist/src/server.js"]
+CMD ["node", "./dist/src/server.js"]

@@ -1,5 +1,9 @@
 export const TYPES = {
     Database: Symbol.for('Database'),
+    IStorageTopologyService: Symbol.for('IStorageTopologyService'),
+    ICanonicalReadRepository: Symbol.for('ICanonicalReadRepository'),
+    ICanonicalQueryService: Symbol.for('ICanonicalQueryService'),
+    AuditAuthMiddleware: Symbol.for('AuditAuthMiddleware'),
 
     IHazardEventRepository: Symbol.for('IHazardEventRepository'),
     ISourceSyncStateRepository: Symbol.for('ISourceSyncStateRepository'),
