@@ -24,8 +24,12 @@ services:
         ports: !reset []
         environment:
             POLL_INTERVAL_MS: 2000
+            NODE_OPTIONS: --require=/app/tests/integration/skew-clock.cjs
             POLL_OVERLAP_MS: 0
             PVMBG_REQUEST_TIMEOUT_MS: 1000
+
+    bnpb-aggregator-entry:
+        ports: !reset []
 
     dashboard-consumer:
         ports: !reset []
@@ -72,7 +76,7 @@ services:
         environment:
             BMKG_URL: http://bmkg:8081
             PVMBG_URL: http://pvmbg:8082
-            AGGREGATOR_URL: http://bnpb-aggregator:3000
+            AGGREGATOR_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
             DASHBOARD_URL: http://dashboard-consumer:3000
             NOTIFICATION_URL: http://notification-consumer:3000
             AUTH_URL: http://bnpb-auth:3000
@@ -86,8 +90,8 @@ services:
                 condition: service_healthy
             pvmbg:
                 condition: service_healthy
-            bnpb-aggregator:
-                condition: service_started
+            bnpb-aggregator-entry:
+                condition: service_healthy
             bnpb-auth:
                 condition: service_healthy
             bnpb-client-api:
@@ -96,3 +100,20 @@ services:
                 condition: service_started
             notification-consumer:
                 condition: service_started
+
+    failover-tests:
+        profiles: [test]
+        build:
+            context: ./tests/e2e
+            dockerfile: Dockerfile.failover
+        environment:
+            COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-bnpb-failover}
+            AGGREGATOR_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+            BMKG_URL: http://bmkg:8081
+            BMKG_API_KEY: ${BNPB_AGGREGATOR_BMKG_API_KEY}
+            PVMBG_URL: http://pvmbg:8082
+            PVMBG_TOKEN: ${BNPB_AGGREGATOR_PVMBG_TOKEN}
+            DASHBOARD_URL: http://dashboard-consumer:3000
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock

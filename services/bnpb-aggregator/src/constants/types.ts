@@ -1,5 +1,7 @@
 export const TYPES = {
     Database: Symbol.for('Database'),
+    IBackgroundLeaseRepository: Symbol.for('IBackgroundLeaseRepository'),
+    IBackgroundLeadershipService: Symbol.for('IBackgroundLeadershipService'),
     IStorageTopologyService: Symbol.for('IStorageTopologyService'),
     ICanonicalReadRepository: Symbol.for('ICanonicalReadRepository'),
     ICanonicalQueryService: Symbol.for('ICanonicalQueryService'),

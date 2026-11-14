@@ -19,4 +19,8 @@ if [ "$1" = 'mongod' ] && [ ! -f /data/db/.canonical-initialized ]; then
     touch /data/db/.canonical-initialized
 fi
 
+if [ "$1" = 'mongod' ]; then
+    set -- "$@" --setParameter "transactionLifetimeLimitSeconds=$MONGO_TRANSACTION_LIFETIME_SECONDS"
+fi
+
 exec gosu mongodb "$@" --keyFile /run/canonical-mongo/keyfile

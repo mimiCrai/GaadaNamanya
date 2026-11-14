@@ -7,11 +7,12 @@ import { logger } from '../libs/logger';
 import { HazardEventUpsertResult, IHazardEventRepository } from '../repositories/hazard-event.repository';
 import { IPendingTsunamiWarningRepository } from '../repositories/pending-tsunami-warning.repository';
 import env from '../util/env';
+import { LeaseToken } from '../db/schema/background-leases';
 
 export interface IHazardEventIngestionService {
-    ingestSeismicEvents(events: SeismicEvent[], correlationId: string): Promise<void>;
-    ingestVolcanicReports(reports: VolcanicReport[], correlationId: string): Promise<void>;
-    ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string): Promise<void>;
+    ingestSeismicEvents(events: SeismicEvent[], correlationId: string, lease: LeaseToken): Promise<void>;
+    ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void>;
+    ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string, lease: LeaseToken): Promise<void>;
 }
 
 @injectable()
@@ -23,7 +24,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         private readonly pendingTsunamiWarningRepository: IPendingTsunamiWarningRepository
     ) {}
 
-    async ingestVolcanicReports(reports: VolcanicReport[], correlationId: string): Promise<void> {
+    async ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void> {
         for (const report of reports) {
             const { report_id, volcano_id, alert_level, reported_at, ...attributes } = report;
             const location = getVolcanoLocation(volcano_id);
@@ -39,12 +40,13 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
                 attributes,
                 topic: env.KAFKA_TOPIC,
                 correlationId,
+                lease,
             });
             this.logIngestion(result, correlationId);
         }
     }
 
-    async ingestSeismicEvents(events: SeismicEvent[], correlationId: string): Promise<void> {
+    async ingestSeismicEvents(events: SeismicEvent[], correlationId: string, lease: LeaseToken): Promise<void> {
         for (const event of events) {
             const result = await this.hazardEventRepository.upsertAndEnqueue({
                 source: HazardSource.Bmkg,
@@ -62,18 +64,19 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
                 },
                 topic: env.KAFKA_TOPIC,
                 correlationId,
+                lease,
             });
             this.logIngestion(result, correlationId);
         }
 
-        await this.resolvePendingTsunamiWarnings(correlationId);
+        await this.resolvePendingTsunamiWarnings(correlationId, lease);
     }
 
-    async ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string): Promise<void> {
+    async ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string, lease: LeaseToken): Promise<void> {
         for (const warning of warnings) {
-            const applied = await this.applyTsunamiWarning(warning, correlationId);
+            const applied = await this.applyTsunamiWarning(warning, correlationId, lease);
             if (!applied) {
-                await this.pendingTsunamiWarningRepository.save(warning);
+                await this.pendingTsunamiWarningRepository.save(warning, lease);
                 logger.info(
                     { warningId: warning.warning_id, relatedEventId: warning.related_event_id, correlationId },
                     'Stored pending tsunami warning until its seismic event arrives'
@@ -82,16 +85,20 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         }
     }
 
-    private async resolvePendingTsunamiWarnings(correlationId: string): Promise<void> {
+    private async resolvePendingTsunamiWarnings(correlationId: string, lease: LeaseToken): Promise<void> {
         const pendingWarnings = await this.pendingTsunamiWarningRepository.findOldest(100);
         for (const pendingWarning of pendingWarnings) {
-            if (await this.applyTsunamiWarning(pendingWarning.warning, correlationId)) {
-                await this.pendingTsunamiWarningRepository.remove(pendingWarning.warningId);
+            if (await this.applyTsunamiWarning(pendingWarning.warning, correlationId, lease)) {
+                await this.pendingTsunamiWarningRepository.remove(pendingWarning.warningId, lease);
             }
         }
     }
 
-    private async applyTsunamiWarning(warning: TsunamiWarning, correlationId: string): Promise<boolean> {
+    private async applyTsunamiWarning(
+        warning: TsunamiWarning,
+        correlationId: string,
+        lease: LeaseToken
+    ): Promise<boolean> {
         const seismicEvent = await this.hazardEventRepository.findBySourceAndRefId(
             HazardSource.Bmkg,
             warning.related_event_id
@@ -120,6 +127,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
             },
             topic: env.KAFKA_TOPIC,
             correlationId,
+            lease,
         });
         this.logIngestion(result, correlationId);
         return true;

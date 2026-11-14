@@ -5,6 +5,7 @@ x-canonical-mongo: &canonical-mongo
         MONGO_INITDB_ROOT_USERNAME: ${CANONICAL_STORE_ROOT_USER}
         MONGO_INITDB_ROOT_PASSWORD: ${CANONICAL_STORE_ROOT_PASSWORD}
         MONGO_CLUSTER_KEY: ${CANONICAL_STORE_CLUSTER_KEY}
+        MONGO_TRANSACTION_LIFETIME_SECONDS: ${CANONICAL_STORE_TRANSACTION_LIFETIME_SECONDS:-10}
     volumes:
         - ./scripts/mongodb:/opt/mongodb:ro
     healthcheck:
@@ -28,7 +29,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bnpb-auth:
         build: ./services/bnpb-auth
@@ -59,15 +61,15 @@ services:
             SERVICE_NAME: bnpb-client-api
             NODE_ENV: test
             BNPB_AUTH_PUBLIC_KEY_URL: http://bnpb-auth:3000/public-key
-            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator:3000
+            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
             BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
         ports:
             - '${BNPB_CLIENT_API_HOST_PORT}:3000'
         depends_on:
             bnpb-auth:
                 condition: service_healthy
-            bnpb-aggregator:
-                condition: service_started
+            bnpb-aggregator-entry:
+                condition: service_healthy
         healthcheck:
             test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/live').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
             interval: 5s
@@ -256,7 +258,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     notification-store:
         image: postgres:16-alpine
@@ -270,10 +273,13 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bnpb-aggregator:
         build: ./services/bnpb-aggregator
+        deploy:
+            replicas: 3
         environment:
             PORT: ${BNPB_AGGREGATOR_CONTAINER_PORT}
             SERVICE_NAME: ${BNPB_AGGREGATOR_SERVICE_NAME}
@@ -283,6 +289,10 @@ services:
             BNPB_AUDIT_TOKEN: ${BNPB_AGGREGATOR_AUDIT_TOKEN}
             STORAGE_READ_TIMEOUT_MS: ${BNPB_AGGREGATOR_STORAGE_READ_TIMEOUT_MS}
             MONGO_NODE_MAP: ${BNPB_AGGREGATOR_MONGO_NODE_MAP}
+            BACKGROUND_LEASE_MS: ${BNPB_AGGREGATOR_BACKGROUND_LEASE_MS:-15000}
+            BACKGROUND_LEASE_RENEW_MS: ${BNPB_AGGREGATOR_BACKGROUND_LEASE_RENEW_MS:-2000}
+            LEASE_OPERATION_TIMEOUT_MS: ${BNPB_AGGREGATOR_LEASE_OPERATION_TIMEOUT_MS:-3000}
+            KAFKA_TRANSACTIONAL_ID: ${BNPB_AGGREGATOR_KAFKA_TRANSACTIONAL_ID:-bnpb-aggregator-outbox}
             KAFKA_BROKERS: ${BNPB_AGGREGATOR_KAFKA_BROKERS}
             KAFKA_CLIENT_ID: ${BNPB_AGGREGATOR_KAFKA_CLIENT_ID}
             KAFKA_TOPIC: ${BNPB_AGGREGATOR_KAFKA_TOPIC}
@@ -297,8 +307,6 @@ services:
             POLL_OVERLAP_MS: ${BNPB_AGGREGATOR_POLL_OVERLAP_MS}
             OUTBOX_RELAY_INTERVAL_MS: ${BNPB_AGGREGATOR_OUTBOX_RELAY_INTERVAL_MS}
             OUTBOX_BATCH_SIZE: ${BNPB_AGGREGATOR_OUTBOX_BATCH_SIZE}
-        ports:
-            - '${BNPB_AGGREGATOR_HOST_PORT}:${BNPB_AGGREGATOR_CONTAINER_PORT}'
         depends_on:
             canonical-store-migrate:
                 condition: service_completed_successfully
@@ -306,6 +314,24 @@ services:
                 condition: service_healthy
             kafka-topic-init:
                 condition: service_completed_successfully
+
+    bnpb-aggregator-entry:
+        image: haproxy:3.0-alpine
+        environment:
+            PORT: ${BNPB_AGGREGATOR_CONTAINER_PORT}
+            BACKEND_PORT: ${BNPB_AGGREGATOR_CONTAINER_PORT}
+        ports:
+            - '${BNPB_AGGREGATOR_HOST_PORT}:${BNPB_AGGREGATOR_CONTAINER_PORT}'
+        volumes:
+            - ./scripts/haproxy/aggregator.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+        depends_on:
+            bnpb-aggregator:
+                condition: service_started
+        healthcheck:
+            test: ['CMD-SHELL', 'wget -qO- "http://127.0.0.1:$$PORT/health/ready" >/dev/null']
+            interval: 2s
+            timeout: 3s
+            retries: 30
 
     dashboard-consumer:
         build: ./services/dashboard-consumer
@@ -361,7 +387,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bmkg:
         build: ./services/bmkg
@@ -402,7 +429,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     pvmbg:
         build: ./services/pvmbg

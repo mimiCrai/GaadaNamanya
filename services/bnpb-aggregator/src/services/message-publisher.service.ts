@@ -1,7 +1,10 @@
-import { injectable } from 'inversify';
-import { Kafka, Producer } from 'kafkajs';
+import { inject, injectable } from 'inversify';
+import { Kafka, Producer, Transaction } from 'kafkajs';
 import { logger } from '../libs/logger';
 import env from '../util/env';
+import { TYPES } from '../constants/types';
+import { LeaseToken } from '../db/schema/background-leases';
+import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 
 export interface PublishOptions {
     topic: string;
@@ -11,7 +14,7 @@ export interface PublishOptions {
 
 export interface IMessagePublisher {
     connect(): Promise<void>;
-    publish<T>(message: T, options: PublishOptions): Promise<void>;
+    publish<T>(message: T, options: PublishOptions, lease: LeaseToken): Promise<void>;
     close(): Promise<void>;
 }
 
@@ -22,10 +25,18 @@ export class MessagePublisher implements IMessagePublisher {
         brokers: env.KAFKA_BROKERS,
     });
     private producer: Producer | null = null;
+    private epoch: number | undefined;
+
+    constructor(@inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository) {}
 
     async connect(): Promise<void> {
         try {
-            this.producer = this.kafka.producer();
+            this.producer = this.kafka.producer({
+                transactionalId: env.KAFKA_TRANSACTIONAL_ID,
+                idempotent: true,
+                maxInFlightRequests: 1,
+                transactionTimeout: env.BACKGROUND_LEASE_MS,
+            });
             await this.producer.connect();
             logger.info('Kafka producer connected');
         } catch (error) {
@@ -35,7 +46,12 @@ export class MessagePublisher implements IMessagePublisher {
         }
     }
 
-    async publish<T>(message: T, options: PublishOptions): Promise<void> {
+    async publish<T>(message: T, options: PublishOptions, lease: LeaseToken): Promise<void> {
+        await this.leases.requireActive(lease);
+        if (this.epoch !== lease.epoch) {
+            await this.close();
+            this.epoch = lease.epoch;
+        }
         if (!this.producer) {
             await this.connect();
         }
@@ -45,33 +61,38 @@ export class MessagePublisher implements IMessagePublisher {
         }
 
         const { topic, key, headers } = options;
-
+        await this.leases.requireActive(lease);
+        let transaction: Transaction | undefined;
         try {
-            await this.producer.send({
+            transaction = await this.producer.transaction();
+            await transaction.send({
                 topic,
                 acks: -1,
                 messages: [
                     {
                         key,
                         value: JSON.stringify(message),
-                        headers,
+                        headers: { ...headers, fencing_token: String(lease.epoch) },
                     },
                 ],
             });
-
+            await this.leases.requireActive(lease);
+            await transaction.commit();
             logger.debug({ topic, key }, 'Kafka message published');
         } catch (error) {
+            await transaction?.abort().catch(() => undefined);
+            await this.close();
             logger.error({ error, topic, key }, 'Failed to publish Kafka message');
             throw error;
         }
     }
 
     async close(): Promise<void> {
+        this.epoch = undefined;
+        const producer = this.producer;
+        this.producer = null;
         try {
-            if (this.producer) {
-                await this.producer.disconnect();
-                this.producer = null;
-            }
+            if (producer) await producer.disconnect();
             logger.info('Kafka producer disconnected');
         } catch (error) {
             logger.error({ error }, 'Error disconnecting Kafka producer');

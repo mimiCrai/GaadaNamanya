@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+const lease = { ownerId: 'ingestion-test', epoch: 1 };
 import { SeismicEvent, TsunamiWarning, VolcanicReport } from '../../src/clients/source-client.types';
 import { HazardEvent, HazardSeverity, HazardSource, HazardType } from '../../src/db/schema/hazard-events';
 import { HazardEventChangeType } from '../../src/db/schema/outbox-events';
@@ -59,7 +60,7 @@ describe('HazardEventIngestionService', () => {
             confidence_level: 0.91,
         };
 
-        await service.ingestVolcanicReports([report], 'correlation-1');
+        await service.ingestVolcanicReports([report], 'correlation-1', lease);
 
         expect(mockHazardEventRepository.upsertAndEnqueue).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -92,7 +93,7 @@ describe('HazardEventIngestionService', () => {
             potential_tsunami: false,
         };
 
-        await service.ingestSeismicEvents([event], 'correlation-seismic');
+        await service.ingestSeismicEvents([event], 'correlation-seismic', lease);
 
         expect(mockHazardEventRepository.upsertAndEnqueue).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -117,7 +118,7 @@ describe('HazardEventIngestionService', () => {
             changeType: HazardEventChangeType.Updated,
         });
 
-        await service.ingestTsunamiWarnings([warning], 'correlation-2');
+        await service.ingestTsunamiWarnings([warning], 'correlation-2', lease);
 
         expect(mockHazardEventRepository.upsertAndEnqueue).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -141,8 +142,8 @@ describe('HazardEventIngestionService', () => {
         };
         mockHazardEventRepository.findBySourceAndRefId.mockResolvedValue(undefined);
 
-        await service.ingestTsunamiWarnings([warning], 'correlation-3');
+        await service.ingestTsunamiWarnings([warning], 'correlation-3', lease);
 
-        expect(mockPendingWarningRepository.save).toHaveBeenCalledWith(warning);
+        expect(mockPendingWarningRepository.save).toHaveBeenCalledWith(warning, lease);
     });
 });

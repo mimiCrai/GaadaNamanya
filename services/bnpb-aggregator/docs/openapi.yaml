@@ -10,6 +10,31 @@ servers:
       description: Local development server
 
 paths:
+    /internal/leadership:
+        get:
+            summary: Inspect background polling and relay ownership
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200':
+                    description: Instance identity and persisted lease, using database timestamps
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [instanceId, lease]
+                                properties:
+                                    instanceId: { type: string }
+                                    lease:
+                                        type: object
+                                        nullable: true
+                                        properties:
+                                            ownerId: { type: string, nullable: true }
+                                            epoch: { type: integer }
+                                            expiresAt: { type: string, format: date-time }
+                                            checkedAt: { type: string, format: date-time }
+                                            guardVersion: { type: integer }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
     /health:
         get:
             summary: Health check

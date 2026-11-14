@@ -1,5 +1,6 @@
 import { injectable } from 'inversify';
 import { db } from '../db';
+import env from '../util/env';
 
 export interface HealthStatus {
     status: 'healthy' | 'unhealthy';
@@ -21,7 +22,7 @@ export class HealthService implements IHealthService {
         let dbStatus: 'connected' | 'disconnected' = 'disconnected';
 
         try {
-            await db.database.command({ ping: 1 });
+            await db.database.command({ ping: 1 }, { timeoutMS: env.LEASE_OPERATION_TIMEOUT_MS });
             dbStatus = 'connected';
         } catch {
             dbStatus = 'disconnected';
