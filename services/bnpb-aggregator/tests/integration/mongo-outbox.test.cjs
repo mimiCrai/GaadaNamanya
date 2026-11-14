@@ -13,6 +13,7 @@ const { StorageTopologyService } = require('../../dist/src/services/storage-topo
 const { CanonicalReadRepository } = require('../../dist/src/repositories/canonical-read.repository');
 const { CanonicalQueryService } = require('../../dist/src/services/canonical-query.service');
 const { createHash } = require('node:crypto');
+const { BackgroundLeaseRepository } = require('../../dist/src/repositories/background-lease.repository');
 
 test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, async (t) => {
     const name = process.env.DATABASE_NAME;
@@ -22,16 +23,21 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
     const admin = store.client.db('admin');
     assert.equal((await admin.command({ hello: 1 })).msg, 'isdbgrid', 'Tests must run through mongos');
     await store.database.dropDatabase();
+    let leaseTimer;
     try {
         assert.deepEqual(
             await runMigrations(store.database),
             migrations.map((migration) => migration.id)
         );
         await store.connect();
-        const hazards = new HazardEventRepository(store);
-        const outbox = new OutboxEventRepository(store);
-        const states = new SourceSyncStateRepository(store);
-        const pending = new PendingTsunamiWarningRepository(store);
+        const leases = new BackgroundLeaseRepository(store);
+        const grant = await leases.acquireOrRenew('mongo-integration');
+        const lease = { ownerId: grant.ownerId, epoch: grant.epoch };
+        leaseTimer = setInterval(() => { void leases.acquireOrRenew(lease.ownerId).catch(() => undefined); }, 2000);
+        const hazards = new HazardEventRepository(store, leases);
+        const outbox = new OutboxEventRepository(store, leases);
+        const states = new SourceSyncStateRepository(store, leases);
+        const pending = new PendingTsunamiWarningRepository(store, leases);
         const hazardCollection = store.collection('hazard_events');
         const outboxCollection = store.collection('outbox_events');
         const input = {
@@ -46,6 +52,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             attributes: { magnitude: 5.1 },
             topic: 'hazard-events',
             correlationId: 'mongo-outbox-integration',
+            lease,
         };
         let original;
 
@@ -115,18 +122,18 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
         await t.test('source status survives errors, preserves staleSince, and recovers', async () => {
             const at = new Date('2026-01-02T00:00:00Z');
             assert.equal((await states.findAll()).length, 3);
-            assert.equal((await states.recordFailedPoll('PVMBG_VOLCANIC', 'offline', at)).status, 'UNAVAILABLE');
-            await states.recordSuccessfulPoll('PVMBG_VOLCANIC', at);
-            const stale = await states.recordFailedPoll('PVMBG_VOLCANIC', '$timeout', at);
+            assert.equal((await states.recordFailedPoll('PVMBG_VOLCANIC', 'offline', at, lease)).status, 'UNAVAILABLE');
+            await states.recordSuccessfulPoll('PVMBG_VOLCANIC', at, lease);
+            const stale = await states.recordFailedPoll('PVMBG_VOLCANIC', '$timeout', at, lease);
             const staleAgain = await states.recordFailedPoll(
                 'PVMBG_VOLCANIC',
                 'still offline',
-                new Date(at.getTime() + 1000)
+                new Date(at.getTime() + 1000), lease
             );
             assert.equal(stale.status, 'STALE');
             assert.deepEqual(staleAgain.staleSince, stale.staleSince);
             assert.equal(staleAgain.consecutiveFailures, 2);
-            assert.equal((await states.recordSuccessfulPoll('PVMBG_VOLCANIC', new Date())).staleSince, null);
+            assert.equal((await states.recordSuccessfulPoll('PVMBG_VOLCANIC', new Date(), lease)).staleSince, null);
         });
 
         await t.test('migration reruns and application reconnect preserve data, indexes, and checkpoints', async () => {
@@ -177,13 +184,13 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
 
         await t.test('pending tsunami warnings upsert without losing first receipt time', async () => {
             const warning = { warning_id: 'pending-1', related_event_id: 'future-earthquake', warning_level: 'SIAGA' };
-            await pending.save(warning);
+            await pending.save(warning, lease);
             const [first] = await pending.findOldest(10);
-            await pending.save({ ...warning, warning_level: 'AWAS' });
+            await pending.save({ ...warning, warning_level: 'AWAS' }, lease);
             const [updated] = await pending.findOldest(10);
             assert.deepEqual(updated.firstReceivedAt, first.firstReceivedAt);
             assert.equal(updated.warning.warning_level, 'AWAS');
-            await pending.remove(warning.warning_id);
+            await pending.remove(warning.warning_id, lease);
             assert.equal((await pending.findOldest(10)).length, 0);
         });
 
@@ -196,7 +203,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
                     if (fail) throw new Error('Kafka unavailable');
                     published.push(message.eventId);
                 },
-            });
+            }, { current: () => lease, invalidate: () => undefined }, leases);
             relay.start();
             try {
                 await waitFor(
@@ -215,13 +222,14 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             const saved = await hazards.upsertAndEnqueue({ ...input, sourceRefId: 'survive-reconnect' });
             const second = new CanonicalStore(process.env.DATABASE_URL, name);
             try {
-                const repository = new HazardEventRepository(second);
+                const secondLeases = new BackgroundLeaseRepository(second);
+                const repository = new HazardEventRepository(second, secondLeases);
                 const result = await repository.findByHazardId(saved.hazardEvent.hazardId);
                 assert.ok(result.occurredAt instanceof Date);
                 assert.equal('_id' in result, false);
                 const matching = await repository.findAll(saved.hazardEvent.ingestedAt, 'BMKG');
                 assert.ok(matching.some((row) => row.hazardId === saved.hazardEvent.hazardId));
-                assert.equal((await new OutboxEventRepository(second).findUnpublished(100)).length, 1);
+                assert.equal((await new OutboxEventRepository(second, secondLeases).findUnpublished(100)).length, 1);
             } finally {
                 await second.close();
             }
@@ -306,6 +314,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             );
         });
     } finally {
+        clearInterval(leaseTimer);
         await store.database.dropDatabase();
         await store.close();
     }

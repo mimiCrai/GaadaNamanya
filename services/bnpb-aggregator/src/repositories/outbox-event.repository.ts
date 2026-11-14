@@ -2,16 +2,21 @@ import { inject, injectable } from 'inversify';
 import { TYPES } from '../constants/types';
 import { CanonicalStore } from '../db';
 import { OutboxEvent, outboxEvents } from '../db/schema/outbox-events';
+import { LeaseToken } from '../db/schema/background-leases';
+import { IBackgroundLeaseRepository } from './background-lease.repository';
 
 export interface IOutboxEventRepository {
     findUnpublished(limit: number): Promise<OutboxEvent[]>;
-    markPublished(outboxEventId: string, publishedAt: Date): Promise<void>;
-    recordPublishFailure(outboxEventId: string, errorMessage: string): Promise<void>;
+    markPublished(outboxEventId: string, lease: LeaseToken): Promise<void>;
+    recordPublishFailure(outboxEventId: string, errorMessage: string, lease: LeaseToken): Promise<void>;
 }
 
 @injectable()
 export class OutboxEventRepository implements IOutboxEventRepository {
-    constructor(@inject(TYPES.Database) private readonly db: CanonicalStore) {}
+    constructor(
+        @inject(TYPES.Database) private readonly db: CanonicalStore,
+        @inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository
+    ) {}
 
     async findUnpublished(limit: number): Promise<OutboxEvent[]> {
         return this.db
@@ -22,18 +27,23 @@ export class OutboxEventRepository implements IOutboxEventRepository {
             .toArray();
     }
 
-    async markPublished(outboxEventId: string, publishedAt: Date): Promise<void> {
-        await this.db
-            .collection<OutboxEvent>(outboxEvents)
-            .updateOne({ _id: outboxEventId }, { $set: { publishedAt, lastError: null } });
+    async markPublished(outboxEventId: string, lease: LeaseToken): Promise<void> {
+        await this.leases.withLease(lease, async (session, publishedAt) => {
+            await this.db
+                .collection<OutboxEvent>(outboxEvents)
+                .updateOne({ _id: outboxEventId }, { $set: { publishedAt, lastError: null } }, { session });
+        });
     }
 
-    async recordPublishFailure(outboxEventId: string, errorMessage: string): Promise<void> {
-        await this.db
-            .collection<OutboxEvent>(outboxEvents)
-            .updateOne(
-                { _id: outboxEventId },
-                { $inc: { publishAttempts: 1 }, $set: { lastError: errorMessage.slice(0, 1000) } }
-            );
+    async recordPublishFailure(outboxEventId: string, errorMessage: string, lease: LeaseToken): Promise<void> {
+        await this.leases.withLease(lease, async (session) => {
+            await this.db
+                .collection<OutboxEvent>(outboxEvents)
+                .updateOne(
+                    { _id: outboxEventId },
+                    { $inc: { publishAttempts: 1 }, $set: { lastError: errorMessage.slice(0, 1000) } },
+                    { session }
+                );
+        });
     }
 }

@@ -9,8 +9,11 @@ import { logger } from '../libs/logger';
 import env from '../util/env';
 import { IHazardEventIngestionService } from './hazard-event-ingestion.service';
 import { ISourceSyncStateService } from './source-sync-state.service';
+import { IBackgroundLeadershipService } from './background-leadership.service';
+import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
+import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
 
-type PollWork = (options: PollRequestOptions) => Promise<void>;
+type PollWork = (options: PollRequestOptions, lease: LeaseToken) => Promise<void>;
 
 export interface IPollingService {
     start(): void;
@@ -26,7 +29,9 @@ export class PollingService implements IPollingService {
         @inject(TYPES.IBmkgClient) private readonly bmkgClient: IBmkgClient,
         @inject(TYPES.IPvmbgClient) private readonly pvmbgClient: IPvmbgClient,
         @inject(TYPES.IHazardEventIngestionService) private readonly ingestionService: IHazardEventIngestionService,
-        @inject(TYPES.ISourceSyncStateService) private readonly sourceSyncStateService: ISourceSyncStateService
+        @inject(TYPES.ISourceSyncStateService) private readonly sourceSyncStateService: ISourceSyncStateService,
+        @inject(TYPES.IBackgroundLeadershipService) private readonly leadership: IBackgroundLeadershipService,
+        @inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository
     ) {}
 
     start(): void {
@@ -35,9 +40,13 @@ export class PollingService implements IPollingService {
         }
 
         this.stopped = false;
-        this.schedule(SourceStream.BmkgSeismic, (options) => this.pollBmkgSeismic(options), 0);
-        this.schedule(SourceStream.BmkgTsunamiWarning, (options) => this.pollBmkgTsunamiWarnings(options), 0);
-        this.schedule(SourceStream.PvmbgVolcanic, (options) => this.pollPvmbgVolcanic(options), 0);
+        this.schedule(SourceStream.BmkgSeismic, (options, lease) => this.pollBmkgSeismic(options, lease), 0);
+        this.schedule(
+            SourceStream.BmkgTsunamiWarning,
+            (options, lease) => this.pollBmkgTsunamiWarnings(options, lease),
+            0
+        );
+        this.schedule(SourceStream.PvmbgVolcanic, (options, lease) => this.pollPvmbgVolcanic(options, lease), 0);
         logger.info({ intervalMs: env.POLL_INTERVAL_MS }, 'Source pollers started');
     }
 
@@ -76,6 +85,8 @@ export class PollingService implements IPollingService {
     }
 
     private async runOnce(sourceStream: SourceStream, work: PollWork): Promise<void> {
+        const lease = this.leadership.current();
+        if (!lease) return;
         const correlationId = randomUUID();
         try {
             const state = await this.sourceSyncStateService.getState(sourceStream);
@@ -83,39 +94,56 @@ export class PollingService implements IPollingService {
                 ? new Date(state.lastSuccessfulPollAt.getTime() - env.POLL_OVERLAP_MS)
                 : undefined;
 
-            await work({ since, correlationId });
+            const startedAt = await this.leases.requireActive(lease);
+            await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch }, lease);
             if (this.stopped) {
                 logger.info({ sourceStream, correlationId }, 'Source poll cancelled during shutdown');
                 return;
             }
-            await this.sourceSyncStateService.recordSuccessfulPoll(sourceStream);
-            logger.info({ sourceStream, since, correlationId }, 'Source poll completed successfully');
+            await this.sourceSyncStateService.recordSuccessfulPoll(sourceStream, startedAt, lease);
+            logger.info(
+                { sourceStream, since, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
+                'Source poll completed successfully'
+            );
         } catch (error) {
+            if (error instanceof LeaseLostError) {
+                this.leadership.invalidate(lease);
+                logger.info(
+                    { sourceStream, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
+                    'Discarded work after losing background lease'
+                );
+                return;
+            }
             if (this.stopped) {
                 logger.info({ sourceStream, correlationId }, 'Source poll ended during shutdown');
                 return;
             }
             logger.error({ error, sourceStream, correlationId }, 'Source poll failed');
             try {
-                await this.sourceSyncStateService.recordFailedPoll(sourceStream, error);
+                const at = await this.leases.requireActive(lease);
+                await this.sourceSyncStateService.recordFailedPoll(sourceStream, error, at, lease);
             } catch (stateError) {
-                logger.error({ error: stateError, sourceStream, correlationId }, 'Failed to record source poll failure');
+                if (stateError instanceof LeaseLostError) this.leadership.invalidate(lease);
+                logger.error(
+                    { error: stateError, sourceStream, correlationId },
+                    'Failed to record source poll failure'
+                );
             }
         }
     }
 
-    private async pollBmkgSeismic(options: PollRequestOptions): Promise<void> {
+    private async pollBmkgSeismic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
         const events = await this.bmkgClient.getSeismicEvents(options);
-        await this.ingestionService.ingestSeismicEvents(events, options.correlationId);
+        await this.ingestionService.ingestSeismicEvents(events, options.correlationId, lease);
     }
 
-    private async pollBmkgTsunamiWarnings(options: PollRequestOptions): Promise<void> {
+    private async pollBmkgTsunamiWarnings(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
         const warnings = await this.bmkgClient.getTsunamiWarnings(options);
-        await this.ingestionService.ingestTsunamiWarnings(warnings, options.correlationId);
+        await this.ingestionService.ingestTsunamiWarnings(warnings, options.correlationId, lease);
     }
 
-    private async pollPvmbgVolcanic(options: PollRequestOptions): Promise<void> {
+    private async pollPvmbgVolcanic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
         const reports = await this.pvmbgClient.getVolcanicReports(options);
-        await this.ingestionService.ingestVolcanicReports(reports, options.correlationId);
+        await this.ingestionService.ingestVolcanicReports(reports, options.correlationId, lease);
     }
 }

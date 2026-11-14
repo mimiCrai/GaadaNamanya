@@ -23,6 +23,9 @@ export class PvmbgClient implements IPvmbgClient {
                 headers: {
                     Authorization: `Bearer ${env.PVMBG_TOKEN}`,
                     'X-Correlation-ID': options.correlationId,
+                    ...(options.instanceId
+                        ? { 'X-BNPB-Instance-ID': options.instanceId, 'X-BNPB-Fence': String(options.fencingToken) }
+                        : {}),
                 },
                 signal: AbortSignal.timeout(env.PVMBG_REQUEST_TIMEOUT_MS),
             });

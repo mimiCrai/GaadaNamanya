@@ -25,9 +25,15 @@ import { AuditAuthMiddleware } from '../middlewares/audit-auth.middleware';
 import { CanonicalReadRepository, ICanonicalReadRepository } from '../repositories/canonical-read.repository';
 import { CanonicalQueryService, ICanonicalQueryService } from '../services/canonical-query.service';
 import { StorageTopologyService, IStorageTopologyService } from '../services/storage-topology.service';
+import { BackgroundLeaseRepository, IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
+import { BackgroundLeadershipService, IBackgroundLeadershipService } from '../services/background-leadership.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind(TYPES.Database).toConstantValue(db);
+    bind<IBackgroundLeaseRepository>(TYPES.IBackgroundLeaseRepository).to(BackgroundLeaseRepository).inSingletonScope();
+    bind<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService)
+        .to(BackgroundLeadershipService)
+        .inSingletonScope();
     bind<IStorageTopologyService>(TYPES.IStorageTopologyService).to(StorageTopologyService).inSingletonScope();
     bind<ICanonicalReadRepository>(TYPES.ICanonicalReadRepository).to(CanonicalReadRepository).inSingletonScope();
     bind<ICanonicalQueryService>(TYPES.ICanonicalQueryService).to(CanonicalQueryService).inSingletonScope();

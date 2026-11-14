@@ -19,6 +19,8 @@ export function requestLogMiddleware(req: Request, res: Response, next: NextFunc
                 latency_ms: Math.round(latencyMs * 10) / 10,
                 injected_delay_ms: res.locals.injectedDelayMs,
                 auth_result: res.locals.authResult,
+                caller_instance_id: req.header('X-BNPB-Instance-ID'),
+                fencing_token: req.header('X-BNPB-Fence'),
                 ...(aborted && { aborted: true }),
             },
             'Request completed'

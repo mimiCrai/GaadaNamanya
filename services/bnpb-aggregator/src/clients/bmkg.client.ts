@@ -32,6 +32,9 @@ export class BmkgClient implements IBmkgClient {
                 headers: {
                     'X-BMKG-Key': env.BMKG_API_KEY,
                     'X-Correlation-ID': options.correlationId,
+                    ...(options.instanceId
+                        ? { 'X-BNPB-Instance-ID': options.instanceId, 'X-BNPB-Fence': String(options.fencingToken) }
+                        : {}),
                 },
                 signal: AbortSignal.timeout(env.BMKG_REQUEST_TIMEOUT_MS),
             });

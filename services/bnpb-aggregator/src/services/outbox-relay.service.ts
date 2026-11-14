@@ -4,6 +4,9 @@ import { logger } from '../libs/logger';
 import { IOutboxEventRepository } from '../repositories/outbox-event.repository';
 import env from '../util/env';
 import { IMessagePublisher } from './message-publisher.service';
+import { IBackgroundLeadershipService } from './background-leadership.service';
+import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
+import { LeaseLostError } from '../db/schema/background-leases';
 
 export interface IOutboxRelayService {
     start(): void;
@@ -18,7 +21,9 @@ export class OutboxRelayService implements IOutboxRelayService {
 
     constructor(
         @inject(TYPES.IOutboxEventRepository) private readonly outboxEventRepository: IOutboxEventRepository,
-        @inject(TYPES.IMessagePublisher) private readonly messagePublisher: IMessagePublisher
+        @inject(TYPES.IMessagePublisher) private readonly messagePublisher: IMessagePublisher,
+        @inject(TYPES.IBackgroundLeadershipService) private readonly leadership: IBackgroundLeadershipService,
+        @inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository
     ) {}
 
     start(): void {
@@ -70,26 +75,40 @@ export class OutboxRelayService implements IOutboxRelayService {
     }
 
     private async publishBatch(): Promise<void> {
+        const lease = this.leadership.current();
+        if (!lease) return;
+        await this.leases.requireActive(lease);
         const events = await this.outboxEventRepository.findUnpublished(env.OUTBOX_BATCH_SIZE);
         for (const event of events) {
-            const correlationId = typeof event.payload.correlationId === 'string' ? event.payload.correlationId : undefined;
+            if (this.stopped) return;
+            const correlationId =
+                typeof event.payload.correlationId === 'string' ? event.payload.correlationId : undefined;
             try {
-                await this.messagePublisher.publish(event.payload, {
-                    topic: event.topic,
-                    key: event.partitionKey,
-                    headers: {
-                        event_type: event.eventType,
-                        outbox_event_id: event.outboxEventId,
+                await this.leases.requireActive(lease);
+                await this.messagePublisher.publish(
+                    event.payload,
+                    {
+                        topic: event.topic,
+                        key: event.partitionKey,
+                        headers: {
+                            event_type: event.eventType,
+                            outbox_event_id: event.outboxEventId,
+                        },
                     },
-                });
-                await this.outboxEventRepository.markPublished(event.outboxEventId, new Date());
+                    lease
+                );
+                await this.outboxEventRepository.markPublished(event.outboxEventId, lease);
                 logger.info(
                     { outboxEventId: event.outboxEventId, hazardId: event.aggregateId, correlationId },
                     'Published outbox event to Kafka'
                 );
             } catch (error) {
+                if (error instanceof LeaseLostError) {
+                    this.leadership.invalidate(lease);
+                    return;
+                }
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                await this.outboxEventRepository.recordPublishFailure(event.outboxEventId, errorMessage);
+                await this.outboxEventRepository.recordPublishFailure(event.outboxEventId, errorMessage, lease);
                 logger.error(
                     { error, outboxEventId: event.outboxEventId, hazardId: event.aggregateId, correlationId },
                     'Failed to publish outbox event; it will be retried'

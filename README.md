@@ -58,6 +58,8 @@ Canonical Store menggunakan MongoDB dengan dua shard (masing-masing tiga replica
 
 Audit API M2 tersedia melalui `GET /internal/audit/events`, `/internal/audit/checksum`, dan `/internal/audit/location`, memakai `Authorization: Bearer <BNPB_AGGREGATOR_AUDIT_TOKEN>`. Events mendukung `source`, `since`, `limit`, serta cursor; pembacaan storage yang tidak lengkap ditandai `partial` dan `unavailable_units`. Endpoint `/internal/hazards?limit=50` juga mendukung pagination lintas shard. Lihat [kontrak, konfigurasi, dan pengujian Audit API](docs/bnpb-audit-api.md).
 
+`docker compose up -d --build` langsung menjalankan tiga Aggregator di belakang HAProxy. Ketiganya melayani REST, sementara polling dan relay memakai satu lease MongoDB dengan fencing pada setiap transaksi background. Uji otomatis failover, clock skew, dan freeze/resume tersedia melalui `bash scripts/test-aggregator-failover.sh`. Lihat [detail koordinasi Aggregator](docs/bnpb-aggregator-leadership.md), termasuk batas pengujian Compose sebelum deployment Kubernetes.
+
 ## Autentikasi dan Client API
 
 BNPB Auth (`http://localhost:3001`) mengelola kredensial pengguna dan sesi refresh. Service ini menandatangani access token RS256 berumur pendek (secara default 60 detik) menggunakan private key miliknya; BNPB Client API hanya menerima public key milik Auth untuk keperluan verifikasi. Refresh token disimpan oleh Auth dalam bentuk hash, dirotasi setiap kali refresh, dan tidak pernah dikirimkan ke Aggregator, BMKG, maupun PVMBG.
@@ -288,6 +290,7 @@ CANONICAL_STORE_CLUSTER_KEY=
 CANONICAL_STORE_DB_USER=
 CANONICAL_STORE_DB_PASSWORD=
 CANONICAL_STORE_DB_NAME=
+CANONICAL_STORE_TRANSACTION_LIFETIME_SECONDS=
 
 # Auth Store (PostgreSQL; digunakan oleh bnpb-auth)
 AUTH_STORE_DB_USER=
@@ -328,6 +331,10 @@ BNPB_AGGREGATOR_DATABASE_URL=
 BNPB_AGGREGATOR_AUDIT_TOKEN=
 BNPB_AGGREGATOR_STORAGE_READ_TIMEOUT_MS=
 BNPB_AGGREGATOR_MONGO_NODE_MAP=
+BNPB_AGGREGATOR_BACKGROUND_LEASE_MS=
+BNPB_AGGREGATOR_BACKGROUND_LEASE_RENEW_MS=
+BNPB_AGGREGATOR_LEASE_OPERATION_TIMEOUT_MS=
+BNPB_AGGREGATOR_KAFKA_TRANSACTIONAL_ID=
 BNPB_AGGREGATOR_KAFKA_BROKERS=
 BNPB_AGGREGATOR_KAFKA_CLIENT_ID=
 BNPB_AGGREGATOR_KAFKA_TOPIC=

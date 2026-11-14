@@ -7,6 +7,7 @@ import { IOutboxRelayService } from './services/outbox-relay.service';
 import { IPollingService } from './services/polling.service';
 import { IStorageTopologyService } from './services/storage-topology.service';
 import env from './util/env';
+import { IBackgroundLeadershipService } from './services/background-leadership.service';
 
 async function main() {
     try {
@@ -20,6 +21,8 @@ async function main() {
         const poller = container.get<IPollingService>(TYPES.IPollingService);
         const outboxRelay = container.get<IOutboxRelayService>(TYPES.IOutboxRelayService);
         const messagePublisher = container.get<IMessagePublisher>(TYPES.IMessagePublisher);
+        const leadership = container.get<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService);
+        leadership.start();
         poller.start();
         outboxRelay.start();
 
@@ -32,6 +35,7 @@ async function main() {
             logger.info({ signal }, 'Shutting down BNPB Aggregator');
             poller.stop();
             outboxRelay.stop();
+            await leadership.stop();
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();
