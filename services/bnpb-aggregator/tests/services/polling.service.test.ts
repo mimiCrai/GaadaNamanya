@@ -15,7 +15,7 @@ describe('Fenced source polling', () => {
     const ingestion = {
         ingestSeismicEvents: jest.fn(),
         ingestTsunamiWarnings: jest.fn(),
-        ingestVolcanicReports: jest.fn(),
+        ingestVolcanicBatch: jest.fn(),
     };
     const states = { getState: jest.fn(), recordSuccessfulPoll: jest.fn(), recordFailedPoll: jest.fn() };
     const leadership = { current: jest.fn(), invalidate: jest.fn() };
@@ -30,11 +30,11 @@ describe('Fenced source polling', () => {
         states.getState.mockResolvedValue(undefined);
         bmkg.getSeismicEvents.mockResolvedValue([]);
         bmkg.getTsunamiWarnings.mockResolvedValue([]);
-        pvmbg.getVolcanicReports.mockResolvedValue([]);
+        pvmbg.getVolcanicReports.mockResolvedValue({ records: [], contentType: 'application/json' });
         poller = new PollingService(
             bmkg as IBmkgClient,
             pvmbg as IPvmbgClient,
-            ingestion as IHazardEventIngestionService,
+            ingestion as unknown as IHazardEventIngestionService,
             states as unknown as ISourceSyncStateService,
             leadership as unknown as IBackgroundLeadershipService,
             leases as unknown as IBackgroundLeaseRepository

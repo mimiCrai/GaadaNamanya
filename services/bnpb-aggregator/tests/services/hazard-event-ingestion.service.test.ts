@@ -6,6 +6,7 @@ import { HazardEventChangeType } from '../../src/db/schema/outbox-events';
 import { HazardEventUpsertResult, IHazardEventRepository } from '../../src/repositories/hazard-event.repository';
 import { IPendingTsunamiWarningRepository } from '../../src/repositories/pending-tsunami-warning.repository';
 import { HazardEventIngestionService } from '../../src/services/hazard-event-ingestion.service';
+import { IUnprocessedRecorder } from '../../src/services/unprocessed-recorder.service';
 
 const hazardEvent: HazardEvent = {
     hazardId: 'hazard-1',
@@ -39,6 +40,8 @@ const mockPendingWarningRepository: jest.Mocked<IPendingTsunamiWarningRepository
     remove: jest.fn(),
 };
 
+const mockUnprocessedRecorder: jest.Mocked<IUnprocessedRecorder> = { record: jest.fn() };
+
 describe('HazardEventIngestionService', () => {
     let service: HazardEventIngestionService;
 
@@ -46,7 +49,11 @@ describe('HazardEventIngestionService', () => {
         jest.clearAllMocks();
         mockHazardEventRepository.upsertAndEnqueue.mockResolvedValue(createdResult);
         mockPendingWarningRepository.findOldest.mockResolvedValue([]);
-        service = new HazardEventIngestionService(mockHazardEventRepository, mockPendingWarningRepository);
+        service = new HazardEventIngestionService(
+            mockHazardEventRepository,
+            mockPendingWarningRepository,
+            mockUnprocessedRecorder
+        );
     });
 
     it('preserves additive PVMBG fields in canonical attributes', async () => {
