@@ -1,0 +1,12 @@
+{
+  "observed_at_wall": "2026-11-14T16:16:50.925Z",
+  "rtt_ms": 472,
+  "status": 200,
+  "body": {
+    "profile": "practice",
+    "speed": 60,
+    "group": "gaadanamanya",
+    "latest_offset": 0,
+    "virtual_now": "2026-11-15T00:00:00Z"
+  }
+}

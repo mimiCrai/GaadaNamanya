@@ -67,6 +67,52 @@ paths:
                 '503': { description: Hazard lookup cannot be completed because storage is temporarily unavailable }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
                 '504': { $ref: '#/components/responses/UpstreamTimeout' }
+    /internal-ops/dlq:
+        get:
+            summary: BNPB Internal Ops only - list messages that could not be processed
+            description: Requires role internal. Media (public) and Tim Lapangan (lapangan) receive 403.
+            tags: [Internal Ops]
+            security: [{ bearerAuth: [] }]
+            parameters:
+                - { name: source, in: query, schema: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] } }
+                - { name: status, in: query, schema: { type: string, enum: [retrying, parked, recovered] } }
+                - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000 } }
+                - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 4096 } }
+            responses:
+                '200': { description: Page of unprocessed message metadata (no payload) }
+                '400': { description: Invalid query or cursor }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+                '502': { $ref: '#/components/responses/UpstreamFailure' }
+    /internal-ops/dlq/{messageId}:
+        get:
+            summary: BNPB Internal Ops only - one unprocessed message with raw payload as base64
+            tags: [Internal Ops]
+            security: [{ bearerAuth: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: 'Metadata, history and payload_base64'
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+                '404': { description: Unknown message }
+    /internal-ops/dlq/{messageId}/raw:
+        get:
+            summary: BNPB Internal Ops only - exact original payload bytes
+            tags: [Internal Ops]
+            security: [{ bearerAuth: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: Original bytes; X-Payload-SHA256 header carries the hash
+                    content:
+                        application/octet-stream:
+                            schema: { type: string, format: binary }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+                '404': { description: Unknown message }
 components:
     securitySchemes:
         bearerAuth:
@@ -91,12 +137,22 @@ components:
                     enum: [HEALTHY, STALE, UNAVAILABLE]
                     description: HEALTHY = latest poll succeeded; STALE = serving the last stored data because recent polls failed; UNAVAILABLE = no successful poll yet.
                 lastSuccessfulPollAt: { type: string, format: date-time, nullable: true }
-                staleSince: { type: string, format: date-time, nullable: true, description: When the provider's data stopped being refreshed; null while HEALTHY. }
+                staleSince:
+                    {
+                        type: string,
+                        format: date-time,
+                        nullable: true,
+                        description: When the provider's data stopped being refreshed; null while HEALTHY.,
+                    }
         HazardMeta:
             type: object
             required: [sources]
             properties:
-                partial: { type: boolean, description: True when the result is incomplete. Internal storage locations are not exposed. }
+                partial:
+                    {
+                        type: boolean,
+                        description: True when the result is incomplete. Internal storage locations are not exposed.,
+                    }
                 sources:
                     type: object
                     properties:
@@ -122,8 +178,14 @@ components:
                 error:
                     type: object
                     properties:
+                        code: { type: string, description: 'Present on Internal Ops errors, e.g. forbidden' }
                         message: { type: string }
     responses:
+        Forbidden:
+            description: Authenticated, but the role is not allowed (standard body with code forbidden)
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/ErrorResponse' }
         Unauthorized:
             description: Missing, expired, or invalid access token
             content:

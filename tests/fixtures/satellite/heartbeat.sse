@@ -1,0 +1,8 @@
+id: 5
+event: heartbeat
+data: {"offset":5,"virtual_now":"2026-11-15T00:16:00Z"}
+
+id: 22
+event: heartbeat
+data: {"offset":22,"virtual_now":"2026-11-15T00:34:12Z"}
+

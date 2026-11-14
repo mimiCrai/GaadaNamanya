@@ -1,0 +1,12 @@
+{
+  "from": "0",
+  "seconds": 60,
+  "stream_started_wall": "2026-11-14T16:16:50.939Z",
+  "events": 25,
+  "first_id": "0",
+  "last_id": "24",
+  "types": {
+    "detection": 5,
+    "heartbeat": 2
+  }
+}

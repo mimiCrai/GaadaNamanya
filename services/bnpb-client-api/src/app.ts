@@ -18,6 +18,8 @@ import './types/locals';
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
 import './controllers/hazard.controller';
+import './controllers/internal-ops-dlq.controller';
+import { ApiError } from './errors/api-error';
 
 /**
  * Create and configure the Express application
@@ -72,8 +74,10 @@ export async function createApp(existingContainer?: Container): Promise<express.
 
                 const status = err.status || 500;
                 const serverError = status >= 500;
+                const code = err instanceof ApiError ? err.code : undefined;
                 res.status(status).json({
                     error: {
+                        ...(code ? { code } : {}),
                         message: serverError ? (STATUS_CODES[status] ?? 'Internal Server Error') : err.message,
                         ...(!serverError && err.errors && { details: err.errors }),
                     },
