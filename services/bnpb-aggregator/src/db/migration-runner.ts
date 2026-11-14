@@ -3,6 +3,7 @@ import { createCollectionsAndIndexes } from './migrations/0001-create-collection
 import { seedSourceSyncStates } from './migrations/0002-seed-source-sync-states';
 import { auditReadIndexes } from './migrations/0003-audit-read-indexes';
 import { backgroundLease } from './migrations/0004-background-lease';
+import { unprocessedMessagesMigration } from './migrations/0005-unprocessed-messages';
 
 export interface Migration {
     id: string;
@@ -14,6 +15,7 @@ export const migrations: Migration[] = [
     seedSourceSyncStates,
     auditReadIndexes,
     backgroundLease,
+    unprocessedMessagesMigration,
 ];
 
 export async function runMigrations(database: Db, pending: Migration[] = migrations): Promise<string[]> {

@@ -50,6 +50,33 @@ const envSchema = z
         POLL_OVERLAP_MS: z.coerce.number().int().min(0).default(1_000),
         OUTBOX_RELAY_INTERVAL_MS: z.coerce.number().int().positive().default(250),
         OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(1_000).default(100),
+
+        // Safe decoding and unprocessed-message store (DLQ)
+        PVMBG_MAX_BODY_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(64 * 1024 * 1024)
+            .default(5 * 1024 * 1024),
+        DECODE_MAX_DEPTH: z.coerce.number().int().min(4).max(1_000).default(64),
+        DLQ_INLINE_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(8 * 1024 * 1024)
+            .default(1024 * 1024),
+        DLQ_INSPECT_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(32 * 1024 * 1024)
+            .default(8 * 1024 * 1024),
+        DLQ_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(5),
+        DLQ_RETRY_BASE_MS: z.coerce.number().int().min(100).default(2_000),
+        DLQ_RETRY_CAP_MS: z.coerce.number().int().min(1_000).default(300_000),
+        DLQ_RETRY_INTERVAL_MS: z.coerce.number().int().min(100).default(2_000),
+        DLQ_RETRY_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(20),
+        DLQ_CLAIM_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
     })
     .refine(
         (values) => values.BACKGROUND_LEASE_RENEW_MS + values.LEASE_OPERATION_TIMEOUT_MS < values.BACKGROUND_LEASE_MS,
