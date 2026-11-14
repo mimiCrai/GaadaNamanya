@@ -60,6 +60,8 @@ Audit API M2 tersedia melalui `GET /internal/audit/events`, `/internal/audit/che
 
 `docker compose up -d --build` langsung menjalankan tiga Aggregator di belakang HAProxy. Ketiganya melayani REST, sementara polling dan relay memakai satu lease MongoDB dengan fencing pada setiap transaksi background. Uji otomatis failover, clock skew, dan freeze/resume tersedia melalui `bash scripts/test-aggregator-failover.sh`. Lihat [detail koordinasi Aggregator](docs/bnpb-aggregator-leadership.md), termasuk batas pengujian Compose sebelum deployment Kubernetes.
 
+Suite load test Aggregator P2 tersedia melalui `bash scripts/run-aggregator-load-test.sh smoke`. Mode `sustained`, `scaling`, `benchmark`, dan `rolling` menyiapkan pengukuran 10.000 VU, scaling 3→5→2, throughput 1 vs 3 instance, serta rolling update. Lihat [panduan load test P2](docs/aggregator-load-testing.md) untuk konfigurasi Compose/Kubernetes dan batas pembuktiannya.
+
 ## Autentikasi dan Client API
 
 BNPB Auth (`http://localhost:3001`) mengelola kredensial pengguna dan sesi refresh. Service ini menandatangani access token RS256 berumur pendek (secara default 60 detik) menggunakan private key miliknya; BNPB Client API hanya menerima public key milik Auth untuk keperluan verifikasi. Refresh token disimpan oleh Auth dalam bentuk hash, dirotasi setiap kali refresh, dan tidak pernah dikirimkan ke Aggregator, BMKG, maupun PVMBG.

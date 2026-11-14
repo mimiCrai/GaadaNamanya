@@ -29,7 +29,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bnpb-auth:
         build: ./services/bnpb-auth
@@ -257,7 +258,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     notification-store:
         image: postgres:16-alpine
@@ -271,7 +273,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bnpb-aggregator:
         build: ./services/bnpb-aggregator
@@ -384,7 +387,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     bmkg:
         build: ./services/bmkg
@@ -425,7 +429,8 @@ services:
             test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
             interval: 5s
             timeout: 5s
-            retries: 5
+            start_period: 30s
+            retries: 12
 
     pvmbg:
         build: ./services/pvmbg
