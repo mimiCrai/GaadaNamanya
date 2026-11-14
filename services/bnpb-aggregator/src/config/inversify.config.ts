@@ -28,7 +28,28 @@ import { StorageTopologyService, IStorageTopologyService } from '../services/sto
 import { BackgroundLeaseRepository, IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 import { BackgroundLeadershipService, IBackgroundLeadershipService } from '../services/background-leadership.service';
 
+import { IPayloadStore, PayloadStore } from '../repositories/payload-store.repository';
+import {
+    IUnprocessedMessageRepository,
+    UnprocessedMessageRepository,
+} from '../repositories/unprocessed-message.repository';
+import { IUnprocessedRecorder, UnprocessedRecorder } from '../services/unprocessed-recorder.service';
+import { IUnprocessedHandlerRegistry, UnprocessedHandlerRegistry } from '../services/unprocessed-handler.registry';
+import { IUnprocessedRetryService, UnprocessedRetryService } from '../services/unprocessed-retry.service';
+import { IUnprocessedQueryService, UnprocessedQueryService } from '../services/unprocessed-query.service';
+
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
+    bind<IPayloadStore>(TYPES.IPayloadStore).to(PayloadStore).inSingletonScope();
+    bind<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository)
+        .to(UnprocessedMessageRepository)
+        .inSingletonScope();
+    bind<IUnprocessedRecorder>(TYPES.IUnprocessedRecorder).to(UnprocessedRecorder).inSingletonScope();
+    bind<IUnprocessedHandlerRegistry>(TYPES.IUnprocessedHandlerRegistry)
+        .to(UnprocessedHandlerRegistry)
+        .inSingletonScope();
+    bind<IUnprocessedRetryService>(TYPES.IUnprocessedRetryService).to(UnprocessedRetryService).inSingletonScope();
+    bind<IUnprocessedQueryService>(TYPES.IUnprocessedQueryService).to(UnprocessedQueryService).inSingletonScope();
+
     bind(TYPES.Database).toConstantValue(db);
     bind<IBackgroundLeaseRepository>(TYPES.IBackgroundLeaseRepository).to(BackgroundLeaseRepository).inSingletonScope();
     bind<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService)

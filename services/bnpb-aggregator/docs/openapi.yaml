@@ -35,6 +35,94 @@ paths:
                                             guardVersion: { type: integer }
                 '401': { description: Missing internal key }
                 '403': { description: Invalid internal key }
+    /internal/audit/unprocessed:
+        get:
+            summary: Messages that could not be processed (Lampiran A); recovered messages are excluded
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
+            responses:
+                '200':
+                    description: Complete or explicitly partial page, ordered by received_at then message_id
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [items, next_cursor, partial, unavailable_units]
+                                properties:
+                                    items:
+                                        type: array
+                                        items:
+                                            type: object
+                                            required:
+                                                [message_id, source, received_at, reason, retryable, attempts, status]
+                                            properties:
+                                                message_id: { type: string, example: msg-31c9a0b1c2d3e4f5a6b7c8d9 }
+                                                source: { type: string }
+                                                received_at: { type: string, format: date-time }
+                                                reason:
+                                                    type: string
+                                                    example: "schema_incompatible: field 'level' berubah dari number menjadi string"
+                                                retryable: { type: boolean }
+                                                attempts: { type: integer, minimum: 1 }
+                                                status: { type: string, enum: [retrying, parked] }
+                                    next_cursor: { type: string, nullable: true }
+                                    partial: { type: boolean }
+                                    unavailable_units: { type: array, items: { type: string } }
+                '400': { description: Invalid query or cursor }
+                '401': { description: Invalid or missing audit token }
+
+    /internal/dlq:
+        get:
+            summary: Internal Ops inspection list of unprocessed messages (metadata only)
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+                - name: status
+                  in: query
+                  schema: { type: string, enum: [retrying, parked, recovered] }
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
+            responses:
+                '200': { description: Page of unprocessed message metadata }
+                '400': { description: Invalid query or cursor }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+
+    /internal/dlq/{messageId}:
+        get:
+            summary: One unprocessed message with its raw payload as base64
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: 'Metadata, history and payload_base64 (null with payload_truncated=true above DLQ_INSPECT_MAX_BYTES)'
+                '404': { description: Unknown message }
+
+    /internal/dlq/{messageId}/raw:
+        get:
+            summary: Exact original payload bytes (streamed; any size)
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: Original bytes; X-Payload-SHA256 header carries the hash
+                    content:
+                        application/octet-stream:
+                            schema: { type: string, format: binary }
+                '404': { description: Unknown message }
+
+    /metrics:
+        get:
+            summary: Prometheus metrics
+            tags: [Health]
+            responses:
+                '200': { description: Prometheus text exposition format }
+
     /health:
         get:
             summary: Health check
