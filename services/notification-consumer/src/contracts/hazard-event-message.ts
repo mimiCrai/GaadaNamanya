@@ -6,9 +6,9 @@ export const hazardEventMessageSchema = z.object({
     correlationId: z.string().uuid(),
     hazard: z.object({
         hazardId: z.string().uuid(),
-        source: z.enum(['BMKG', 'PVMBG']),
+        source: z.enum(['BMKG', 'PVMBG', 'SENSOR_PANTAI']),
         sourceRefId: z.string().min(1),
-        hazardType: z.enum(['SEISMIC', 'VOLCANIC']),
+        hazardType: z.enum(['SEISMIC', 'VOLCANIC', 'COASTAL']),
         severity: z.enum(['NORMAL', 'WASPADA', 'SIAGA', 'AWAS']),
         areaName: z.string().min(1),
         latitude: z.number(),

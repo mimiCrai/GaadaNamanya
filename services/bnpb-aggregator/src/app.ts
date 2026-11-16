@@ -17,6 +17,7 @@ import './controllers/health.controller';
 import './controllers/hazard-event.controller';
 import './controllers/audit.controller';
 import './controllers/leadership.controller';
+import './controllers/sensor-pantai.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();

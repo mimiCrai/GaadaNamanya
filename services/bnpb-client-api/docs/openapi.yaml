@@ -34,8 +34,8 @@ paths:
                 - name: source
                   in: query
                   required: false
-                  description: Return only hazards from this provider (BMKG = seismic, PVMBG = volcanic). meta.sources then describes only that provider.
-                  schema: { type: string, enum: [BMKG, PVMBG] }
+                  description: Return only hazards from BMKG, PVMBG, or Sensor Pantai. meta.sources then describes only that provider.
+                  schema: { type: string, enum: [BMKG, PVMBG, SENSOR_PANTAI] }
             responses:
                 '200':
                     description: Returns ringkasan for public users and mentah for lapangan/internal users. Data is the last canonical state held by BNPB; meta.sources tells whether each provider's data is current or stale.
@@ -89,7 +89,7 @@ components:
                 status:
                     type: string
                     enum: [HEALTHY, STALE, UNAVAILABLE]
-                    description: HEALTHY = latest poll succeeded; STALE = serving the last stored data because recent polls failed; UNAVAILABLE = no successful poll yet.
+                    description: HEALTHY = source synchronization succeeded; STALE = recent polling failed or sensor data stopped advancing; UNAVAILABLE = no successful poll yet.
                 lastSuccessfulPollAt: { type: string, format: date-time, nullable: true }
                 staleSince: { type: string, format: date-time, nullable: true, description: When the provider's data stopped being refreshed; null while HEALTHY. }
         HazardMeta:
@@ -102,6 +102,7 @@ components:
                     properties:
                         BMKG: { $ref: '#/components/schemas/SourceFreshness' }
                         PVMBG: { $ref: '#/components/schemas/SourceFreshness' }
+                        SENSOR_PANTAI: { $ref: '#/components/schemas/SourceFreshness' }
         HazardResponse:
             type: object
             required: [data, meta]

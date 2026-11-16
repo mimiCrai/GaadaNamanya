@@ -5,10 +5,10 @@ import { UserRole } from '../types/auth';
 import env from '../util/env';
 
 export type HazardClassification = 'ringkasan' | 'mentah';
-export type HazardSource = 'BMKG' | 'PVMBG';
+export type HazardSource = 'BMKG' | 'PVMBG' | 'SENSOR_PANTAI';
 export type SourceStatus = 'HEALTHY' | 'STALE' | 'UNAVAILABLE';
 
-export const HAZARD_SOURCES: readonly HazardSource[] = ['BMKG', 'PVMBG'];
+export const HAZARD_SOURCES: readonly HazardSource[] = ['BMKG', 'PVMBG', 'SENSOR_PANTAI'];
 
 export interface Hazard {
     Field: string;
@@ -42,7 +42,7 @@ interface CanonicalHazardEvent {
     hazardId: string;
     source: HazardSource;
     sourceRefId: string;
-    hazardType: 'SEISMIC' | 'VOLCANIC';
+    hazardType: 'SEISMIC' | 'VOLCANIC' | 'COASTAL';
     severity: 'NORMAL' | 'WASPADA' | 'SIAGA' | 'AWAS';
     areaName: string;
     latitude: number;
@@ -60,6 +60,7 @@ interface GatewayBody {
 const SOURCE_STREAMS: Record<HazardSource, readonly string[]> = {
     BMKG: ['BMKG_SEISMIC', 'BMKG_TSUNAMI_WARNING'],
     PVMBG: ['PVMBG_VOLCANIC'],
+    SENSOR_PANTAI: ['SENSOR_PANTAI'],
 };
 
 const STATUS_RANK: Record<SourceStatus, number> = { HEALTHY: 0, STALE: 1, UNAVAILABLE: 2 };
@@ -226,9 +227,9 @@ function validateCanonicalHazard(value: unknown): CanonicalHazardEvent {
     const hazard = value as Record<string, unknown>;
     if (
         typeof hazard.hazardId !== 'string' ||
-        (hazard.source !== 'BMKG' && hazard.source !== 'PVMBG') ||
+        !HAZARD_SOURCES.includes(hazard.source as HazardSource) ||
         typeof hazard.sourceRefId !== 'string' ||
-        (hazard.hazardType !== 'SEISMIC' && hazard.hazardType !== 'VOLCANIC') ||
+        !['SEISMIC', 'VOLCANIC', 'COASTAL'].includes(hazard.hazardType as string) ||
         !['NORMAL', 'WASPADA', 'SIAGA', 'AWAS'].includes(hazard.severity as string) ||
         typeof hazard.areaName !== 'string' ||
         typeof hazard.latitude !== 'number' ||

@@ -26,6 +26,7 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | --- | --- | --- |
 | BMKG Mock | `services/bmkg` | `http://localhost:8081/` |
 | PVMBG Mock | `services/pvmbg` | `http://localhost:8082/` |
+| Sensor Pantai | Image resmi asisten | `http://localhost:8083/healthz` |
 | BNPB Aggregator | `services/bnpb-aggregator` | `http://localhost:3003/` |
 | BNPB Client API | `services/bnpb-client-api` | `http://localhost:3000/` |
 | BNPB Auth | `services/bnpb-auth` | `http://localhost:3001/` |
@@ -61,6 +62,8 @@ Audit API M2 tersedia melalui `GET /internal/audit/events`, `/internal/audit/che
 `docker compose up -d --build` langsung menjalankan tiga Aggregator di belakang HAProxy. Ketiganya melayani REST, sementara polling dan relay memakai satu lease MongoDB dengan fencing pada setiap transaksi background. Uji otomatis failover, clock skew, dan freeze/resume tersedia melalui `bash scripts/test-aggregator-failover.sh`. Lihat [detail koordinasi Aggregator](docs/bnpb-aggregator-leadership.md), termasuk batas pengujian Compose sebelum deployment Kubernetes.
 
 Suite load test Aggregator P2 tersedia melalui `bash scripts/run-aggregator-load-test.sh smoke`. Mode `sustained`, `scaling`, `benchmark`, dan `rolling` menyiapkan pengukuran 10.000 VU, scaling 3→5→2, throughput 1 vs 3 instance, serta rolling update. Lihat [panduan load test P2](docs/aggregator-load-testing.md) untuk konfigurasi Compose/Kubernetes dan batas pembuktiannya.
+
+Sensor Pantai M2 dijalankan dari image resmi pada `http://localhost:8083`. Aggregator membaca station/observation dengan cursor dan circuit breaker, menyimpan hazard COASTAL atau karantina data rusak, serta meneruskan event kritis ke notifikasi. Gunakan `bash scripts/test-sensor-pantai.sh` untuk pengujian otomatis; lihat [integrasi Sensor Pantai](docs/sensor-pantai.md).
 
 ## Autentikasi dan Client API
 

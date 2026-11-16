@@ -3,7 +3,7 @@ import { IBackgroundLeaseRepository } from '../../src/repositories/background-le
 import { MessagePublisher } from '../../src/services/message-publisher.service';
 import { Kafka } from 'kafkajs';
 
-const mockTransaction = { send: jest.fn(), commit: jest.fn(), abort: jest.fn() };
+const mockTransaction = { send: jest.fn(), sendBatch: jest.fn(), commit: jest.fn(), abort: jest.fn() };
 const mockProducer = { connect: jest.fn(), disconnect: jest.fn(), transaction: jest.fn() };
 const mockCreateProducer = jest.fn();
 jest.mock('kafkajs', () => ({ Kafka: jest.fn().mockImplementation(() => ({ producer: mockCreateProducer })) }));
@@ -22,6 +22,7 @@ describe('Fenced Kafka publisher', () => {
         mockProducer.disconnect.mockResolvedValue(undefined);
         mockProducer.transaction.mockResolvedValue(mockTransaction);
         mockTransaction.send.mockResolvedValue([]);
+        mockTransaction.sendBatch.mockResolvedValue([]);
         mockTransaction.commit.mockResolvedValue(undefined);
         mockTransaction.abort.mockResolvedValue(undefined);
         publisher = new MessagePublisher(leases as unknown as IBackgroundLeaseRepository);
@@ -80,5 +81,50 @@ describe('Fenced Kafka publisher', () => {
         await publisher.close();
         await publisher.publish({}, { topic: 'hazard-events' }, lease);
         expect(mockCreateProducer).toHaveBeenCalledTimes(2);
+    });
+
+    it('publishes an ordered batch in one fenced transaction', async () => {
+        await publisher.publishBatch(
+            [
+                { message: { eventId: 'one' }, options: { topic: 'hazard-events', key: 'same-hazard' } },
+                { message: { eventId: 'two' }, options: { topic: 'hazard-events', key: 'same-hazard' } },
+            ],
+            lease
+        );
+        const request = mockTransaction.sendBatch.mock.calls[0][0];
+        expect(request.acks).toBe(-1);
+        expect(
+            request.topicMessages[0].messages.map((item: { value: string }) => JSON.parse(item.value).eventId)
+        ).toEqual(['one', 'two']);
+        expect(mockTransaction.commit).toHaveBeenCalledTimes(1);
+        expect(leases.requireActive).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not commit any batch when ownership is lost after sending', async () => {
+        leases.requireActive
+            .mockResolvedValueOnce(new Date())
+            .mockResolvedValueOnce(new Date())
+            .mockRejectedValueOnce(new LeaseLostError());
+        await expect(
+            publisher.publishBatch([{ message: {}, options: { topic: 'hazard-events' } }], lease)
+        ).rejects.toBeInstanceOf(LeaseLostError);
+        expect(mockTransaction.abort).toHaveBeenCalled();
+        expect(mockTransaction.commit).not.toHaveBeenCalled();
+    });
+
+    it('splits large batches without reordering messages or committing separate transactions', async () => {
+        await publisher.publishBatch(
+            Array.from({ length: 80 }, (_, index) => ({
+                message: { index, content: 'x'.repeat(10000) },
+                options: { topic: 'hazard-events', key: 'same-hazard' },
+            })),
+            lease
+        );
+        expect(mockTransaction.sendBatch).toHaveBeenCalledTimes(2);
+        expect(mockTransaction.commit).toHaveBeenCalledTimes(1);
+        const indices = mockTransaction.sendBatch.mock.calls.flatMap(([request]) =>
+            request.topicMessages[0].messages.map((item: { value: string }) => JSON.parse(item.value).index)
+        );
+        expect(indices).toEqual(Array.from({ length: 80 }, (_, index) => index));
     });
 });

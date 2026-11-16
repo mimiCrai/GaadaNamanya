@@ -47,7 +47,7 @@ describe('DashboardEventConsumer', () => {
         await consumer.start();
         await handler(message);
 
-        expect(subscriber.subscribe).toHaveBeenCalledWith({ topic: expect.any(String) }, expect.any(Function));
+        expect(subscriber.subscribe).toHaveBeenCalledWith({ topic: expect.any(String), fromBeginning: true }, expect.any(Function));
         expect(projectionService.apply).toHaveBeenCalledWith(message);
     });
 

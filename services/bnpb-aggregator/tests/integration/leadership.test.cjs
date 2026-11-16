@@ -13,6 +13,7 @@ const { SourceSyncStateRepository } = require('../../dist/src/repositories/sourc
 const { PendingTsunamiWarningRepository } = require('../../dist/src/repositories/pending-tsunami-warning.repository');
 const { OutboxEventRepository } = require('../../dist/src/repositories/outbox-event.repository');
 const { LeaseLostError, backgroundLeaseId } = require('../../dist/src/db/schema/background-leases');
+const { SensorPantaiRepository } = require('../../dist/src/repositories/sensor-pantai.repository');
 
 test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, async (t) => {
     assert.match(process.env.DATABASE_NAME, /_integration$/);
@@ -29,6 +30,7 @@ test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, a
         const states = new SourceSyncStateRepository(stores[0], repos[0]);
         const pending = new PendingTsunamiWarningRepository(stores[0], repos[0]);
         const outbox = new OutboxEventRepository(stores[0], repos[0]);
+        const sensor = new SensorPantaiRepository(stores[0], repos[0]);
         const leaseDoc = db.collection('background_leases');
         const expire = () => leaseDoc.updateOne({ _id: backgroundLeaseId }, { $set: { expiresAt: new Date(0) } });
         let owner;
@@ -83,6 +85,7 @@ test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, a
                 await pending.save({ warning_id: 'pending-fence', related_event_id: 'future' }, token);
                 const [event] = await outbox.findUnpublished(1);
                 const statesBefore = await states.findAll();
+                const sensorBefore = await sensor.getState();
                 const old = token;
                 await expire();
                 const next = await repos[(owner + 1) % 3].acquireOrRenew('replacement');
@@ -97,6 +100,13 @@ test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, a
                     () => pending.remove('pending-fence', old),
                     () => outbox.markPublished(event.outboxEventId, old),
                     () => outbox.recordPublishFailure(event.outboxEventId, 'old failure', old),
+                    () => outbox.markBatchPublished([event.outboxEventId], old),
+                    () => outbox.recordBatchFailure([event.outboxEventId], 'old failure', old),
+                    () => hazards.upsertBatchAndEnqueue([input]),
+                    () => sensor.checkpoint(sensorBefore, false, old),
+                    () => sensor.recordFailure('old failure', 0, old),
+                    () => sensor.reject({ stale: true }, 'old owner', 'fence-test', old),
+                    () => sensor.rejectBatch([{ payload: { stale: true }, reason: 'old owner' }], 'fence-test', old),
                 ])
                     await assert.rejects(work(), LeaseLostError);
                 assert.equal(await db.collection('hazard_events').countDocuments(), 1);

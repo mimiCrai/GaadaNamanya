@@ -14,6 +14,7 @@ const { CanonicalReadRepository } = require('../../dist/src/repositories/canonic
 const { CanonicalQueryService } = require('../../dist/src/services/canonical-query.service');
 const { createHash } = require('node:crypto');
 const { BackgroundLeaseRepository } = require('../../dist/src/repositories/background-lease.repository');
+const { SensorPantaiRepository } = require('../../dist/src/repositories/sensor-pantai.repository');
 
 test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, async (t) => {
     const name = process.env.DATABASE_NAME;
@@ -38,6 +39,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
         const outbox = new OutboxEventRepository(store, leases);
         const states = new SourceSyncStateRepository(store, leases);
         const pending = new PendingTsunamiWarningRepository(store, leases);
+        const sensor = new SensorPantaiRepository(store, leases);
         const hazardCollection = store.collection('hazard_events');
         const outboxCollection = store.collection('outbox_events');
         const input = {
@@ -121,7 +123,7 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
 
         await t.test('source status survives errors, preserves staleSince, and recovers', async () => {
             const at = new Date('2026-01-02T00:00:00Z');
-            assert.equal((await states.findAll()).length, 3);
+            assert.equal((await states.findAll()).length, 4);
             assert.equal((await states.recordFailedPoll('PVMBG_VOLCANIC', 'offline', at, lease)).status, 'UNAVAILABLE');
             await states.recordSuccessfulPoll('PVMBG_VOLCANIC', at, lease);
             const stale = await states.recordFailedPoll('PVMBG_VOLCANIC', '$timeout', at, lease);
@@ -134,6 +136,36 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             assert.deepEqual(staleAgain.staleSince, stale.staleSince);
             assert.equal(staleAgain.consecutiveFailures, 2);
             assert.equal((await states.recordSuccessfulPoll('PVMBG_VOLCANIC', new Date(), lease)).staleSince, null);
+        });
+
+        await t.test('sensor checkpoint and circuit breaker survive reconnect and recover', async () => {
+            const initial = await sensor.getState();
+            await sensor.checkpoint({ ...initial, cursor: 'opaque-sensor-cursor' }, false, lease);
+            for (let attempt = 0; attempt < 3; attempt++) await sensor.recordFailure('offline', 0, lease);
+            const failed = await sensor.getState();
+            assert.equal(failed.cursor, 'opaque-sensor-cursor');
+            assert.equal(failed.status, 'STALE');
+            assert.ok(failed.retryAt > failed.lastAttemptAt);
+            assert.equal(failed.consecutiveFailures, 3);
+            const recovered = await sensor.checkpoint(failed, false, lease);
+            assert.equal(recovered.retryAt, null);
+            assert.equal(recovered.staleSince, null);
+            assert.equal(recovered.status, 'HEALTHY');
+            const stale = { ownerId: lease.ownerId, epoch: lease.epoch + 1 };
+            await assert.rejects(sensor.checkpoint(recovered, false, stale), /lease/i);
+            await assert.rejects(sensor.recordFailure('old owner', 0, stale), /lease/i);
+        });
+
+        await t.test('quarantined sensor messages are durable, deduplicated, and fenced', async () => {
+            const bad = { observation_id: 'bad-sensor-record', critical: 'not a boolean' };
+            await sensor.reject(bad, 'invalid critical', 'integration', lease);
+            const first = (await sensor.getRejected(10))[0];
+            await sensor.reject(bad, 'invalid critical', 'replay', lease);
+            const rejected = await sensor.getRejected(10);
+            assert.equal(rejected.length, 1);
+            assert.deepEqual(rejected[0].receivedAt, first.receivedAt);
+            assert.deepEqual(rejected[0].payload, bad);
+            await assert.rejects(sensor.reject({ bad: true }, 'old owner', 'integration', { ...lease, epoch: lease.epoch + 1 }), /lease/i);
         });
 
         await t.test('migration reruns and application reconnect preserve data, indexes, and checkpoints', async () => {
@@ -199,9 +231,9 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
             const published = [];
             let fail = true;
             const relay = new OutboxRelayService(outbox, {
-                publish: async (message) => {
+                publishBatch: async (messages) => {
                     if (fail) throw new Error('Kafka unavailable');
-                    published.push(message.eventId);
+                    published.push(...messages.map(({ message }) => message.eventId));
                 },
             }, { current: () => lease, invalidate: () => undefined }, leases);
             relay.start();
@@ -312,6 +344,32 @@ test('MongoDB canonical store and transactional outbox', { timeout: 120_000 }, a
                 stats.reduce((sum, row) => sum + row.count, 0),
                 await hazardCollection.countDocuments()
             );
+        });
+        await t.test('batched hazards and outbox are atomic, replay-safe, and roll back together', async () => {
+            const inputs = Array.from({ length: 10 }, (_, index) => ({ ...input, sourceRefId: `bulk-${index}` }));
+            const saved = await hazards.upsertBatchAndEnqueue(inputs);
+            assert.equal(saved.filter((row) => row.changeType === 'hazard.created').length, 10);
+            const count = await outboxCollection.countDocuments();
+            assert.ok((await hazards.upsertBatchAndEnqueue(inputs)).every((row) => row.changeType === null));
+            assert.equal(await outboxCollection.countDocuments(), count);
+            await store.database.command({ collMod: 'outbox_events', validator: { topic: { $ne: 'reject-batch' } } });
+            try {
+                await assert.rejects(hazards.upsertBatchAndEnqueue([
+                    { ...inputs[0], severity: 'AWAS', topic: 'reject-batch' },
+                    { ...input, sourceRefId: 'bulk-must-not-exist', topic: 'reject-batch' },
+                ]));
+                assert.equal((await hazards.findBySourceAndRefId('BMKG', 'bulk-0')).severity, input.severity);
+                assert.equal(await hazards.findBySourceAndRefId('BMKG', 'bulk-must-not-exist'), undefined);
+                assert.equal(await outboxCollection.countDocuments(), count);
+            } finally { await store.database.command({ collMod: 'outbox_events', validator: {} }); }
+        });
+
+        await t.test('batch quarantine remains deduplicated', async () => {
+            const before = (await sensor.getRejected(100)).length;
+            const records = [{ payload: { bad: 'one' }, reason: 'bad' }, { payload: { bad: 'two' }, reason: 'bad' }];
+            await sensor.rejectBatch(records, 'batch-test', lease);
+            await sensor.rejectBatch(records, 'replay', lease);
+            assert.equal((await sensor.getRejected(100)).length, before + 2);
         });
     } finally {
         clearInterval(leaseTimer);
