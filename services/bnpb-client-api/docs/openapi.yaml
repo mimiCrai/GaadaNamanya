@@ -44,6 +44,7 @@ paths:
                             schema: { $ref: '#/components/schemas/HazardListResponse' }
                 '400': { description: Invalid source value }
                 '401': { $ref: '#/components/responses/Unauthorized' }
+                '503': { $ref: '#/components/responses/Unavailable' }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
                 '504': { $ref: '#/components/responses/UpstreamTimeout' }
     /hazards/{hazardId}:
@@ -64,7 +65,7 @@ paths:
                             schema: { $ref: '#/components/schemas/HazardResponse' }
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '404': { description: Hazard is absent or unavailable in the caller's permitted classification }
-                '503': { description: Hazard lookup cannot be completed because storage is temporarily unavailable }
+                '503': { $ref: '#/components/responses/Unavailable' }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
                 '504': { $ref: '#/components/responses/UpstreamTimeout' }
 components:
@@ -125,6 +126,15 @@ components:
                     properties:
                         message: { type: string }
     responses:
+        Unavailable:
+            description: Hazard request rejected at the concurrency limit, or storage lookup is incomplete. Lapangan has reserved capacity; public and internal share the remaining allowance.
+            headers:
+                Retry-After:
+                    description: Delay in seconds before retrying a request rejected by admission control. Absent for unrelated storage failures.
+                    schema: { type: integer, minimum: 1 }
+            content:
+                application/json:
+                    schema: { $ref: '#/components/schemas/ErrorResponse' }
         Unauthorized:
             description: Missing, expired, or invalid access token
             content:

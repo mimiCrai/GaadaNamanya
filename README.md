@@ -90,6 +90,8 @@ curl http://localhost:3000/hazards \
 
 Respons Client API mempertahankan `meta.sources` dan flag `meta.partial` tanpa nama storage atau cursor internal. Pesan error 5xx dibuat generik; detail aslinya hanya dicatat di log bersama correlation ID.
 
+Client API membatasi request hazard aktif per instance, dengan kapasitas cadangan khusus role `lapangan`. Role `public` dan `internal` berbagi kapasitas lainnya. Ketika batas tercapai, request ditolak sebelum menghubungi Aggregator dengan `503` dan `Retry-After`; health check tetap dapat diakses. Root `.env.example` menyediakan `BNPB_CLIENT_API_ADMISSION_MAX_CONCURRENT_REQUESTS`, `BNPB_CLIENT_API_ADMISSION_RESERVED_LAPANGAN_REQUESTS`, dan `BNPB_CLIENT_API_ADMISSION_RETRY_AFTER_SECONDS`. Nilai awal 100/20/1 perlu dituning melalui load test, bukan hasil pengukuran kapasitas produksi.
+
 ## Pengujian End-to-End
 
 Jalankan rangkaian pengujian E2E yang terisolasi dengan satu perintah setelah membuat `.env`:
