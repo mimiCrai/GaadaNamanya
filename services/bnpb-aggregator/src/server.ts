@@ -11,6 +11,7 @@ import { IBackgroundLeadershipService } from './services/background-leadership.s
 import { IUnprocessedRetryService } from './services/unprocessed-retry.service';
 import { IUnprocessedMessageRepository } from './repositories/unprocessed-message.repository';
 import { setUnprocessedCounter } from './libs/metrics';
+import { ISatelliteIngestService } from './services/satellite-ingest.service';
 
 async function main() {
     try {
@@ -26,12 +27,14 @@ async function main() {
         const messagePublisher = container.get<IMessagePublisher>(TYPES.IMessagePublisher);
         const leadership = container.get<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService);
         const unprocessedRetry = container.get<IUnprocessedRetryService>(TYPES.IUnprocessedRetryService);
+        const satelliteIngest = container.get<ISatelliteIngestService>(TYPES.ISatelliteIngestService);
         const unprocessedRepository = container.get<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository);
         setUnprocessedCounter(() => unprocessedRepository.countByStatus());
         leadership.start();
         poller.start();
         outboxRelay.start();
         unprocessedRetry.start();
+        satelliteIngest.start();
 
         let shuttingDown = false;
         const shutdown = async (signal: string) => {
@@ -43,6 +46,8 @@ async function main() {
             poller.stop();
             outboxRelay.stop();
             unprocessedRetry.stop();
+            // Close the feed stream before releasing the lease, so the next leader is not answered 429.
+            await satelliteIngest.stop();
             await leadership.stop();
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();

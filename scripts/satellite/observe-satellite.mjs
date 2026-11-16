@@ -16,7 +16,9 @@ if (!token) {
     console.error('SATELLITE_TOKEN belum di-set');
     process.exit(2);
 }
-const from = arg('from', '0');
+
+const lastEventId = arg('last-event-id', undefined);
+const from = arg('from', lastEventId === undefined ? '0' : undefined);
 const seconds = Math.min(Number(arg('seconds', String(MAX_SECONDS))), MAX_SECONDS);
 const outDir = arg('out', 'tests/fixtures/satellite');
 mkdirSync(outDir, { recursive: true });
@@ -30,7 +32,6 @@ function guardedUrl(pathname, query = {}) {
 
 const headers = { Authorization: `Bearer ${token}`, 'User-Agent': 'bnpb-satellite-observer/1.0' };
 
-// ---- lock: satu koneksi stream per mesin ----
 const lockPath = path.join(tmpdir(), 'bnpb-satellite-stream.lock');
 let lockFd;
 try {
@@ -52,7 +53,6 @@ const releaseLock = () => {
 process.on('exit', releaseLock);
 process.on('SIGINT', () => process.exit(130));
 
-// ---- 1. session ----
 const sessionStartedWall = Date.now();
 const sessionResponse = await fetch(guardedUrl('/v1/session'), { headers });
 const sessionText = await sessionResponse.text();
@@ -73,7 +73,6 @@ writeFileSync(
 console.log(`session HTTP ${sessionResponse.status}: ${sessionText}`);
 if (!sessionResponse.ok) process.exit(1);
 
-// ---- 2. stream (satu koneksi) ----
 const rawPath = path.join(outDir, 'stream-raw.ndjson');
 writeFileSync(rawPath, '');
 const samples = {};
@@ -86,8 +85,12 @@ let firstId = null;
 let lastId = null;
 
 try {
-    const response = await fetch(guardedUrl('/v1/stream', { from }), {
-        headers: { ...headers, Accept: 'text/event-stream' },
+    const response = await fetch(guardedUrl('/v1/stream', from === undefined ? {} : { from }), {
+        headers: {
+            ...headers,
+            Accept: 'text/event-stream',
+            ...(lastEventId === undefined ? {} : { 'Last-Event-ID': lastEventId }),
+        },
         signal: controller.signal,
     });
     console.log(`stream HTTP ${response.status} content-type=${response.headers.get('content-type')}`);
@@ -120,7 +123,8 @@ for (const [type, blocks] of Object.entries(samples)) {
     writeFileSync(path.join(outDir, `${type}.sse`), blocks.join('\n\n') + '\n\n');
 }
 const summary = {
-    from,
+    from: from ?? null,
+    last_event_id: lastEventId ?? null,
     seconds,
     stream_started_wall: new Date(streamStartedWall).toISOString(),
     events: count,

@@ -29,6 +29,8 @@ test('unprocessed messages on the sharded canonical store', { timeout: 180_000 }
     assert.equal((await store.client.db('admin').command({ hello: 1 })).msg, 'isdbgrid', 'Tests must run through mongos');
     await store.database.dropDatabase();
     let leaseTimer;
+    // Opens direct connections to every shard node; must be closed or the test process never exits.
+    const topology = new StorageTopologyService(store);
     try {
         await runMigrations(store.database);
         const leases = new BackgroundLeaseRepository(store);
@@ -140,7 +142,7 @@ test('unprocessed messages on the sharded canonical store', { timeout: 180_000 }
         });
 
         await t.test('audit pagination over the real store hides recovered entries', async () => {
-            const query = new UnprocessedQueryService(new CanonicalReadRepository(store, new StorageTopologyService(store)), repo);
+            const query = new UnprocessedQueryService(new CanonicalReadRepository(store, topology), repo);
             const seen = [];
             let cursor;
             do {
@@ -158,6 +160,7 @@ test('unprocessed messages on the sharded canonical store', { timeout: 180_000 }
         });
     } finally {
         clearInterval(leaseTimer);
+        await topology.close().catch(() => undefined);
         await store.database.dropDatabase().catch(() => undefined);
         await store.close();
     }

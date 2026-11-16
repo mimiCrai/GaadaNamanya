@@ -37,6 +37,9 @@ import { IUnprocessedRecorder, UnprocessedRecorder } from '../services/unprocess
 import { IUnprocessedHandlerRegistry, UnprocessedHandlerRegistry } from '../services/unprocessed-handler.registry';
 import { IUnprocessedRetryService, UnprocessedRetryService } from '../services/unprocessed-retry.service';
 import { IUnprocessedQueryService, UnprocessedQueryService } from '../services/unprocessed-query.service';
+import { ISatelliteFeedClient, SatelliteFeedClient } from '../clients/satellite.client';
+import { ISatelliteLogWriter, SatelliteLogWriter } from '../services/satellite-log-writer.service';
+import { ISatelliteIngestService, SatelliteIngestService } from '../services/satellite-ingest.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind<IPayloadStore>(TYPES.IPayloadStore).to(PayloadStore).inSingletonScope();
@@ -82,4 +85,8 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<IMessagePublisher>(TYPES.IMessagePublisher).to(MessagePublisher).inSingletonScope();
 
     bind<InternalAuthMiddleware>(TYPES.InternalAuthMiddleware).to(InternalAuthMiddleware);
+
+    bind<ISatelliteFeedClient>(TYPES.ISatelliteFeedClient).to(SatelliteFeedClient).inSingletonScope();
+    bind<ISatelliteLogWriter>(TYPES.ISatelliteLogWriter).to(SatelliteLogWriter).inSingletonScope();
+    bind<ISatelliteIngestService>(TYPES.ISatelliteIngestService).to(SatelliteIngestService).inSingletonScope();
 });

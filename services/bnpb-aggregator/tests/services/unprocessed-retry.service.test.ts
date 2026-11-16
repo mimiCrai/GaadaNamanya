@@ -107,6 +107,7 @@ function leadershipFor(token: LeaseToken): IBackgroundLeadershipService {
         stop: jest.fn(),
         current: () => token,
         invalidate: jest.fn(),
+        onChange: () => () => undefined,
     };
 }
 

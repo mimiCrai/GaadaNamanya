@@ -32,4 +32,8 @@ export const TYPES = {
     IUnprocessedHandlerRegistry: Symbol.for('IUnprocessedHandlerRegistry'),
     IUnprocessedRetryService: Symbol.for('IUnprocessedRetryService'),
     IUnprocessedQueryService: Symbol.for('IUnprocessedQueryService'),
+
+    ISatelliteFeedClient: Symbol.for('ISatelliteFeedClient'),
+    ISatelliteLogWriter: Symbol.for('ISatelliteLogWriter'),
+    ISatelliteIngestService: Symbol.for('ISatelliteIngestService'),
 };

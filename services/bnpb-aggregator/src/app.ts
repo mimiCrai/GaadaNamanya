@@ -20,6 +20,7 @@ import './controllers/leadership.controller';
 import './controllers/audit-unprocessed.controller';
 import './controllers/dlq.controller';
 import './controllers/metrics.controller';
+import './controllers/satellite.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();
