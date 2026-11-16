@@ -9,6 +9,8 @@ export interface IOutboxEventRepository {
     findUnpublished(limit: number): Promise<OutboxEvent[]>;
     markPublished(outboxEventId: string, lease: LeaseToken): Promise<void>;
     recordPublishFailure(outboxEventId: string, errorMessage: string, lease: LeaseToken): Promise<void>;
+    markBatchPublished(ids: string[], lease: LeaseToken): Promise<void>;
+    recordBatchFailure(ids: string[], errorMessage: string, lease: LeaseToken): Promise<void>;
 }
 
 @injectable()
@@ -41,6 +43,30 @@ export class OutboxEventRepository implements IOutboxEventRepository {
                 .collection<OutboxEvent>(outboxEvents)
                 .updateOne(
                     { _id: outboxEventId },
+                    { $inc: { publishAttempts: 1 }, $set: { lastError: errorMessage.slice(0, 1000) } },
+                    { session }
+                );
+        });
+    }
+
+    async markBatchPublished(ids: string[], lease: LeaseToken): Promise<void> {
+        await this.leases.withLease(lease, async (session, publishedAt) => {
+            await this.db
+                .collection<OutboxEvent>(outboxEvents)
+                .updateMany(
+                    { _id: { $in: ids }, publishedAt: null },
+                    { $set: { publishedAt, lastError: null } },
+                    { session }
+                );
+        });
+    }
+
+    async recordBatchFailure(ids: string[], errorMessage: string, lease: LeaseToken): Promise<void> {
+        await this.leases.withLease(lease, async (session) => {
+            await this.db
+                .collection<OutboxEvent>(outboxEvents)
+                .updateMany(
+                    { _id: { $in: ids }, publishedAt: null },
                     { $inc: { publishAttempts: 1 }, $set: { lastError: errorMessage.slice(0, 1000) } },
                     { session }
                 );

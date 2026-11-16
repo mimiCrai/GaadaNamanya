@@ -28,6 +28,7 @@ export class SourceSyncStateRepository implements ISourceSyncStateRepository {
         return this.db
             .collection<SourceSyncState>(sourceSyncStates)
             .find<SourceSyncState>({}, { projection: { _id: 0 } })
+            .sort({ sourceStream: 1 })
             .toArray();
     }
 

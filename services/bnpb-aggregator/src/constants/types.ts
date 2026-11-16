@@ -21,6 +21,9 @@ export const TYPES = {
 
     IBmkgClient: Symbol.for('IBmkgClient'),
     IPvmbgClient: Symbol.for('IPvmbgClient'),
+    ISensorPantaiClient: Symbol.for('ISensorPantaiClient'),
+    ISensorPantaiRepository: Symbol.for('ISensorPantaiRepository'),
+    ISensorPantaiService: Symbol.for('ISensorPantaiService'),
 
     IMessagePublisher: Symbol.for('IMessagePublisher'),
 

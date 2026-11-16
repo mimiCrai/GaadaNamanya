@@ -8,6 +8,7 @@ import { IPollingService } from './services/polling.service';
 import { IStorageTopologyService } from './services/storage-topology.service';
 import env from './util/env';
 import { IBackgroundLeadershipService } from './services/background-leadership.service';
+import { ISensorPantaiService } from './services/sensor-pantai.service';
 
 async function main() {
     try {
@@ -22,9 +23,11 @@ async function main() {
         const outboxRelay = container.get<IOutboxRelayService>(TYPES.IOutboxRelayService);
         const messagePublisher = container.get<IMessagePublisher>(TYPES.IMessagePublisher);
         const leadership = container.get<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService);
+        const sensorPantai = container.get<ISensorPantaiService>(TYPES.ISensorPantaiService);
         leadership.start();
         poller.start();
         outboxRelay.start();
+        sensorPantai.start();
 
         let shuttingDown = false;
         const shutdown = async (signal: string) => {
@@ -35,6 +38,7 @@ async function main() {
             logger.info({ signal }, 'Shutting down BNPB Aggregator');
             poller.stop();
             outboxRelay.stop();
+            sensorPantai.stop();
             await leadership.stop();
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();

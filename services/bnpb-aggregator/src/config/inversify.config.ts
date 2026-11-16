@@ -27,6 +27,9 @@ import { CanonicalQueryService, ICanonicalQueryService } from '../services/canon
 import { StorageTopologyService, IStorageTopologyService } from '../services/storage-topology.service';
 import { BackgroundLeaseRepository, IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 import { BackgroundLeadershipService, IBackgroundLeadershipService } from '../services/background-leadership.service';
+import { ISensorPantaiClient, SensorPantaiClient } from '../clients/sensor-pantai.client';
+import { ISensorPantaiRepository, SensorPantaiRepository } from '../repositories/sensor-pantai.repository';
+import { ISensorPantaiService, SensorPantaiService } from '../services/sensor-pantai.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind(TYPES.Database).toConstantValue(db);
@@ -57,6 +60,9 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
 
     bind<IBmkgClient>(TYPES.IBmkgClient).to(BmkgClient).inSingletonScope();
     bind<IPvmbgClient>(TYPES.IPvmbgClient).to(PvmbgClient).inSingletonScope();
+    bind<ISensorPantaiClient>(TYPES.ISensorPantaiClient).to(SensorPantaiClient).inSingletonScope();
+    bind<ISensorPantaiRepository>(TYPES.ISensorPantaiRepository).to(SensorPantaiRepository).inSingletonScope();
+    bind<ISensorPantaiService>(TYPES.ISensorPantaiService).to(SensorPantaiService).inSingletonScope();
 
     bind<IMessagePublisher>(TYPES.IMessagePublisher).to(MessagePublisher).inSingletonScope();
 

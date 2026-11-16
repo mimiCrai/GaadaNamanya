@@ -6,4 +6,5 @@ export const TYPES = {
     HealthService: Symbol.for('HealthService'),
     JwtAuthenticator: Symbol.for('JwtAuthenticator'),
     HazardGateway: Symbol.for('HazardGateway'),
+    IAdmissionControlService: Symbol.for('IAdmissionControlService'),
 };

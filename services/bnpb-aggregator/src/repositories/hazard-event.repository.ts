@@ -1,4 +1,4 @@
-import { MongoServerError } from 'mongodb';
+import { AnyBulkWriteOperation, MongoServerError } from 'mongodb';
 import { v5 as uuidv5 } from 'uuid';
 import { CanonicalStore } from '../db';
 import { inject, injectable } from 'inversify';
@@ -35,6 +35,7 @@ export interface IHazardEventRepository {
     findByHazardId(hazardId: string): Promise<HazardEvent | undefined>;
     findBySourceAndRefId(source: HazardSource, sourceRefId: string): Promise<HazardEvent | undefined>;
     upsertAndEnqueue(input: UpsertHazardEventInput): Promise<HazardEventUpsertResult>;
+    upsertBatchAndEnqueue(inputs: UpsertHazardEventInput[]): Promise<HazardEventUpsertResult[]>;
 }
 
 @injectable()
@@ -134,6 +135,89 @@ export class HazardEventRepository implements IHazardEventRepository {
                 if (!(error instanceof MongoServerError) || error.code !== 11000 || attempt >= 2) {
                     throw error;
                 }
+            }
+        }
+    }
+
+    async upsertBatchAndEnqueue(inputs: UpsertHazardEventInput[]): Promise<HazardEventUpsertResult[]> {
+        if (!inputs.length) return [];
+        const lease = inputs[0].lease;
+        const ids = inputs.map((input) => this.canonicalId(input.source, input.sourceRefId));
+        if (
+            inputs.length > 50 ||
+            new Set(ids).size !== ids.length ||
+            inputs.some((input) => input.lease.ownerId !== lease.ownerId || input.lease.epoch !== lease.epoch)
+        ) {
+            throw new Error('Hazard batches require at most 50 distinct identities and one lease');
+        }
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.leases.withLease(lease, async (session, now) => {
+                    const existing = await this.db
+                        .collection<HazardEvent>(hazardEvents)
+                        .find<HazardEvent>({ _id: { $in: ids } }, { session, projection: { _id: 0 } })
+                        .toArray();
+                    const byId = new Map(existing.map((event) => [event.hazardId, event]));
+                    const writes: AnyBulkWriteOperation<HazardEvent & { _id: string }>[] = [];
+                    const events: (OutboxEvent & { _id: string })[] = [];
+                    const results = inputs.map((input, index): HazardEventUpsertResult => {
+                        const previous = byId.get(ids[index]);
+                        if (previous && this.hasSameContent(previous, input))
+                            return { hazardEvent: previous, changeType: null };
+                        const hazardEvent: HazardEvent = {
+                            hazardId: ids[index],
+                            source: input.source,
+                            sourceRefId: input.sourceRefId,
+                            hazardType: input.hazardType,
+                            severity: input.severity,
+                            areaName: input.areaName,
+                            latitude: input.latitude,
+                            longitude: input.longitude,
+                            occurredAt: input.occurredAt,
+                            ingestedAt: now,
+                            attributes: input.attributes,
+                        };
+                        const changeType = previous ? HazardEventChangeType.Updated : HazardEventChangeType.Created;
+                        writes.push({
+                            replaceOne: {
+                                filter: { _id: ids[index] },
+                                replacement: hazardEvent,
+                                upsert: true,
+                            },
+                        });
+                        const outboxEventId = randomUUID();
+                        events.push({
+                            _id: outboxEventId,
+                            outboxEventId,
+                            aggregateId: ids[index],
+                            eventType: changeType,
+                            topic: input.topic,
+                            partitionKey: ids[index],
+                            createdAt: now,
+                            publishedAt: null,
+                            publishAttempts: 0,
+                            lastError: null,
+                            payload: {
+                                eventId: outboxEventId,
+                                eventType: changeType,
+                                correlationId: input.correlationId,
+                                hazard: this.toEventPayload(hazardEvent),
+                            },
+                        });
+                        return { hazardEvent, changeType };
+                    });
+                    if (writes.length) {
+                        await this.db
+                            .collection<HazardEvent>(hazardEvents)
+                            .bulkWrite(writes, { session, ordered: true });
+                        await this.db
+                            .collection<OutboxEvent>(outboxEvents)
+                            .insertMany(events, { session, ordered: true });
+                    }
+                    return results;
+                });
+            } catch (error) {
+                if (!(error instanceof MongoServerError) || error.code !== 11000 || attempt >= 2) throw error;
             }
         }
     }

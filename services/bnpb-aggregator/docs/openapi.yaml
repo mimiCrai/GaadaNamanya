@@ -10,6 +10,25 @@ servers:
       description: Local development server
 
 paths:
+    /internal/sensor-pantai/status:
+        get:
+            summary: Sensor freshness, checkpoint timestamps, and circuit breaker retry time
+            security: [{ AuditBearer: [] }]
+            responses:
+                '200': { description: Persisted sensor state without credentials or upstream cursor }
+                '401': { description: Missing or invalid audit token }
+    /internal/sensor-pantai/rejected:
+        get:
+            summary: Inspect quarantined sensor messages
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - in: query
+                  name: limit
+                  schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+            responses:
+                '200': { description: 'Latest rejected messages, with reason and first receipt time' }
+                '400': { description: Invalid limit }
+                '401': { description: Missing or invalid audit token }
     /internal/leadership:
         get:
             summary: Inspect background polling and relay ownership

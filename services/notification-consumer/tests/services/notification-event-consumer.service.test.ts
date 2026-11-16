@@ -47,7 +47,7 @@ describe('NotificationEventConsumer', () => {
         await consumer.start();
         await handler(message);
 
-        expect(subscriber.subscribe).toHaveBeenCalledWith({ topic: expect.any(String) }, expect.any(Function));
+        expect(subscriber.subscribe).toHaveBeenCalledWith({ topic: expect.any(String), fromBeginning: true }, expect.any(Function));
         expect(notificationService.apply).toHaveBeenCalledWith(message);
     });
 
@@ -58,6 +58,14 @@ describe('NotificationEventConsumer', () => {
 
         await expect(handler({ eventId: 'not-a-uuid' })).rejects.toThrow();
         expect(notificationService.apply).not.toHaveBeenCalled();
+    });
+
+    it('accepts critical coastal events without blocking the Kafka partition', async () => {
+        const consumer = new NotificationEventConsumer(subscriber, notificationService);
+        await consumer.start();
+        const coastal = { ...message, hazard: { ...message.hazard, source: 'SENSOR_PANTAI', hazardType: 'COASTAL', attributes: { critical: true } } };
+        await handler(coastal);
+        expect(notificationService.apply).toHaveBeenCalledWith(coastal);
     });
 
     it.each(['ignored', 'duplicate'] as const)(

@@ -2,6 +2,7 @@ export enum SourceStream {
     BmkgSeismic = 'BMKG_SEISMIC',
     BmkgTsunamiWarning = 'BMKG_TSUNAMI_WARNING',
     PvmbgVolcanic = 'PVMBG_VOLCANIC',
+    SensorPantai = 'SENSOR_PANTAI',
 }
 
 export enum SourceSyncStatus {

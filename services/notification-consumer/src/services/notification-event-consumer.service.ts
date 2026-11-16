@@ -19,7 +19,7 @@ export class NotificationEventConsumer implements INotificationEventConsumer {
     ) {}
 
     async start(): Promise<void> {
-        await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC }, async (event) => {
+        await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC, fromBeginning: true }, async (event) => {
             const message = hazardEventMessageSchema.parse(event);
             const result = await this.notificationService.apply(message);
             logger.info(
