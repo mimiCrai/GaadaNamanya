@@ -20,7 +20,7 @@ export class DashboardEventConsumer implements IDashboardEventConsumer {
     ) {}
 
     async start(): Promise<void> {
-        await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC }, async (event) => {
+        await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC, fromBeginning: true }, async (event) => {
             const message = hazardEventMessageSchema.parse(event);
             const applied = await this.dashboardProjectionService.apply(message);
             logger.info(

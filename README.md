@@ -26,6 +26,7 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | --- | --- | --- |
 | BMKG Mock | `services/bmkg` | `http://localhost:8081/` |
 | PVMBG Mock | `services/pvmbg` | `http://localhost:8082/` |
+| Sensor Pantai | Image resmi asisten | `http://localhost:8083/healthz` |
 | BNPB Aggregator | `services/bnpb-aggregator` | `http://localhost:3003/` |
 | BNPB Client API | `services/bnpb-client-api` | `http://localhost:3000/` |
 | BNPB Auth | `services/bnpb-auth` | `http://localhost:3001/` |
@@ -62,6 +63,8 @@ Audit API M2 tersedia melalui `GET /internal/audit/events`, `/internal/audit/che
 
 Suite load test Aggregator P2 tersedia melalui `bash scripts/run-aggregator-load-test.sh smoke`. Mode `sustained`, `scaling`, `benchmark`, dan `rolling` menyiapkan pengukuran 10.000 VU, scaling 3→5→2, throughput 1 vs 3 instance, serta rolling update. Lihat [panduan load test P2](docs/aggregator-load-testing.md) untuk konfigurasi Compose/Kubernetes dan batas pembuktiannya.
 
+Sensor Pantai M2 dijalankan dari image resmi pada `http://localhost:8083`. Aggregator membaca station/observation dengan cursor dan circuit breaker, menyimpan hazard COASTAL atau karantina data rusak, serta meneruskan event kritis ke notifikasi. Gunakan `bash scripts/test-sensor-pantai.sh` untuk pengujian otomatis; lihat [integrasi Sensor Pantai](docs/sensor-pantai.md).
+
 ## Autentikasi dan Client API
 
 BNPB Auth (`http://localhost:3001`) mengelola kredensial pengguna dan sesi refresh. Service ini menandatangani access token RS256 berumur pendek (secara default 60 detik) menggunakan private key miliknya; BNPB Client API hanya menerima public key milik Auth untuk keperluan verifikasi. Refresh token disimpan oleh Auth dalam bentuk hash, dirotasi setiap kali refresh, dan tidak pernah dikirimkan ke Aggregator, BMKG, maupun PVMBG.
@@ -86,6 +89,8 @@ curl http://localhost:3000/hazards \
 `GET /hazards` menampilkan daftar hazard yang dapat dilihat, sedangkan `GET /hazards/:hazardId` mengembalikan satu hazard. Pengguna `public` menerima representasi ringkasan, sedangkan `lapangan` dan `internal` menerima representasi lengkap. Client API meneruskan correlation ID dari request ke Auth dan Aggregator, serta menggunakan `X-BNPB-Internal-Key` miliknya yang terpisah hanya untuk pemanggilan internal ke Aggregator. Client API mengembalikan `401` untuk access token yang tidak ada, tidak valid, atau kedaluwarsa, dan `502` apabila Auth atau Aggregator tidak tersedia.
 
 Respons Client API mempertahankan `meta.sources` dan flag `meta.partial` tanpa nama storage atau cursor internal. Pesan error 5xx dibuat generik; detail aslinya hanya dicatat di log bersama correlation ID.
+
+Client API membatasi request hazard aktif per instance, dengan kapasitas cadangan khusus role `lapangan`. Role `public` dan `internal` berbagi kapasitas lainnya. Ketika batas tercapai, request ditolak sebelum menghubungi Aggregator dengan `503` dan `Retry-After`; health check tetap dapat diakses. Root `.env.example` menyediakan `BNPB_CLIENT_API_ADMISSION_MAX_CONCURRENT_REQUESTS`, `BNPB_CLIENT_API_ADMISSION_RESERVED_LAPANGAN_REQUESTS`, dan `BNPB_CLIENT_API_ADMISSION_RETRY_AFTER_SECONDS`. Nilai awal 100/20/1 perlu dituning melalui load test, bukan hasil pengukuran kapasitas produksi.
 
 ## Pengujian End-to-End
 

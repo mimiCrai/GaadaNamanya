@@ -79,42 +79,47 @@ export class OutboxRelayService implements IOutboxRelayService {
         if (!lease) return;
         await this.leases.requireActive(lease);
         const events = await this.outboxEventRepository.findUnpublished(env.OUTBOX_BATCH_SIZE);
-        for (const event of events) {
-            if (this.stopped) return;
-            const correlationId =
-                typeof event.payload.correlationId === 'string' ? event.payload.correlationId : undefined;
-            try {
-                await this.leases.requireActive(lease);
-                await this.messagePublisher.publish(
-                    event.payload,
-                    {
+        if (this.stopped || !events.length) return;
+        const ids = events.map((event) => event.outboxEventId);
+        try {
+            await this.messagePublisher.publishBatch(
+                events.map((event) => ({
+                    message: event.payload,
+                    options: {
                         topic: event.topic,
                         key: event.partitionKey,
-                        headers: {
-                            event_type: event.eventType,
-                            outbox_event_id: event.outboxEventId,
-                        },
+                        headers: { event_type: event.eventType, outbox_event_id: event.outboxEventId },
                     },
-                    lease
-                );
-                await this.outboxEventRepository.markPublished(event.outboxEventId, lease);
+                })),
+                lease
+            );
+            await this.outboxEventRepository.markBatchPublished(ids, lease);
+            for (const event of events) {
                 logger.info(
-                    { outboxEventId: event.outboxEventId, hazardId: event.aggregateId, correlationId },
+                    {
+                        outboxEventId: event.outboxEventId,
+                        hazardId: event.aggregateId,
+                        correlationId: event.payload.correlationId,
+                    },
                     'Published outbox event to Kafka'
                 );
-            } catch (error) {
-                if (error instanceof LeaseLostError) {
-                    this.leadership.invalidate(lease);
-                    return;
-                }
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                await this.outboxEventRepository.recordPublishFailure(event.outboxEventId, errorMessage, lease);
-                logger.error(
-                    { error, outboxEventId: event.outboxEventId, hazardId: event.aggregateId, correlationId },
-                    'Failed to publish outbox event; it will be retried'
-                );
-                break;
             }
+        } catch (error) {
+            if (error instanceof LeaseLostError) {
+                this.leadership.invalidate(lease);
+                return;
+            }
+            try {
+                await this.outboxEventRepository.recordBatchFailure(
+                    ids,
+                    error instanceof Error ? error.message : String(error),
+                    lease
+                );
+            } catch (stateError) {
+                if (stateError instanceof LeaseLostError) this.leadership.invalidate(lease);
+                throw stateError;
+            }
+            logger.error({ error, count: ids.length }, 'Failed outbox batch will be retried');
         }
     }
 }

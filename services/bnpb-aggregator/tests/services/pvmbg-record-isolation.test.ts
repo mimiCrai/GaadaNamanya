@@ -29,6 +29,7 @@ const repository = {
     findByHazardId: jest.fn(),
     findBySourceAndRefId: jest.fn(),
     upsertAndEnqueue: jest.fn(),
+    upsertBatchAndEnqueue: jest.fn(),
 } as jest.Mocked<IHazardEventRepository>;
 const pending = {
     findOldest: jest.fn(),

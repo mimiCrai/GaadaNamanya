@@ -7,4 +7,5 @@ export const TYPES = {
     JwtAuthenticator: Symbol.for('JwtAuthenticator'),
     HazardGateway: Symbol.for('HazardGateway'),
     DlqGateway: Symbol.for('DlqGateway'),
+    IAdmissionControlService: Symbol.for('IAdmissionControlService'),
 };

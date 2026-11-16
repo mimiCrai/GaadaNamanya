@@ -45,6 +45,29 @@ const envSchema = z
         PVMBG_TOKEN: z.string().min(1),
         PVMBG_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
+        SENSOR_PANTAI_ENABLED: z
+            .enum(['true', 'false'])
+            .default('false')
+            .transform((value) => value === 'true'),
+        SENSOR_PANTAI_BASE_URL: z.string().url().default('http://sensor-pantai:8080'),
+        SENSOR_PANTAI_TOKEN: z.string().default(''),
+        SENSOR_PANTAI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(100).max(5000).default(1000),
+        SENSOR_PANTAI_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(5000).default(500),
+        SENSOR_PANTAI_PAGE_SIZE: z.coerce.number().int().min(1).max(1000).default(200),
+        SENSOR_PANTAI_MAX_PAGES_PER_POLL: z.coerce.number().int().min(1).max(20).default(4),
+        SENSOR_PANTAI_MAX_RESPONSE_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1024)
+            .max(4 * 1024 * 1024)
+            .default(1024 * 1024),
+        SENSOR_PANTAI_MAX_RECORD_BYTES: z.coerce.number().int().min(512).max(32768).default(8192),
+        SENSOR_PANTAI_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(10).default(3),
+        SENSOR_PANTAI_COOLDOWN_MS: z.coerce.number().int().min(500).max(60000).default(2000),
+        SENSOR_PANTAI_STALE_AFTER_MS: z.coerce.number().int().min(1000).default(10000),
+        SENSOR_PANTAI_MAX_SOURCE_LAG_MS: z.coerce.number().int().min(1000).default(120000),
+        SENSOR_PANTAI_MAX_FUTURE_MS: z.coerce.number().int().min(0).default(30000),
+
         // Background jobs
         POLL_INTERVAL_MS: z.coerce.number().int().min(2_000).max(5_000).default(3_000),
         POLL_OVERLAP_MS: z.coerce.number().int().min(0).default(1_000),
@@ -107,6 +130,9 @@ const envSchema = z
     })
     .refine((values) => !values.SATELLITE_INGEST_ENABLED || values.SATELLITE_TOKEN.length > 0, {
         message: 'SATELLITE_TOKEN is required when SATELLITE_INGEST_ENABLED=true',
+    })
+    .refine((values) => !values.SENSOR_PANTAI_ENABLED || values.SENSOR_PANTAI_TOKEN.length > 0, {
+        message: 'Enabled Sensor Pantai requires a nonempty SENSOR_PANTAI_TOKEN',
     })
     .refine(
         (values) => values.BACKGROUND_LEASE_RENEW_MS + values.LEASE_OPERATION_TIMEOUT_MS < values.BACKGROUND_LEASE_MS,

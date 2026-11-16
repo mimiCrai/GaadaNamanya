@@ -32,6 +32,7 @@ const mockHazardEventRepository: jest.Mocked<IHazardEventRepository> = {
     findByHazardId: jest.fn(),
     findBySourceAndRefId: jest.fn(),
     upsertAndEnqueue: jest.fn(),
+    upsertBatchAndEnqueue: jest.fn(),
 };
 
 const mockPendingWarningRepository: jest.Mocked<IPendingTsunamiWarningRepository> = {

@@ -12,6 +12,7 @@ import { IUnprocessedRetryService } from './services/unprocessed-retry.service';
 import { IUnprocessedMessageRepository } from './repositories/unprocessed-message.repository';
 import { setUnprocessedCounter } from './libs/metrics';
 import { ISatelliteIngestService } from './services/satellite-ingest.service';
+import { ISensorPantaiService } from './services/sensor-pantai.service';
 
 async function main() {
     try {
@@ -29,12 +30,14 @@ async function main() {
         const unprocessedRetry = container.get<IUnprocessedRetryService>(TYPES.IUnprocessedRetryService);
         const satelliteIngest = container.get<ISatelliteIngestService>(TYPES.ISatelliteIngestService);
         const unprocessedRepository = container.get<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository);
+        const sensorPantai = container.get<ISensorPantaiService>(TYPES.ISensorPantaiService);
         setUnprocessedCounter(() => unprocessedRepository.countByStatus());
         leadership.start();
         poller.start();
         outboxRelay.start();
         unprocessedRetry.start();
         satelliteIngest.start();
+        sensorPantai.start();
 
         let shuttingDown = false;
         const shutdown = async (signal: string) => {
@@ -48,6 +51,7 @@ async function main() {
             unprocessedRetry.stop();
             // Close the feed stream before releasing the lease, so the next leader is not answered 429.
             await satelliteIngest.stop();
+            sensorPantai.stop();
             await leadership.stop();
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();

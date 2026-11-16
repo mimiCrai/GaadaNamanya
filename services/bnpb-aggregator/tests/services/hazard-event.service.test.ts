@@ -9,6 +9,7 @@ const mockHazardEventRepository: jest.Mocked<IHazardEventRepository> = {
     findByHazardId: jest.fn(),
     findBySourceAndRefId: jest.fn(),
     upsertAndEnqueue: jest.fn(),
+    upsertBatchAndEnqueue: jest.fn(),
 };
 
 const mockSourceSyncStateService: jest.Mocked<ISourceSyncStateService> = {

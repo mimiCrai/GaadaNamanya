@@ -21,7 +21,7 @@ async function shard(database: Db, name: string, key: Document, extra: Document 
 }
 
 export const unprocessedMessagesMigration: Migration = {
-    id: '0005-unprocessed-messages',
+    id: '0006-unprocessed-messages',
     async up(database) {
         const sharded = (await database.admin().command({ hello: 1 })).msg === 'isdbgrid';
 
