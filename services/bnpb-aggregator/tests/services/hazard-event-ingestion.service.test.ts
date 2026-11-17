@@ -53,7 +53,8 @@ describe('HazardEventIngestionService', () => {
         service = new HazardEventIngestionService(
             mockHazardEventRepository,
             mockPendingWarningRepository,
-            mockUnprocessedRecorder
+            mockUnprocessedRecorder,
+            { next: jest.fn().mockResolvedValue(1) }
         );
     });
 

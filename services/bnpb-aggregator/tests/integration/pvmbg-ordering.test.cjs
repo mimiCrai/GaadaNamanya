@@ -14,6 +14,7 @@ const { PayloadStore } = require('../../dist/src/repositories/payload-store.repo
 const { UnprocessedMessageRepository } = require('../../dist/src/repositories/unprocessed-message.repository');
 const { HazardEventRepository } = require('../../dist/src/repositories/hazard-event.repository');
 const { HazardEventIngestionService } = require('../../dist/src/services/hazard-event-ingestion.service');
+const { OrderingSequenceRepository } = require('../../dist/src/repositories/ordering-sequence.repository');
 const { UnprocessedRecorder } = require('../../dist/src/services/unprocessed-recorder.service');
 const { UnprocessedHandlerRegistry } = require('../../dist/src/services/unprocessed-handler.registry');
 const { UnprocessedRetryService } = require('../../dist/src/services/unprocessed-retry.service');
@@ -54,7 +55,12 @@ test('PVMBG ordering per source_ref_id: live poll vs DLQ replay (review #3)', { 
             if (failFor.delete(key)) throw new MongoNetworkError('connection reset by peer (test)');
             return hazards.upsertAndEnqueue(input);
         };
-        const ingestion = new HazardEventIngestionService(flaky, {}, new UnprocessedRecorder(dlq));
+        const ingestion = new HazardEventIngestionService(
+            flaky,
+            {},
+            new UnprocessedRecorder(dlq),
+            new OrderingSequenceRepository(store)
+        );
         const registry = new UnprocessedHandlerRegistry(ingestion);
         const leadership = { current: () => lease, invalidate: () => undefined };
         const worker = new UnprocessedRetryService(dlq, registry, leadership);
@@ -169,6 +175,74 @@ test('PVMBG ordering per source_ref_id: live poll vs DLQ replay (review #3)', { 
                 );
             }
         );
+
+        // Review P2 (follow-up): the receive order must come from one consistent, persisted source.
+        await t.test(
+            'P2 case 1: same batch, Normal (fails) then Awas, same reported_at → replay keeps Awas',
+            async () => {
+                failFor.add('rv-p2a@2026-11-12T12:00:00.000Z@NORMAL');
+                await ingestion.ingestVolcanicReports(
+                    [
+                        report('rv-p2a', '2026-11-12T12:00:00Z', 'Normal'),
+                        report('rv-p2a', '2026-11-12T12:00:00Z', 'Awas'),
+                    ],
+                    'poll-1',
+                    lease
+                );
+                assert.equal((await hazardOf('rv-p2a')).severity, 'AWAS');
+                await replayDue();
+                assert.equal((await hazardOf('rv-p2a')).severity, 'AWAS', 'Awas came later in the same batch');
+                assert.equal((await entriesOf('rv-p2a'))[0].status, 'superseded');
+                assert.deepEqual(
+                    (await outboxOf('rv-p2a')).map((e) => e.payload.hazard.severity),
+                    ['AWAS']
+                );
+            }
+        );
+
+        /** Runs `work` with the application clock (global Date, as the ingestion module sees it) moved by `ms`. */
+        async function withAppClockShift(ms, work) {
+            const SystemDate = Date;
+            global.Date = new Proxy(SystemDate, {
+                construct: (target, args, newTarget) =>
+                    Reflect.construct(target, args.length ? args : [SystemDate.now() + ms], newTarget),
+                get: (target, key, receiver) =>
+                    key === 'now' ? () => SystemDate.now() + ms : Reflect.get(target, key, receiver),
+            });
+            try {
+                return await work();
+            } finally {
+                global.Date = SystemDate;
+            }
+        }
+
+        await t.test('P2 case 2: app clock moved back 45 s before the newer poll → replay keeps Awas', async () => {
+            failFor.add('rv-p2b@2026-11-12T12:00:00.000Z@NORMAL');
+            await ingestion.ingestVolcanicReports(
+                [report('rv-p2b', '2026-11-12T12:00:00Z', 'Normal')],
+                'poll-1',
+                lease
+            );
+            await withAppClockShift(-45_000, () =>
+                ingestion.ingestVolcanicReports([report('rv-p2b', '2026-11-12T12:00:00Z', 'Awas')], 'poll-2', lease)
+            );
+            assert.equal((await hazardOf('rv-p2b')).severity, 'AWAS');
+            await replayDue();
+            assert.equal((await hazardOf('rv-p2b')).severity, 'AWAS');
+            assert.equal((await entriesOf('rv-p2b'))[0].status, 'superseded');
+        });
+
+        await t.test('P2 case 2b: app clock moved back 45 s, live polls only → the later poll still wins', async () => {
+            await ingestion.ingestVolcanicReports(
+                [report('rv-p2c', '2026-11-12T12:00:00Z', 'Normal')],
+                'poll-1',
+                lease
+            );
+            await withAppClockShift(-45_000, () =>
+                ingestion.ingestVolcanicReports([report('rv-p2c', '2026-11-12T12:00:00Z', 'Awas')], 'poll-2', lease)
+            );
+            assert.equal((await hazardOf('rv-p2c')).severity, 'AWAS');
+        });
 
         await t.test(
             'live poll and retry worker racing on the same report: the newest report wins every time',

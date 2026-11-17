@@ -27,12 +27,12 @@ export class UnprocessedHandlerRegistry implements IUnprocessedHandlerRegistry {
     private readonly handlers = new Map<string, UnprocessedHandler>();
 
     constructor(@inject(TYPES.IHazardEventIngestionService) ingestion: IHazardEventIngestionService) {
-        // entry.receivedAt = first receipt: a replay keeps its place in the receive order (review #3).
+        // entry.ordering = receive order stored at quarantine: a replay keeps its original place (review #3).
         this.register(HazardSource.Pvmbg, PVMBG_RECORD_KIND, (raw, entry, lease) =>
-            ingestion.reprocessVolcanicRecord(raw, entry.correlationId, lease, entry.receivedAt)
+            ingestion.reprocessVolcanicRecord(raw, entry.correlationId, lease, entry.ordering)
         );
         this.register(HazardSource.Pvmbg, PVMBG_RESPONSE_KIND, async (raw, entry, lease) => {
-            await ingestion.reprocessVolcanicResponse(raw, entry.correlationId, lease, entry.receivedAt);
+            await ingestion.reprocessVolcanicResponse(raw, entry.correlationId, lease, entry.ordering);
             return { hazardId: null };
         });
     }

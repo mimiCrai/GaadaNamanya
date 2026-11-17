@@ -41,11 +41,15 @@ const recorder = { record: jest.fn() } as jest.Mocked<IUnprocessedRecorder>;
 const good = (id: string) =>
     `{"report_id":"${id}","volcano_id":"MERAPI","alert_level":"Siaga","eruption_count_24h":2,"ash_column_height_m":800.0,"reported_at":"2026-11-12T02:40:11Z"}`;
 
+const sequences = { next: jest.fn() };
+
 describe('PVMBG record isolation', () => {
-    const service = new HazardEventIngestionService(repository, pending, recorder);
+    const service = new HazardEventIngestionService(repository, pending, recorder, sequences);
 
     beforeEach(() => {
         jest.resetAllMocks();
+        let seq = 41;
+        sequences.next.mockImplementation(async () => ++seq);
         repository.upsertAndEnqueue.mockImplementation(async (input) => ({
             hazardEvent: hazard(input.sourceRefId),
             changeType: HazardEventChangeType.Created,
@@ -121,48 +125,66 @@ describe('PVMBG record isolation', () => {
     });
 
     it('reprocesses a stored record from its raw bytes', async () => {
-        const receivedAt = new Date('2026-11-12T02:40:11.000Z');
+        const ordering = { seq: 7, index: 2 };
         await expect(
-            service.reprocessVolcanicRecord(Buffer.from(good('r-9')), 'corr-9', lease, receivedAt)
+            service.reprocessVolcanicRecord(Buffer.from(good('r-9')), 'corr-9', lease, ordering)
         ).resolves.toEqual({ hazardId: 'hz-r-9', superseded: false });
         await expect(
-            service.reprocessVolcanicRecord(Buffer.from('{"report_id":'), 'c', lease, receivedAt)
+            service.reprocessVolcanicRecord(Buffer.from('{"report_id":'), 'c', lease, ordering)
         ).rejects.toMatchObject({ category: 'malformed_json' });
     });
 
-    it('review #3: writes carry the version reported_at|first-receipt time, live and replay alike', async () => {
-        const receivedAt = new Date('2026-11-12T02:40:11.000Z');
-        await service.reprocessVolcanicRecord(Buffer.from(good('r-10')), 'c', lease, receivedAt);
-        const input = repository.upsertAndEnqueue.mock.calls.at(-1)![0];
-        expect(input.version).toBe(`${input.occurredAt.toISOString()}|2026-11-12T02:40:11.000Z`);
-
-        const before = new Date().toISOString();
-        await service.ingestVolcanicReports([JSON.parse(good('r-11'))], 'c', lease);
-        const live = repository.upsertAndEnqueue.mock.calls.at(-1)![0];
-        const [reported, received] = live.version!.split('|');
-        expect(reported).toBe('2026-11-12T02:40:11.000Z');
-        expect(received >= before).toBe(true); // the live receive time, later than any earlier receipt
+    it('review #3 P2: live writes carry reported_at|batch seq|index; the same order is stored with a failure', async () => {
+        const typeChanged = good('r-21').replace('"eruption_count_24h":2', '"eruption_count_24h":"dua"');
+        const body = Buffer.from(`{"data":[${good('r-20')},${typeChanged},${good('r-22')}]}`);
+        await service.ingestVolcanicBatch(
+            { records: toRawRecords(body, JSON.parse(body.toString())), contentType: 'application/json' },
+            'c',
+            lease
+        );
+        expect(sequences.next).toHaveBeenCalledTimes(1); // one store-issued sequence per batch, no clock
+        expect(repository.upsertAndEnqueue.mock.calls.map(([input]) => input.version)).toEqual([
+            '2026-11-12T02:40:11.000Z|0000000000000042|000000',
+            '2026-11-12T02:40:11.000Z|0000000000000042|000002',
+        ]);
+        expect(recorder.record.mock.calls[0][0].ordering).toEqual({ seq: 42, index: 1 });
     });
 
-    it('review #3: version order = reported_at, then receive order (plain string comparison)', () => {
-        const at = (iso: string) => new Date(iso);
-        const v = (reported: string, received: string) => pvmbgVersion(at(reported), at(received));
-        expect(
-            v('2026-11-12T10:00:00Z', '2026-11-12T10:05:00Z') < v('2026-11-12T10:01:00Z', '2026-11-12T10:01:30Z')
-        ).toBe(true);
-        expect(
-            v('2026-11-12T10:01:00Z', '2026-11-12T10:02:00Z') < v('2026-11-12T10:01:00Z', '2026-11-12T10:03:00Z')
-        ).toBe(true);
-        expect(
-            isSupersededVersion(
-                v('2026-11-12T10:01:00Z', '2026-11-12T10:03:00Z'),
-                v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z')
-            )
-        ).toBe(true);
-        expect(isSupersededVersion(undefined, v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z'))).toBe(false);
+    it('review #3 P2: a replay reuses the stored order, never a timestamp', async () => {
+        await service.reprocessVolcanicRecord(Buffer.from(good('r-10')), 'c', lease, { seq: 42, index: 0 });
+        expect(repository.upsertAndEnqueue.mock.calls.at(-1)![0].version).toBe(
+            '2026-11-12T02:40:11.000Z|0000000000000042|000000'
+        );
+        await service.reprocessVolcanicRecord(Buffer.from(good('r-10')), 'c', lease, null); // legacy entry
+        expect(repository.upsertAndEnqueue.mock.calls.at(-1)![0].version).toBe(
+            '2026-11-12T02:40:11.000Z|0000000000000000|000000'
+        );
+        await service.reprocessVolcanicResponse(Buffer.from(`{"data":[${good('r-30')},${good('r-31')}]}`), 'c', lease, {
+            seq: 9,
+            index: null,
+        });
+        expect(repository.upsertAndEnqueue.mock.calls.slice(-2).map(([input]) => input.version)).toEqual([
+            '2026-11-12T02:40:11.000Z|0000000000000009|000000',
+            '2026-11-12T02:40:11.000Z|0000000000000009|000001',
+        ]);
+        expect(sequences.next).not.toHaveBeenCalled();
+    });
+
+    it('review #3: version order = reported_at, then batch seq, then index (plain string comparison)', () => {
+        const v = (reported: string, seq: number, index: number) => pvmbgVersion(new Date(reported), { seq, index });
+        expect(v('2026-11-12T10:00:00Z', 900, 0) < v('2026-11-12T10:01:00Z', 1, 0)).toBe(true);
+        expect(v('2026-11-12T10:01:00Z', 9, 0) < v('2026-11-12T10:01:00Z', 10, 0)).toBe(true); // not "10" < "9"
+        expect(v('2026-11-12T10:01:00Z', 10, 0) < v('2026-11-12T10:01:00Z', 10, 1)).toBe(true); // later in batch
+        expect(isSupersededVersion(v('2026-11-12T10:01:00Z', 10, 1), v('2026-11-12T10:01:00Z', 10, 0))).toBe(true);
+        expect(isSupersededVersion(undefined, v('2026-11-12T10:00:00Z', 1, 0))).toBe(false);
         expect(isSupersededVersion('x', undefined)).toBe(false);
-        const same = v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z');
+        const same = v('2026-11-12T10:00:00Z', 3, 0);
         expect(isSupersededVersion(same, same)).toBe(false); // equal = idempotent re-apply, never superseded
+    });
+
+    it('review #3 P2: an empty poll takes no sequence value', async () => {
+        await service.ingestVolcanicBatch({ records: [], contentType: 'application/json' }, 'c', lease);
+        expect(sequences.next).not.toHaveBeenCalled();
     });
 
     it('review #3: an older report reports superseded instead of failing', async () => {
@@ -172,7 +194,7 @@ describe('PVMBG record isolation', () => {
             superseded: true,
         });
         await expect(
-            service.reprocessVolcanicRecord(Buffer.from(good('r-12')), 'c', lease, new Date())
+            service.reprocessVolcanicRecord(Buffer.from(good('r-12')), 'c', lease, { seq: 1, index: 0 })
         ).resolves.toEqual({ hazardId: 'hz-r-12', superseded: true });
         expect(recorder.record).not.toHaveBeenCalled();
     });

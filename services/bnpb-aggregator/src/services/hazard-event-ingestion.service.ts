@@ -15,39 +15,38 @@ import { IPendingTsunamiWarningRepository } from '../repositories/pending-tsunam
 import env from '../util/env';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
 import { IUnprocessedRecorder } from './unprocessed-recorder.service';
+import { IOrderingSequenceRepository } from '../repositories/ordering-sequence.repository';
+import { formatReceiveOrder, LEGACY_RECEIVE_ORDER, ReceiveOrder } from '../libs/receive-order';
 
 export interface IHazardEventIngestionService {
     ingestSeismicEvents(events: SeismicEvent[], correlationId: string, lease: LeaseToken): Promise<void>;
     ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void>;
     ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void>;
     ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string, lease: LeaseToken): Promise<void>;
-    /**
-     * DLQ handler: one stored PVMBG record (raw bytes) → HazardEvent. `receivedAt` is when the record first
-     * arrived (the DLQ entry), so the replay keeps its place in the receive order. Throws ProcessingError on failure.
-     */
+
     reprocessVolcanicRecord(
         raw: Buffer,
         correlationId: string,
         lease: LeaseToken,
-        receivedAt: Date
+        ordering: ReceiveOrder | null | undefined
     ): Promise<VolcanicIngestResult>;
-    /** DLQ handler: one stored PVMBG response body → per-record ingestion (failures get their own entries). */
-    reprocessVolcanicResponse(raw: Buffer, correlationId: string, lease: LeaseToken, receivedAt: Date): Promise<void>;
+    reprocessVolcanicResponse(
+        raw: Buffer,
+        correlationId: string,
+        lease: LeaseToken,
+        ordering: ReceiveOrder | null | undefined
+    ): Promise<void>;
 }
 
 export interface VolcanicIngestResult {
     hazardId: string;
-    /** A newer report of the same report_id is already stored; nothing changed. */
     superseded: boolean;
 }
 
-/**
- * Ordering version of a PVMBG report per report_id (review #3, rule 9b): reported_at, tie-broken by the time
- * BNPB received it. Both parts are fixed-width ISO-8601 UTC, so plain string order is chronological order.
- * The same report received again later has the same reported_at and a later receive time.
- */
-export function pvmbgVersion(reportedAt: Date, receivedAt: Date): string {
-    return `${reportedAt.toISOString()}|${receivedAt.toISOString()}`;
+export const PVMBG_RECEIVE_SEQUENCE = 'PVMBG:receive';
+
+export function pvmbgVersion(reportedAt: Date, ordering: ReceiveOrder): string {
+    return `${reportedAt.toISOString()}|${formatReceiveOrder(ordering)}`;
 }
 
 const PVMBG_RECORD_CONTEXT = { kind: PVMBG_RECORD_KIND, endpoint: PVMBG_ENDPOINT, topic: null };
@@ -61,15 +60,15 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         @inject(TYPES.IPendingTsunamiWarningRepository)
         private readonly pendingTsunamiWarningRepository: IPendingTsunamiWarningRepository,
         @inject(TYPES.IUnprocessedRecorder)
-        private readonly unprocessed: IUnprocessedRecorder
+        private readonly unprocessed: IUnprocessedRecorder,
+        @inject(TYPES.IOrderingSequenceRepository)
+        private readonly sequences: IOrderingSequenceRepository
     ) {}
 
-    /**
-     * Record isolation: a failing record is stored as an unprocessed message and the rest of the batch
-     * continues. Only lease loss and a failure to store the message itself abort the poll.
-     */
     async ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void> {
-        const receivedAt = new Date();
+        if (!batch.failure && batch.records.length === 0) return;
+        // Failing to get the sequence fails the poll like a DLQ write failure: the checkpoint does not move.
+        const seq = await this.sequences.next(PVMBG_RECEIVE_SEQUENCE);
         if (batch.failure) {
             await this.unprocessed.record(
                 {
@@ -78,13 +77,14 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
                     payload: batch.failure.payload,
                     contentType: batch.contentType,
                     correlationId,
+                    ordering: { seq, index: null },
                     error: batch.failure.error,
                 },
                 lease
             );
         }
-        for (const record of batch.records) {
-            await this.ingestIsolated(record, batch.contentType, correlationId, lease, receivedAt);
+        for (const [index, record] of batch.records.entries()) {
+            await this.ingestIsolated(record, batch.contentType, correlationId, lease, { seq, index });
         }
     }
 
@@ -97,21 +97,22 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         raw: Buffer,
         correlationId: string,
         lease: LeaseToken,
-        receivedAt: Date
+        ordering: ReceiveOrder | null | undefined
     ): Promise<VolcanicIngestResult> {
         const value = decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH });
-        return this.ingestVolcanicRecord(value, correlationId, lease, receivedAt);
+        return this.ingestVolcanicRecord(value, correlationId, lease, ordering ?? LEGACY_RECEIVE_ORDER);
     }
 
     async reprocessVolcanicResponse(
         raw: Buffer,
         correlationId: string,
         lease: LeaseToken,
-        receivedAt: Date
+        ordering: ReceiveOrder | null | undefined
     ): Promise<void> {
         const parsed = decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH });
-        for (const record of toRawRecords(raw, parsed)) {
-            await this.ingestIsolated(record, 'application/json', correlationId, lease, receivedAt);
+        const seq = (ordering ?? LEGACY_RECEIVE_ORDER).seq;
+        for (const [index, record] of toRawRecords(raw, parsed).entries()) {
+            await this.ingestIsolated(record, 'application/json', correlationId, lease, { seq, index });
         }
     }
 
@@ -120,10 +121,10 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         contentType: string,
         correlationId: string,
         lease: LeaseToken,
-        receivedAt: Date
+        ordering: ReceiveOrder
     ): Promise<void> {
         try {
-            await this.ingestVolcanicRecord(record.value, correlationId, lease, receivedAt);
+            await this.ingestVolcanicRecord(record.value, correlationId, lease, ordering);
         } catch (error) {
             if (error instanceof LeaseLostError) throw error;
             await this.unprocessed.record(
@@ -134,6 +135,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
                     contentType,
                     correlationId,
                     sourceRefId: extractString(record.value, 'report_id'),
+                    ordering,
                     error: classifyError(error),
                 },
                 lease
@@ -145,7 +147,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         value: unknown,
         correlationId: string,
         lease: LeaseToken,
-        receivedAt: Date
+        ordering: ReceiveOrder
     ): Promise<VolcanicIngestResult> {
         const report = validateRecord(value, volcanicReportSchema, PVMBG_VOLCANIC_FIELDS);
         const { report_id, volcano_id, alert_level, reported_at, ...attributes } = report;
@@ -170,7 +172,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
             topic: env.KAFKA_TOPIC,
             correlationId,
             lease,
-            version: pvmbgVersion(occurredAt, receivedAt),
+            version: pvmbgVersion(occurredAt, ordering),
         });
         if (result.superseded) {
             hazardWritesSupersededTotal.inc({ source: HazardSource.Pvmbg });

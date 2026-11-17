@@ -37,6 +37,7 @@ import {
     UnprocessedMessageRepository,
 } from '../repositories/unprocessed-message.repository';
 import { IUnprocessedRecorder, UnprocessedRecorder } from '../services/unprocessed-recorder.service';
+import { IOrderingSequenceRepository, OrderingSequenceRepository } from '../repositories/ordering-sequence.repository';
 import { IUnprocessedHandlerRegistry, UnprocessedHandlerRegistry } from '../services/unprocessed-handler.registry';
 import { IUnprocessedRetryService, UnprocessedRetryService } from '../services/unprocessed-retry.service';
 import { IUnprocessedQueryService, UnprocessedQueryService } from '../services/unprocessed-query.service';
@@ -50,6 +51,9 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
         .to(UnprocessedMessageRepository)
         .inSingletonScope();
     bind<IUnprocessedRecorder>(TYPES.IUnprocessedRecorder).to(UnprocessedRecorder).inSingletonScope();
+    bind<IOrderingSequenceRepository>(TYPES.IOrderingSequenceRepository)
+        .to(OrderingSequenceRepository)
+        .inSingletonScope();
     bind<IUnprocessedHandlerRegistry>(TYPES.IUnprocessedHandlerRegistry)
         .to(UnprocessedHandlerRegistry)
         .inSingletonScope();

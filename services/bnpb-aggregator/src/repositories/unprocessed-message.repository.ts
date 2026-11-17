@@ -12,6 +12,7 @@ import {
 } from '../db/schema/unprocessed-messages';
 import { computeBackoffMs } from '../libs/backoff';
 import { ProcessingError } from '../libs/processing-error';
+import type { ReceiveOrder } from '../libs/receive-order';
 import { PayloadRef } from '../libs/safe-decode';
 import env from '../util/env';
 import { IBackgroundLeaseRepository } from './background-lease.repository';
@@ -27,6 +28,7 @@ export interface RecordUnprocessedInput {
     contentType: string;
     correlationId: string;
     sourceRefId?: string | null;
+    ordering?: ReceiveOrder | null;
     error: ProcessingError;
 }
 
@@ -117,6 +119,7 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
                         sha256: stored.sha256,
                         correlationId: input.correlationId,
                         sourceRefId: input.sourceRefId ?? null,
+                        ordering: input.ordering ?? null,
                         recoveredAt: null,
                         recoveredHazardId: null,
                         history: [historyEntry],
@@ -133,7 +136,13 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
                 const reopen = await this.collection().updateOne(
                     { _id: messageId, status: { $in: ['recovered', 'superseded'] } },
                     {
-                        $set: { ...failureFields, recoveredAt: null, recoveredHazardId: null },
+                        // A new receipt of the same bytes after the entry was closed: it now sits at the new place.
+                        $set: {
+                            ...failureFields,
+                            recoveredAt: null,
+                            recoveredHazardId: null,
+                            ...(input.ordering ? { ordering: input.ordering } : {}),
+                        },
                         $push: { history: { $each: [historyEntry], $slice: -HISTORY_LIMIT } },
                     },
                     { session }

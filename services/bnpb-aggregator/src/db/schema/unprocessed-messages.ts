@@ -1,10 +1,11 @@
 import { Binary, ObjectId } from 'mongodb';
 import { ErrorCategory } from '../../libs/processing-error';
+import type { ReceiveOrder } from '../../libs/receive-order';
 
 export const unprocessedMessages = 'unprocessed_messages';
 export const unprocessedPayloadBucket = 'unprocessed_payloads';
 
-/** recovered = replay applied; superseded = replay closed because a newer version was already stored (review #3). */
+/** recovered = replay applied; superseded = replay closed because a newer version was already stored */
 export type UnprocessedStatus = 'retrying' | 'parked' | 'recovered' | 'superseded';
 
 export interface UnprocessedContext {
@@ -44,6 +45,8 @@ export interface UnprocessedMessage {
     sha256: string;
     correlationId: string;
     sourceRefId: string | null;
+    /** Receive order of the quarantined record, reused on replay (absent on entries written before it existed). */
+    ordering?: ReceiveOrder | null;
     recoveredAt: Date | null;
     recoveredHazardId: string | null;
     history: UnprocessedHistoryEntry[];
