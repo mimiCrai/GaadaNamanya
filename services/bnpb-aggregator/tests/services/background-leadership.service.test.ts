@@ -60,4 +60,39 @@ describe('BackgroundLeadershipService', () => {
         service.invalidate(service.current()!);
         expect(service.current()).toBeNull();
     });
+
+    it('notifies listeners synchronously on grant, epoch change, loss and invalidation only', async () => {
+        leases.acquireOrRenew
+            .mockResolvedValueOnce({ epoch: 3 })
+            .mockResolvedValueOnce({ epoch: 3 })
+            .mockResolvedValueOnce({ epoch: 4 })
+            .mockRejectedValueOnce(new Error('database unavailable'))
+            .mockResolvedValue({ epoch: 5 });
+        const seen: Array<number | null> = [];
+        const unsubscribe = service.onChange((token) => seen.push(token?.epoch ?? null));
+        service.start();
+        await jest.advanceTimersByTimeAsync(0); // grant 3
+        await jest.advanceTimersByTimeAsync(2000); // renew 3: no notification
+        await jest.advanceTimersByTimeAsync(2000); // epoch 4
+        await jest.advanceTimersByTimeAsync(2000); // verification fails: lost
+        await jest.advanceTimersByTimeAsync(2000); // grant 5
+        service.invalidate(service.current()!);
+        expect(seen).toEqual([3, 4, null, 5, null]);
+        unsubscribe();
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(seen).toHaveLength(5);
+    });
+
+    it('notifies null on shutdown and survives a throwing listener', async () => {
+        leases.acquireOrRenew.mockResolvedValue({ epoch: 9 });
+        const seen: Array<number | null> = [];
+        service.onChange(() => {
+            throw new Error('listener bug');
+        });
+        service.onChange((token) => seen.push(token?.epoch ?? null));
+        service.start();
+        await jest.advanceTimersByTimeAsync(0);
+        await service.stop();
+        expect(seen).toEqual([9, null]);
+    });
 });

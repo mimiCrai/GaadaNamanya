@@ -54,6 +54,136 @@ paths:
                                             guardVersion: { type: integer }
                 '401': { description: Missing internal key }
                 '403': { description: Invalid internal key }
+    /internal/audit/unprocessed:
+        get:
+            summary: Messages that could not be processed (Lampiran A); recovered messages are excluded
+            security: [{ AuditBearer: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
+            responses:
+                '200':
+                    description: Complete or explicitly partial page, ordered by received_at then message_id
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [items, next_cursor, partial, unavailable_units]
+                                properties:
+                                    items:
+                                        type: array
+                                        items:
+                                            type: object
+                                            required:
+                                                [message_id, source, received_at, reason, retryable, attempts, status]
+                                            properties:
+                                                message_id: { type: string, example: msg-31c9a0b1c2d3e4f5a6b7c8d9 }
+                                                source: { type: string }
+                                                received_at: { type: string, format: date-time }
+                                                reason:
+                                                    type: string
+                                                    example: "schema_incompatible: field 'level' berubah dari number menjadi string"
+                                                retryable: { type: boolean }
+                                                attempts: { type: integer, minimum: 1 }
+                                                status: { type: string, enum: [retrying, parked] }
+                                    next_cursor: { type: string, nullable: true }
+                                    partial: { type: boolean }
+                                    unavailable_units: { type: array, items: { type: string } }
+                '400': { description: Invalid query or cursor }
+                '401': { description: Invalid or missing audit token }
+
+    /internal/dlq:
+        get:
+            summary: Internal Ops inspection list of unprocessed messages (metadata only)
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { $ref: '#/components/parameters/AuditSource' }
+                - name: status
+                  in: query
+                  schema: { type: string, enum: [retrying, parked, recovered, superseded] }
+                - { $ref: '#/components/parameters/PageLimit' }
+                - { $ref: '#/components/parameters/PageCursor' }
+            responses:
+                '200': { description: Page of unprocessed message metadata }
+                '400': { description: Invalid query or cursor }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+
+    /internal/dlq/{messageId}:
+        get:
+            summary: One unprocessed message with its raw payload as base64
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: 'Metadata, history and payload_base64 (null with payload_truncated=true above DLQ_INSPECT_MAX_BYTES)'
+                '404': { description: Unknown message }
+
+    /internal/dlq/{messageId}/raw:
+        get:
+            summary: Exact original payload bytes (streamed; any size)
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: messageId, in: path, required: true, schema: { type: string } }
+            responses:
+                '200':
+                    description: Original bytes; X-Payload-SHA256 header carries the hash
+                    content:
+                        application/octet-stream:
+                            schema: { type: string, format: binary }
+                '404': { description: Unknown message }
+
+    /internal/satellite/status:
+        get:
+            summary: Satellite feed ingest state of this instance (only the leader holds the stream)
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200':
+                    description: 'Offsets (received, durable, latest), lag, reconnects by reason, events by type'
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    enabled: { type: boolean }
+                                    instance_id: { type: string }
+                                    leader: { type: boolean }
+                                    epoch: { type: integer, nullable: true }
+                                    connected: { type: boolean }
+                                    current_from: { type: integer, nullable: true }
+                                    last_offset_received: { type: integer, nullable: true }
+                                    last_offset_durable: { type: integer, nullable: true }
+                                    latest_offset: { type: integer, nullable: true }
+                                    lag_offsets: { type: integer, nullable: true }
+                                    last_heartbeat_virtual_now: { type: string, nullable: true }
+                                    session_speed: { type: number, nullable: true }
+                                    reconnects: { type: object, additionalProperties: { type: integer } }
+                                    events: { type: object, additionalProperties: { type: integer } }
+                                    duplicates: { type: integer }
+                                    gaps: { type: integer }
+                                    last_error: { type: string, nullable: true }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
+
+    /internal/satellite/disconnect:
+        post:
+            summary: 'Test hook (P4 #8): drop the current feed connection; ingest resumes from the durable checkpoint'
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '202': { description: Connection dropped }
+                '409': { description: 'This instance holds no stream (not the leader, or between connections)' }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
+
+    /metrics:
+        get:
+            summary: Prometheus metrics
+            tags: [Health]
+            responses:
+                '200': { description: Prometheus text exposition format }
+
     /health:
         get:
             summary: Health check

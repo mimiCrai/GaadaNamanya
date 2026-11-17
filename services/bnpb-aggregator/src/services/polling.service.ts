@@ -143,7 +143,7 @@ export class PollingService implements IPollingService {
     }
 
     private async pollPvmbgVolcanic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
-        const reports = await this.pvmbgClient.getVolcanicReports(options);
-        await this.ingestionService.ingestVolcanicReports(reports, options.correlationId, lease);
+        const batch = await this.pvmbgClient.getVolcanicReports(options);
+        await this.ingestionService.ingestVolcanicBatch(batch, options.correlationId, lease);
     }
 }

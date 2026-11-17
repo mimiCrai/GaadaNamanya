@@ -17,6 +17,10 @@ import './controllers/health.controller';
 import './controllers/hazard-event.controller';
 import './controllers/audit.controller';
 import './controllers/leadership.controller';
+import './controllers/audit-unprocessed.controller';
+import './controllers/dlq.controller';
+import './controllers/metrics.controller';
+import './controllers/satellite.controller';
 import './controllers/sensor-pantai.controller';
 
 export async function createContainer(): Promise<Container> {

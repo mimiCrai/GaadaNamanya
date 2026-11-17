@@ -31,7 +31,35 @@ import { ISensorPantaiClient, SensorPantaiClient } from '../clients/sensor-panta
 import { ISensorPantaiRepository, SensorPantaiRepository } from '../repositories/sensor-pantai.repository';
 import { ISensorPantaiService, SensorPantaiService } from '../services/sensor-pantai.service';
 
+import { IPayloadStore, PayloadStore } from '../repositories/payload-store.repository';
+import {
+    IUnprocessedMessageRepository,
+    UnprocessedMessageRepository,
+} from '../repositories/unprocessed-message.repository';
+import { IUnprocessedRecorder, UnprocessedRecorder } from '../services/unprocessed-recorder.service';
+import { IOrderingSequenceRepository, OrderingSequenceRepository } from '../repositories/ordering-sequence.repository';
+import { IUnprocessedHandlerRegistry, UnprocessedHandlerRegistry } from '../services/unprocessed-handler.registry';
+import { IUnprocessedRetryService, UnprocessedRetryService } from '../services/unprocessed-retry.service';
+import { IUnprocessedQueryService, UnprocessedQueryService } from '../services/unprocessed-query.service';
+import { ISatelliteFeedClient, SatelliteFeedClient } from '../clients/satellite.client';
+import { ISatelliteLogWriter, SatelliteLogWriter } from '../services/satellite-log-writer.service';
+import { ISatelliteIngestService, SatelliteIngestService } from '../services/satellite-ingest.service';
+
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
+    bind<IPayloadStore>(TYPES.IPayloadStore).to(PayloadStore).inSingletonScope();
+    bind<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository)
+        .to(UnprocessedMessageRepository)
+        .inSingletonScope();
+    bind<IUnprocessedRecorder>(TYPES.IUnprocessedRecorder).to(UnprocessedRecorder).inSingletonScope();
+    bind<IOrderingSequenceRepository>(TYPES.IOrderingSequenceRepository)
+        .to(OrderingSequenceRepository)
+        .inSingletonScope();
+    bind<IUnprocessedHandlerRegistry>(TYPES.IUnprocessedHandlerRegistry)
+        .to(UnprocessedHandlerRegistry)
+        .inSingletonScope();
+    bind<IUnprocessedRetryService>(TYPES.IUnprocessedRetryService).to(UnprocessedRetryService).inSingletonScope();
+    bind<IUnprocessedQueryService>(TYPES.IUnprocessedQueryService).to(UnprocessedQueryService).inSingletonScope();
+
     bind(TYPES.Database).toConstantValue(db);
     bind<IBackgroundLeaseRepository>(TYPES.IBackgroundLeaseRepository).to(BackgroundLeaseRepository).inSingletonScope();
     bind<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService)
@@ -67,4 +95,8 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<IMessagePublisher>(TYPES.IMessagePublisher).to(MessagePublisher).inSingletonScope();
 
     bind<InternalAuthMiddleware>(TYPES.InternalAuthMiddleware).to(InternalAuthMiddleware);
+
+    bind<ISatelliteFeedClient>(TYPES.ISatelliteFeedClient).to(SatelliteFeedClient).inSingletonScope();
+    bind<ISatelliteLogWriter>(TYPES.ISatelliteLogWriter).to(SatelliteLogWriter).inSingletonScope();
+    bind<ISatelliteIngestService>(TYPES.ISatelliteIngestService).to(SatelliteIngestService).inSingletonScope();
 });

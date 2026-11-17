@@ -17,9 +17,12 @@ export const VOLCANO_LOCATIONS: Readonly<Record<string, VolcanoLocation>> = {
     MARAPI: { areaName: 'Gunung Marapi', latitude: -0.381, longitude: 100.473 },
 };
 
+export function findVolcanoLocation(volcanoId: string): VolcanoLocation | undefined {
+    return VOLCANO_LOCATIONS[volcanoId.trim().toUpperCase()];
+}
+
 export function getVolcanoLocation(volcanoId: string): VolcanoLocation {
-    const normalizedId = volcanoId.trim().toUpperCase();
-    const location = VOLCANO_LOCATIONS[normalizedId];
+    const location = findVolcanoLocation(volcanoId);
     if (!location) {
         throw new Error(`No BNPB volcano location exists for PVMBG volcano_id '${volcanoId}'`);
     }

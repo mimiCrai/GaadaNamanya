@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { inject, injectable } from 'inversify';
 import { Document } from 'mongodb';
 import { z } from 'zod';
@@ -8,7 +8,7 @@ import { SourceSyncState } from '../db/schema/source-sync-states';
 import { ICanonicalReadRepository } from '../repositories/canonical-read.repository';
 import { HazardReadQuery, ReadApiError } from '../types/canonical-read';
 import { IStorageTopologyService } from './storage-topology.service';
-import env from '../util/env';
+import { decodeSignedCursor, encodeSignedCursor } from '../libs/signed-cursor';
 
 const cursorSchema = z
     .object({
@@ -206,20 +206,12 @@ export class CanonicalQueryService implements ICanonicalQueryService {
     }
 
     private encodeCursor(value: z.infer<typeof cursorSchema>): string {
-        const body = Buffer.from(JSON.stringify(value)).toString('base64url');
-        return `${body}.${createHmac('sha256', env.BNPB_INTERNAL_API_KEY).update(body).digest('base64url')}`;
+        return encodeSignedCursor(value);
     }
 
     private decodeCursor(cursor: string): z.infer<typeof cursorSchema> {
         try {
-            if (cursor.length > 4096) throw new Error('Cursor too large');
-            const parts = cursor.split('.');
-            if (parts.length !== 2) throw new Error('Invalid cursor');
-            const expected = createHmac('sha256', env.BNPB_INTERNAL_API_KEY).update(parts[0]).digest();
-            const actual = Buffer.from(parts[1], 'base64url');
-            if (actual.length !== expected.length || !timingSafeEqual(actual, expected))
-                throw new Error('Invalid signature');
-            return cursorSchema.parse(JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')));
+            return cursorSchema.parse(decodeSignedCursor(cursor));
         } catch {
             throw new ReadApiError('bad_request', 'Invalid cursor');
         }
