@@ -10,7 +10,7 @@ export type UnprocessedHandler = (
     raw: Buffer,
     entry: UnprocessedMessage,
     lease: LeaseToken
-) => Promise<{ hazardId: string | null }>;
+) => Promise<{ hazardId: string | null; superseded?: boolean }>;
 
 export interface IUnprocessedHandlerRegistry {
     register(source: string, kind: string, handler: UnprocessedHandler): void;
@@ -27,11 +27,12 @@ export class UnprocessedHandlerRegistry implements IUnprocessedHandlerRegistry {
     private readonly handlers = new Map<string, UnprocessedHandler>();
 
     constructor(@inject(TYPES.IHazardEventIngestionService) ingestion: IHazardEventIngestionService) {
-        this.register(HazardSource.Pvmbg, PVMBG_RECORD_KIND, async (raw, entry, lease) => ({
-            hazardId: await ingestion.reprocessVolcanicRecord(raw, entry.correlationId, lease),
-        }));
+        // entry.receivedAt = first receipt: a replay keeps its place in the receive order (review #3).
+        this.register(HazardSource.Pvmbg, PVMBG_RECORD_KIND, (raw, entry, lease) =>
+            ingestion.reprocessVolcanicRecord(raw, entry.correlationId, lease, entry.receivedAt)
+        );
         this.register(HazardSource.Pvmbg, PVMBG_RESPONSE_KIND, async (raw, entry, lease) => {
-            await ingestion.reprocessVolcanicResponse(raw, entry.correlationId, lease);
+            await ingestion.reprocessVolcanicResponse(raw, entry.correlationId, lease, entry.receivedAt);
             return { hazardId: null };
         });
     }

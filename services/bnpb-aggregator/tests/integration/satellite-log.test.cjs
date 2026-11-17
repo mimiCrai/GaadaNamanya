@@ -97,6 +97,7 @@ test('satellite.raw durable append, checkpoint and fencing (Kafka + Mongo lease)
             writers.push(writerA);
             await renew(tokenA);
             await writerA.prepare(tokenA);
+            assert.equal(await writerA.readCheckpoint(), 0);
             await writerA.append(records(0, 4), tokenA);
             await writerA.append([...records(5, 5, 'heartbeat'), ...records(6, 9)], tokenA);
             // DUGAAN Tahap 2: the broker accepts a group offset (10) that is not an offset of the log itself.
@@ -121,6 +122,28 @@ test('satellite.raw durable append, checkpoint and fencing (Kafka + Mongo lease)
             await assert.rejects(writerA.append([...records(10, 10), ...records(12, 12)], tokenA), /not consecutive/);
         });
 
+        await t.test(
+            'review #1: a batch that does not start at the durable checkpoint never reaches the log',
+            async () => {
+                await renew(tokenA);
+                await writerA.prepare(tokenA);
+                // 10 is the next offset; a batch starting at 11 would make the checkpoint skip 10 forever.
+                await assert.rejects(writerA.append(records(11, 12), tokenA), { name: 'SatelliteContinuityError' });
+                await assert.rejects(writerA.append(records(9, 9), tokenA), { name: 'SatelliteContinuityError' });
+                assert.equal(await writerA.readCheckpoint(), 10);
+                const log = await readCommitted(env.SATELLITE_RAW_TOPIC);
+                assert.deepEqual(
+                    log.map((r) => r.key),
+                    ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+                );
+                const unread = new SatelliteLogWriter(leases);
+                writers.push(unread);
+                await unread.prepare(tokenA);
+                await assert.rejects(unread.append(records(10, 10), tokenA), /before the checkpoint was read/);
+                await unread.close();
+            }
+        );
+
         let tokenB;
         let writerB;
         await t.test('new leader fences a zombie whose lease check already passed', async () => {
@@ -129,6 +152,7 @@ test('satellite.raw durable append, checkpoint and fencing (Kafka + Mongo lease)
             const zombie = new SatelliteLogWriter({ requireActive: async () => new Date() });
             writers.push(zombie);
             await zombie.prepare(tokenA);
+            assert.equal(await zombie.readCheckpoint(), 10);
             await store.database
                 .collection('background_leases')
                 .updateOne({ _id: backgroundLeaseId }, { $set: { expiresAt: new Date(0) } });

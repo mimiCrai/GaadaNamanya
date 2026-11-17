@@ -112,6 +112,14 @@ const envSchema = z
         KAFKA_SATELLITE_TRANSACTIONAL_ID: z.string().min(1).default('bnpb-aggregator-satellite'),
         SATELLITE_CHECKPOINT_GROUP: z.string().min(1).default('bnpb-satellite-checkpoint'),
         SATELLITE_BATCH_MAX: z.coerce.number().int().min(1).max(5_000).default(200),
+        // Byte budget of one produce request (record batch) inside an append; also the largest single record.
+        // Capped at start by the topic's max.message.bytes minus overhead (see SatelliteLogWriter.prepare).
+        SATELLITE_BATCH_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(16 * 1024)
+            .max(64 * 1024 * 1024)
+            .default(900 * 1024),
         SATELLITE_BATCH_LINGER_MS: z.coerce.number().int().min(0).max(5_000).default(100),
         SATELLITE_MAX_EVENT_BYTES: z.coerce
             .number()

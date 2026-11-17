@@ -76,7 +76,7 @@ paths:
             security: [{ bearerAuth: [] }]
             parameters:
                 - { name: source, in: query, schema: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] } }
-                - { name: status, in: query, schema: { type: string, enum: [retrying, parked, recovered] } }
+                - { name: status, in: query, schema: { type: string, enum: [retrying, parked, recovered, superseded] } }
                 - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000 } }
                 - { name: cursor, in: query, schema: { type: string, minLength: 1, maxLength: 4096 } }
             responses:

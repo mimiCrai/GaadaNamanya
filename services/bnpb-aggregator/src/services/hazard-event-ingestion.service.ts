@@ -6,6 +6,7 @@ import { findVolcanoLocation } from '../constants/volcano-locations';
 import { TYPES } from '../constants/types';
 import { HazardSeverity, HazardSource, HazardType } from '../db/schema/hazard-events';
 import { logger } from '../libs/logger';
+import { hazardWritesSupersededTotal } from '../libs/metrics';
 import { classifyError, ProcessingError } from '../libs/processing-error';
 import { decodeJson, RawRecord, toRawRecords } from '../libs/safe-decode';
 import { validateRecord } from '../libs/schema-validation';
@@ -20,10 +21,33 @@ export interface IHazardEventIngestionService {
     ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void>;
     ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void>;
     ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string, lease: LeaseToken): Promise<void>;
-    /** DLQ handler: one stored PVMBG record (raw bytes) → HazardEvent. Throws ProcessingError on failure. */
-    reprocessVolcanicRecord(raw: Buffer, correlationId: string, lease: LeaseToken): Promise<string>;
+    /**
+     * DLQ handler: one stored PVMBG record (raw bytes) → HazardEvent. `receivedAt` is when the record first
+     * arrived (the DLQ entry), so the replay keeps its place in the receive order. Throws ProcessingError on failure.
+     */
+    reprocessVolcanicRecord(
+        raw: Buffer,
+        correlationId: string,
+        lease: LeaseToken,
+        receivedAt: Date
+    ): Promise<VolcanicIngestResult>;
     /** DLQ handler: one stored PVMBG response body → per-record ingestion (failures get their own entries). */
-    reprocessVolcanicResponse(raw: Buffer, correlationId: string, lease: LeaseToken): Promise<void>;
+    reprocessVolcanicResponse(raw: Buffer, correlationId: string, lease: LeaseToken, receivedAt: Date): Promise<void>;
+}
+
+export interface VolcanicIngestResult {
+    hazardId: string;
+    /** A newer report of the same report_id is already stored; nothing changed. */
+    superseded: boolean;
+}
+
+/**
+ * Ordering version of a PVMBG report per report_id (review #3, rule 9b): reported_at, tie-broken by the time
+ * BNPB received it. Both parts are fixed-width ISO-8601 UTC, so plain string order is chronological order.
+ * The same report received again later has the same reported_at and a later receive time.
+ */
+export function pvmbgVersion(reportedAt: Date, receivedAt: Date): string {
+    return `${reportedAt.toISOString()}|${receivedAt.toISOString()}`;
 }
 
 const PVMBG_RECORD_CONTEXT = { kind: PVMBG_RECORD_KIND, endpoint: PVMBG_ENDPOINT, topic: null };
@@ -45,6 +69,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
      * continues. Only lease loss and a failure to store the message itself abort the poll.
      */
     async ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void> {
+        const receivedAt = new Date();
         if (batch.failure) {
             await this.unprocessed.record(
                 {
@@ -59,7 +84,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
             );
         }
         for (const record of batch.records) {
-            await this.ingestIsolated(record, batch.contentType, correlationId, lease);
+            await this.ingestIsolated(record, batch.contentType, correlationId, lease, receivedAt);
         }
     }
 
@@ -68,15 +93,25 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         await this.ingestVolcanicBatch({ records, contentType: 'application/json' }, correlationId, lease);
     }
 
-    async reprocessVolcanicRecord(raw: Buffer, correlationId: string, lease: LeaseToken): Promise<string> {
+    async reprocessVolcanicRecord(
+        raw: Buffer,
+        correlationId: string,
+        lease: LeaseToken,
+        receivedAt: Date
+    ): Promise<VolcanicIngestResult> {
         const value = decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH });
-        return this.ingestVolcanicRecord(value, correlationId, lease);
+        return this.ingestVolcanicRecord(value, correlationId, lease, receivedAt);
     }
 
-    async reprocessVolcanicResponse(raw: Buffer, correlationId: string, lease: LeaseToken): Promise<void> {
+    async reprocessVolcanicResponse(
+        raw: Buffer,
+        correlationId: string,
+        lease: LeaseToken,
+        receivedAt: Date
+    ): Promise<void> {
         const parsed = decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH });
         for (const record of toRawRecords(raw, parsed)) {
-            await this.ingestIsolated(record, 'application/json', correlationId, lease);
+            await this.ingestIsolated(record, 'application/json', correlationId, lease, receivedAt);
         }
     }
 
@@ -84,10 +119,11 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         record: RawRecord,
         contentType: string,
         correlationId: string,
-        lease: LeaseToken
+        lease: LeaseToken,
+        receivedAt: Date
     ): Promise<void> {
         try {
-            await this.ingestVolcanicRecord(record.value, correlationId, lease);
+            await this.ingestVolcanicRecord(record.value, correlationId, lease, receivedAt);
         } catch (error) {
             if (error instanceof LeaseLostError) throw error;
             await this.unprocessed.record(
@@ -105,7 +141,12 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         }
     }
 
-    private async ingestVolcanicRecord(value: unknown, correlationId: string, lease: LeaseToken): Promise<string> {
+    private async ingestVolcanicRecord(
+        value: unknown,
+        correlationId: string,
+        lease: LeaseToken,
+        receivedAt: Date
+    ): Promise<VolcanicIngestResult> {
         const report = validateRecord(value, volcanicReportSchema, PVMBG_VOLCANIC_FIELDS);
         const { report_id, volcano_id, alert_level, reported_at, ...attributes } = report;
         const location = findVolcanoLocation(volcano_id);
@@ -115,6 +156,7 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
                 `volcano_id '${volcano_id}' tidak ada di tabel referensi BNPB`
             );
         }
+        const occurredAt = new Date(reported_at);
         const result = await this.hazardEventRepository.upsertAndEnqueue({
             source: HazardSource.Pvmbg,
             sourceRefId: report_id,
@@ -123,14 +165,22 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
             areaName: location.areaName,
             latitude: location.latitude,
             longitude: location.longitude,
-            occurredAt: new Date(reported_at),
+            occurredAt,
             attributes,
             topic: env.KAFKA_TOPIC,
             correlationId,
             lease,
+            version: pvmbgVersion(occurredAt, receivedAt),
         });
+        if (result.superseded) {
+            hazardWritesSupersededTotal.inc({ source: HazardSource.Pvmbg });
+            logger.info(
+                { hazardId: result.hazardEvent.hazardId, reportId: report_id, reportedAt: reported_at, correlationId },
+                'Skipped PVMBG report: a newer report of the same report_id is already stored'
+            );
+        }
         this.logIngestion(result, correlationId);
-        return result.hazardEvent.hazardId;
+        return { hazardId: result.hazardEvent.hazardId, superseded: result.superseded === true };
     }
 
     async ingestSeismicEvents(events: SeismicEvent[], correlationId: string, lease: LeaseToken): Promise<void> {

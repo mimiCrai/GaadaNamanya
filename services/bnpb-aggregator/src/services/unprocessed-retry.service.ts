@@ -129,7 +129,10 @@ export class UnprocessedRetryService implements IUnprocessedRetryService {
                     Math.max(env.PVMBG_MAX_BODY_BYTES, env.DLQ_INLINE_MAX_BYTES)
                 );
                 const result = await handler(raw, entry, lease);
-                outcome = { kind: 'recovered', hazardId: result.hazardId };
+                // An older replay of a report whose newer version is stored is closed, not parked (review #3).
+                outcome = result.superseded
+                    ? { kind: 'superseded', hazardId: result.hazardId }
+                    : { kind: 'recovered', hazardId: result.hazardId };
             } catch (error) {
                 if (error instanceof LeaseLostError) {
                     this.leadership.invalidate(lease);
@@ -152,7 +155,7 @@ export class UnprocessedRetryService implements IUnprocessedRetryService {
                     ...log,
                     outcome: outcome.kind,
                     applied,
-                    reason: outcome.kind === 'recovered' ? undefined : outcome.error.reason,
+                    reason: 'error' in outcome ? outcome.error.reason : undefined,
                 },
                 'Processed unprocessed message retry'
             );

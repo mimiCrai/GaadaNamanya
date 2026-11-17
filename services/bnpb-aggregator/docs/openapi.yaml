@@ -101,7 +101,7 @@ paths:
                 - { $ref: '#/components/parameters/AuditSource' }
                 - name: status
                   in: query
-                  schema: { type: string, enum: [retrying, parked, recovered] }
+                  schema: { type: string, enum: [retrying, parked, recovered, superseded] }
                 - { $ref: '#/components/parameters/PageLimit' }
                 - { $ref: '#/components/parameters/PageCursor' }
             responses:

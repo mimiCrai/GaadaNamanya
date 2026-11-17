@@ -15,6 +15,7 @@ import {
     satelliteLastOffsetDurable,
     satelliteLastOffsetReceived,
     satelliteLatestOffset,
+    satelliteOversizedRecordsTotal,
     satelliteReconnectsTotal,
     satelliteSessionPollErrorsTotal,
     satelliteStreamConnected,
@@ -27,7 +28,12 @@ import { SseItem, SseParser } from '../libs/sse-parser';
 import type { RecordUnprocessedInput } from '../repositories/unprocessed-message.repository';
 import env from '../util/env';
 import { IBackgroundLeadershipService } from './background-leadership.service';
-import { ISatelliteLogWriter, SatelliteRawRecord } from './satellite-log-writer.service';
+import {
+    encodedMessageBytes,
+    encodeRawRecord,
+    ISatelliteLogWriter,
+    SatelliteRawRecord,
+} from './satellite-log-writer.service';
 import { IUnprocessedRecorder } from './unprocessed-recorder.service';
 
 export const SATELLITE_EVENT_KIND = 'stream.event';
@@ -193,6 +199,8 @@ interface Session {
     correlationId: string;
     reason: ReconnectReason | null;
     discard: boolean;
+    /** First durable-write failure. Set synchronously, before any flush queued behind the failed one can run. */
+    poisoned: unknown;
     parser: SseParser;
     tracker: OffsetTracker<Received> | null;
     pending: PendingRecord[];
@@ -338,6 +346,7 @@ export class SatelliteIngestService implements ISatelliteIngestService {
             correlationId: randomUUID(),
             reason: null,
             discard: false,
+            poisoned: null,
             parser: new SseParser({ maxEventBytes: this.config.maxEventBytes }),
             tracker: null,
             pending: [],
@@ -399,6 +408,8 @@ export class SatelliteIngestService implements ISatelliteIngestService {
         if (!session.controller.signal.aborted) session.controller.abort();
         satelliteStreamConnected.set(0);
 
+        // A failed flush leaves a hole before everything still pending: never flush past it (review #1).
+        if (session.poisoned) session.discard = true;
         if (reason === 'leadership_lost' || reason === 'shutdown' || reason === 'writer_error') session.discard = true;
         if (!session.discard) {
             try {
@@ -433,7 +444,7 @@ export class SatelliteIngestService implements ISatelliteIngestService {
 
     private abortSession(session: Session, reason: ReconnectReason): void {
         if (session.reason === null) session.reason = reason;
-        if (reason === 'leadership_lost' || reason === 'shutdown') session.discard = true;
+        if (reason === 'leadership_lost' || reason === 'shutdown' || reason === 'writer_error') session.discard = true;
         this.clearTimers(session);
         session.controller.abort();
     }
@@ -578,6 +589,11 @@ export class SatelliteIngestService implements ISatelliteIngestService {
             clearTimeout(session.lingerTimer);
             session.lingerTimer = undefined;
         }
+        // Every flush path (linger, batchMax, final) is chained behind the previous one and ends up here.
+        if (session.poisoned) {
+            session.pending = [];
+            throw session.poisoned;
+        }
         if (session.discard) {
             session.pending = [];
             return;
@@ -585,6 +601,7 @@ export class SatelliteIngestService implements ISatelliteIngestService {
         const batch = session.pending.splice(0);
         if (batch.length === 0) return;
         try {
+            this.divertOversized(session, batch);
             // DLQ first: if the append below fails, the replayed event maps to the same message_id (no duplicate).
             for (const entry of batch) {
                 if (!entry.dlq) continue;
@@ -596,8 +613,52 @@ export class SatelliteIngestService implements ISatelliteIngestService {
             await this.writer.append(records, session.lease);
             this.setDurable(records[records.length - 1].offset);
         } catch (error) {
-            if (error instanceof LeaseLostError) throw error;
-            throw new SatelliteWriteError(error);
+            const failure = error instanceof LeaseLostError ? error : new SatelliteWriteError(error);
+            // Synchronously, in the same microtask as the rejection: the next queued flushNow sees it first.
+            session.poisoned = failure;
+            session.discard = true;
+            session.pending = [];
+            throw failure;
+        }
+    }
+
+    /**
+     * An event whose satellite.raw record would exceed what the topic accepts can never be appended; sending it
+     * would fail identically after every reconnect (review #4). Like a broken event (D-16) it is stored whole in
+     * the DLQ (payload_too_large, parked) and its offset is kept by a small unprocessed record.
+     */
+    private divertOversized(session: Session, batch: PendingRecord[]): void {
+        const limit = this.writer.maxRecordBytes();
+        for (const entry of batch) {
+            const record = entry.record;
+            if (!record || record.kind === 'unprocessed') continue;
+            const bytes = encodedMessageBytes(encodeRawRecord(record, session.lease));
+            if (bytes <= limit) continue;
+            const error = payloadTooLarge(bytes, limit);
+            entry.dlq = {
+                source: HazardSource.Satelit,
+                context: { kind: SATELLITE_EVENT_KIND, endpoint: SATELLITE_STREAM_ENDPOINT, topic: null },
+                payload: {
+                    kind: 'inline',
+                    bytes: sseBlock(String(record.offset), record.kind, Buffer.from(record.dataRaw ?? '', 'utf8')),
+                },
+                contentType: 'text/event-stream; charset=utf-8',
+                correlationId: session.correlationId,
+                sourceRefId: `offset:${record.offset}`,
+                error,
+            };
+            entry.record = {
+                offset: record.offset,
+                kind: 'unprocessed',
+                receivedAt: record.receivedAt,
+                correlationId: record.correlationId,
+                reason: error.reason,
+            };
+            satelliteOversizedRecordsTotal.inc();
+            logger.warn(
+                { offset: record.offset, kind: record.kind, bytes, limit, correlationId: session.correlationId },
+                'Satellite event too large for satellite.raw; stored in the DLQ, offset kept as unprocessed'
+            );
         }
     }
 
@@ -698,12 +759,17 @@ export class SatelliteIngestService implements ISatelliteIngestService {
 }
 
 function originalBlock(item: SseEventItem): Buffer {
-    const head = Buffer.from(`${item.id !== null ? `id: ${item.id}\n` : ''}event: ${item.event}\n`);
+    return sseBlock(item.id, item.event, item.data);
+}
+
+/** An SSE block with the exact data bytes (one `data:` line per LF), as the feed sent it. */
+function sseBlock(id: string | null, event: string, data: Buffer): Buffer {
+    const head = Buffer.from(`${id !== null ? `id: ${id}\n` : ''}event: ${event}\n`);
     const lines: Buffer[] = [head];
     let start = 0;
-    for (let i = 0; i <= item.data.length; i++) {
-        if (i === item.data.length || item.data[i] === 0x0a) {
-            lines.push(Buffer.from('data: '), item.data.subarray(start, i), Buffer.from('\n'));
+    for (let i = 0; i <= data.length; i++) {
+        if (i === data.length || data[i] === 0x0a) {
+            lines.push(Buffer.from('data: '), data.subarray(start, i), Buffer.from('\n'));
             start = i + 1;
         }
     }

@@ -10,7 +10,7 @@ import { IUnprocessedQueryService } from '../services/unprocessed-query.service'
 
 const listQuerySchema = z.object({
     source: z.nativeEnum(HazardSource).optional(),
-    status: z.enum(['retrying', 'parked', 'recovered']).optional(),
+    status: z.enum(['retrying', 'parked', 'recovered', 'superseded']).optional(),
     limit: z.coerce.number().int().min(1).max(1000).optional(),
     cursor: z.string().min(1).max(4096).optional(),
 });

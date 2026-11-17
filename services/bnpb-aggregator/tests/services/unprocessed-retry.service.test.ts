@@ -84,6 +84,8 @@ class FakeRepository implements IUnprocessedMessageRepository {
         Object.assign(e, { claimedBy: null, claimEpoch: null, claimedUntil: null });
         if (outcome.kind === 'recovered')
             Object.assign(e, { status: 'recovered', recoveredHazardId: outcome.hazardId });
+        else if (outcome.kind === 'superseded')
+            Object.assign(e, { status: 'superseded', recoveredHazardId: outcome.hazardId });
         else if (outcome.kind === 'parked')
             Object.assign(e, { status: 'parked', retryable: false, reason: outcome.error.reason });
         else Object.assign(e, { nextAttemptAt: new Date(this.now() + outcome.delayMs), reason: outcome.error.reason });

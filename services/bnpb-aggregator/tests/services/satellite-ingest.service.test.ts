@@ -14,8 +14,11 @@ import {
 } from '../../src/services/satellite-ingest.service';
 import {
     assertConsecutive,
+    encodedMessageBytes,
+    encodeRawRecord,
     ISatelliteLogWriter,
     SatelliteRawRecord,
+    SatelliteRecordTooLargeError,
 } from '../../src/services/satellite-log-writer.service';
 import { IUnprocessedRecorder } from '../../src/services/unprocessed-recorder.service';
 
@@ -57,8 +60,13 @@ class FakeWriter implements ISatelliteLogWriter {
     nextWhenEmpty = 0;
     failNext: Error | null = null;
     appends = 0;
+    recordLimit = Number.MAX_SAFE_INTEGER;
 
     constructor(private readonly leadership: FakeLeadership) {}
+
+    maxRecordBytes(): number {
+        return this.recordLimit;
+    }
 
     async prepare(lease: LeaseToken): Promise<void> {
         this.prepared.push(lease.epoch);
@@ -75,6 +83,11 @@ class FakeWriter implements ISatelliteLogWriter {
         }
         if (this.leadership.current()?.epoch !== lease.epoch) throw new LeaseLostError();
         assertConsecutive(records);
+        // Same refusal as the real writer: a record above the limit never reaches the log.
+        for (const r of records) {
+            const bytes = encodedMessageBytes(encodeRawRecord(r, lease));
+            if (bytes > this.recordLimit) throw new SatelliteRecordTooLargeError(r.offset, bytes, this.recordLimit);
+        }
         const expected = await this.readCheckpoint();
         if (records[0].offset !== expected) throw new Error(`append at ${records[0].offset}, expected ${expected}`);
         this.log.push(...records.map((r) => ({ ...r })));
@@ -479,6 +492,26 @@ describe('SatelliteIngestService — broken events', () => {
         expect(recorder.calls).toBe(1);
     });
 
+    it('review #4: an event too large for satellite.raw goes to the DLQ, its offset is kept, no reconnect loop', async () => {
+        const padded = (offset: number, pad: number) =>
+            `id: ${offset}\nevent: detection\ndata: {"offset":${offset},"detection":{"acq_date":"2026-11-14","acq_time":2350,"confidence":"n","frp":11.70,"latitude":-8.35726,"longitude":122.48591,"satellite":"N21","pad":"${'p'.repeat(pad)}"}}\n\n`;
+        const { service, writer, recorder } = setup(
+            [{ steps: [detection(0), padded(1, 3_000), detection(2)], end: 'hang' }],
+            { config: { maxEventBytes: 8_192 } }
+        );
+        writer.recordLimit = 2_048; // the SSE event fits the parser limit, its encoded record does not fit the topic
+        start(service);
+        await waitFor(() => writer.log.length === 3);
+        expect(writer.log.map((r) => r.kind)).toEqual(['detection', 'unprocessed', 'detection']);
+        expect(writer.log[1].reason).toMatch(/^payload_too_large: ukuran \d+ byte melebihi batas 2048 byte/);
+        const entry = recorder.entries.get(writer.log[1].messageId!)!;
+        expect(entry).toMatchObject({ source: 'SATELIT', sourceRefId: 'offset:1', error: { retryable: false } });
+        expect(entry.payload.kind === 'inline' && entry.payload.bytes.toString()).toBe(
+            padded(1, 3_000).slice(0, -1) // the original block, byte for byte (without the dispatching blank line)
+        );
+        expect(service.status().reconnects).toEqual({});
+    });
+
     it('re-receiving the same broken event after a reconnect does not duplicate the DLQ entry', async () => {
         const broken = 'id: 1\nevent: detection\ndata: {oops\n\n';
         const { service, writer, recorder } = setup([
@@ -500,6 +533,147 @@ describe('SatelliteIngestService — broken events', () => {
         expect(recorder.calls).toBe(2);
         expect(recorder.entries.size).toBe(1);
         expect(writer.offsets()).toEqual([0, 1, 2]);
+    });
+});
+
+// ------------------------------------------------------------------ review #1: a failed flush poisons the session
+
+/**
+ * Like the broker: a committed batch moves the checkpoint to last+1. Contiguity is only checked INSIDE a batch
+ * (the writer before review #1), so this fake does not hide a skipped batch the way FakeWriter would.
+ * `gate` lets a test hold an append open and fail it later.
+ */
+class ControlledWriter implements ISatelliteLogWriter {
+    readonly log: SatelliteRawRecord[] = [];
+    readonly calls: number[][] = [];
+    checkpoint = 0;
+    gate: ((records: SatelliteRawRecord[], call: number) => Promise<void> | null) | null = null;
+
+    async prepare(): Promise<void> {}
+    async readCheckpoint(): Promise<number> {
+        return this.checkpoint;
+    }
+    maxRecordBytes(): number {
+        return Number.MAX_SAFE_INTEGER;
+    }
+    async append(records: SatelliteRawRecord[]): Promise<void> {
+        this.calls.push(records.map((r) => r.offset));
+        assertConsecutive(records);
+        const held = this.gate?.(records, this.calls.length);
+        if (held) await held;
+        this.log.push(...records.map((r) => ({ ...r })));
+        this.checkpoint = records[records.length - 1].offset + 1;
+    }
+    async close(): Promise<void> {}
+}
+
+function deferred(): { promise: Promise<void>; reject: (error: Error) => void } {
+    let reject!: (error: Error) => void;
+    const promise = new Promise<void>((_resolve, fail) => (reject = fail));
+    return { promise, reject };
+}
+
+describe('SatelliteIngestService — review #1: no flush after a failed durable write', () => {
+    function setupControlled(scripts: Script[], config: Partial<SatelliteIngestConfig> = {}) {
+        const leadership = new FakeLeadership(1);
+        const writer = new ControlledWriter();
+        const recorder = new FakeRecorder();
+        const feed = new FakeFeed(scripts);
+        const service = new SatelliteIngestService(feed, writer, leadership, recorder);
+        service.configure({ ...FAST, batchMax: 50, batchLingerMs: 5, ...config }, () => 0.5);
+        // Appends made before each connection was opened (the failed session's appends = callsAtOpen[1]).
+        const callsAtOpen: number[][][] = [];
+        const open = feed.openStream.bind(feed);
+        feed.openStream = (from, options) => {
+            callsAtOpen.push(writer.calls.map((call) => [...call]));
+            return open(from, options);
+        };
+        return { writer, recorder, feed, service, callsAtOpen };
+    }
+
+    it('a flush queued behind a failing one never commits [1,2]; the next connection starts at from=0', async () => {
+        const first = deferred();
+        let releaseRest!: () => void;
+        const rest = new Promise<void>((resolve) => (releaseRest = resolve));
+        const { service, writer, feed, callsAtOpen } = setupControlled([
+            { steps: [detection(0), () => rest, detection(1), detection(2)], end: 'hang' },
+            { steps: detections(0, 2), end: 'hang' },
+        ]);
+        writer.gate = (_records, call) => (call === 1 ? first.promise : null);
+        start(service);
+
+        await waitFor(() => writer.calls.length === 1); // linger flush of [0] is in flight and held
+        releaseRest();
+        await waitFor(() => service.status().last_offset_received === 2);
+        await new Promise((resolve) => setTimeout(resolve, 30)); // linger fires: flush [1,2] is chained behind [0]
+        first.reject(new Error('kafka unavailable'));
+
+        await waitFor(() => feed.froms.length === 2);
+        expect(callsAtOpen[1]).toEqual([[0]]); // the failed session never appended [1,2]
+        expect(feed.froms).toEqual([0, 0]); // checkpoint did not move past the failed batch
+        await waitFor(() => writer.log.length === 3);
+        expect(writer.log.map((r) => r.offset)).toEqual([0, 1, 2]);
+        expect(service.status().reconnects).toMatchObject({ writer_error: 1 });
+    });
+
+    it('a DLQ write failure in one batch also stops the batches queued behind it', async () => {
+        let releaseRest!: () => void;
+        const rest = new Promise<void>((resolve) => (releaseRest = resolve));
+        let failDlq!: (error: Error) => void;
+        const dlqHeld = new Promise<never>((_resolve, reject) => (failDlq = reject));
+        const broken = `id: 0\nevent: detection\ndata: {"offset":0,"detection":\n\n`;
+        const { service, writer, recorder, feed, callsAtOpen } = setupControlled([
+            { steps: [broken, () => rest, detection(1), detection(2)], end: 'hang' },
+            { steps: [broken, ...detections(1, 2)], end: 'hang' },
+        ]);
+        const record = recorder.record.bind(recorder);
+        let dlqCalls = 0;
+        recorder.record = async (input) => (++dlqCalls === 1 ? dlqHeld : record(input));
+        start(service);
+
+        await waitFor(() => dlqCalls === 1); // the store write for offset 0 is in flight
+        releaseRest();
+        await waitFor(() => service.status().last_offset_received === 2);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        failDlq(new Error('mongo: connection reset'));
+
+        await waitFor(() => feed.froms.length === 2);
+        expect(callsAtOpen[1]).toEqual([]); // nothing reached the log in the failed session
+        expect(feed.froms).toEqual([0, 0]);
+        await waitFor(() => writer.log.length === 3);
+        expect(writer.log.map((r) => [r.offset, r.kind])).toEqual([
+            [0, 'unprocessed'],
+            [1, 'detection'],
+            [2, 'detection'],
+        ]);
+    });
+
+    it('after a manual disconnect, the final flush does not run past a batch that failed', async () => {
+        const first = deferred();
+        let releaseRest!: () => void;
+        const rest = new Promise<void>((resolve) => (releaseRest = resolve));
+        const { service, writer, feed, callsAtOpen } = setupControlled(
+            [
+                { steps: [detection(0), () => rest, detection(1), detection(2)], end: 'hang' },
+                { steps: detections(0, 2), end: 'hang' },
+            ],
+            { batchLingerMs: 5 }
+        );
+        writer.gate = (_records, call) => (call === 1 ? first.promise : null);
+        start(service);
+
+        await waitFor(() => writer.calls.length === 1);
+        service.configure({ batchLingerMs: 60_000 }); // [1,2] stay pending until the final flush
+        releaseRest();
+        await waitFor(() => service.status().last_offset_received === 2);
+        expect(service.disconnect()).toBe(true); // reason = manual; finish() waits for the in-flight flush
+        first.reject(new Error('kafka unavailable'));
+        service.configure({ batchLingerMs: 5 });
+
+        await waitFor(() => feed.froms.length === 2);
+        expect(callsAtOpen[1]).toEqual([[0]]);
+        expect(feed.froms).toEqual([0, 0]);
+        await waitFor(() => writer.log.length === 3);
     });
 });
 

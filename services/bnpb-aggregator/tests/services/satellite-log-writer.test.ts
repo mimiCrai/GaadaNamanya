@@ -1,5 +1,12 @@
 import {
     assertConsecutive,
+    assertContinuesCheckpoint,
+    SatelliteContinuityError,
+    tailScanWindows,
+    chunkByBytes,
+    encodedMessageBytes,
+    effectiveRecordLimit,
+    RECORD_BATCH_OVERHEAD_BYTES,
     encodeRawRecord,
     isFencedError,
     isRetriableKafkaError,
@@ -64,6 +71,60 @@ describe('assertConsecutive', () => {
         expect(() => assertConsecutive([record(1), record(2), record(3)])).not.toThrow();
         expect(() => assertConsecutive([record(1), record(3)])).toThrow(/not consecutive/);
         expect(() => assertConsecutive([record(2), record(2)])).toThrow(/not consecutive/);
+    });
+});
+
+describe('assertContinuesCheckpoint (review #1)', () => {
+    it('only accepts a batch that starts at the durable checkpoint', () => {
+        expect(() => assertContinuesCheckpoint([record(3), record(4)], 3)).not.toThrow();
+        expect(() => assertContinuesCheckpoint([], null)).not.toThrow();
+        expect(() => assertContinuesCheckpoint([record(1), record(2)], 0)).toThrow(SatelliteContinuityError);
+        expect(() => assertContinuesCheckpoint([record(0)], 1)).toThrow(/expected 1/);
+        expect(() => assertContinuesCheckpoint([record(0)], null)).toThrow(/before the checkpoint was read/);
+    });
+});
+
+describe('byte budget (review #4)', () => {
+    const message = (offset: number, bytes: number) =>
+        encodeRawRecord(record(offset, { dataRaw: 'p'.repeat(bytes) }), lease);
+
+    it('splits in order so no chunk exceeds the budget, one oversized message alone in its chunk', () => {
+        const messages = [message(0, 600_000), message(1, 600_000), message(2, 10), message(3, 10)];
+        const chunks = chunkByBytes(messages, 900 * 1024);
+        expect(chunks.map((chunk) => chunk.map((m) => m.key))).toEqual([['0'], ['1', '2', '3']]);
+        for (const chunk of chunks) {
+            expect(chunk.reduce((sum, m) => sum + encodedMessageBytes(m), 0)).toBeLessThanOrEqual(900 * 1024);
+        }
+        expect(chunkByBytes([message(0, 5_000)], 1_024).map((c) => c.length)).toEqual([1]);
+        expect(chunkByBytes([], 1_024)).toEqual([]);
+    });
+
+    it('counts key, value and headers in bytes (UTF-8), not characters', () => {
+        const ascii = encodedMessageBytes(encodeRawRecord(record(1, { dataRaw: 'aaaa' }), lease));
+        const multibyte = encodedMessageBytes(encodeRawRecord(record(1, { dataRaw: 'éééé' }), lease));
+        expect(multibyte - ascii).toBe(4);
+    });
+
+    it('never lets the configured budget exceed what the topic accepts', () => {
+        expect(effectiveRecordLimit(900 * 1024, 1_048_588)).toBe(900 * 1024);
+        expect(effectiveRecordLimit(4 * 1024 * 1024, 1_048_588)).toBe(1_048_588 - RECORD_BATCH_OVERHEAD_BYTES);
+        expect(effectiveRecordLimit(4 * 1024 * 1024, 8 * 1024 * 1024)).toBe(4 * 1024 * 1024);
+    });
+});
+
+describe('tailScanWindows (review #2)', () => {
+    it('walks backwards from the end in doubling windows until low, without overlap or holes', () => {
+        expect(tailScanWindows(0, 2, 1_000)).toEqual([[0, 2]]);
+        expect(tailScanWindows(0, 20, 4)).toEqual([
+            [16, 20],
+            [8, 16],
+            [0, 8],
+        ]);
+        expect(tailScanWindows(5, 9, 2)).toEqual([
+            [7, 9],
+            [5, 7],
+        ]);
+        expect(tailScanWindows(3, 3, 10)).toEqual([]);
     });
 });
 

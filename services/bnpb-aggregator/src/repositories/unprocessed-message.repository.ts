@@ -39,6 +39,7 @@ export interface RecordUnprocessedResult {
 
 export type CompletionOutcome =
     | { kind: 'recovered'; hazardId: string | null }
+    | { kind: 'superseded'; hazardId: string | null }
     | { kind: 'retry'; error: ProcessingError; delayMs: number }
     | { kind: 'parked'; error: ProcessingError };
 
@@ -130,7 +131,7 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
             if (!created) {
                 // The same bytes failed again after an earlier recovery: surface it again instead of hiding it.
                 const reopen = await this.collection().updateOne(
-                    { _id: messageId, status: 'recovered' },
+                    { _id: messageId, status: { $in: ['recovered', 'superseded'] } },
                     {
                         $set: { ...failureFields, recoveredAt: null, recoveredHazardId: null },
                         $push: { history: { $each: [historyEntry], $slice: -HISTORY_LIMIT } },
@@ -213,6 +214,31 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
                         recoveredHazardId: outcome.hazardId,
                     },
                     $inc: { attempts: 1 },
+                };
+            } else if (outcome.kind === 'superseded') {
+                // Closed: a newer version of the same source_ref_id is stored. Hidden from the audit like recovered.
+                update = {
+                    $set: {
+                        ...releaseClaim,
+                        status: 'superseded',
+                        nextAttemptAt: null,
+                        recoveredAt: now,
+                        recoveredHazardId: outcome.hazardId,
+                    },
+                    $inc: { attempts: 1 },
+                    $push: {
+                        history: {
+                            $each: [
+                                {
+                                    at: now,
+                                    attempt,
+                                    reason: 'superseded: versi yang lebih baru untuk source_ref_id ini sudah tersimpan',
+                                    retryable: false,
+                                },
+                            ],
+                            $slice: -HISTORY_LIMIT,
+                        },
+                    },
                 };
             } else {
                 const parked = outcome.kind === 'parked';

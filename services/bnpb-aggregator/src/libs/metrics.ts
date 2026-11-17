@@ -16,7 +16,7 @@ export const parseFailuresTotal = new Counter({
 
 export const unprocessedRetryTotal = new Counter({
     name: `${PREFIX}unprocessed_retry_total`,
-    help: 'Retry attempts of unprocessed messages, by outcome (recovered|retry|parked|lost_claim)',
+    help: 'Retry attempts of unprocessed messages, by outcome (recovered|superseded|retry|parked|lost_claim)',
     labelNames: ['source', 'outcome'] as const,
     registers: [metricsRegistry],
 });
@@ -30,7 +30,7 @@ export function setUnprocessedCounter(counter: UnprocessedCounter): void {
 
 export const unprocessedMessagesGauge = new Gauge({
     name: `${PREFIX}unprocessed_messages`,
-    help: 'Unprocessed messages currently stored, by source and status (retrying|parked|recovered)',
+    help: 'Unprocessed messages currently stored, by source and status (retrying|parked|recovered|superseded)',
     labelNames: ['source', 'status'] as const,
     registers: [metricsRegistry],
     async collect() {
@@ -137,6 +137,33 @@ export const satelliteBatchCommitSeconds = new Histogram({
     name: `${SAT}batch_commit_seconds`,
     help: 'Duration of one transactional append (records + checkpoint) to satellite.raw',
     buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+    registers: [metricsRegistry],
+});
+
+export const hazardWritesSupersededTotal = new Counter({
+    name: 'bnpb_aggregator_hazard_writes_superseded_total',
+    help: 'Source writes skipped because a newer version of the same source_ref_id is already stored (live poll and DLQ replay)',
+    labelNames: ['source'] as const,
+    registers: [metricsRegistry],
+});
+
+export const satelliteBatchBytes = new Histogram({
+    name: `${SAT}batch_bytes`,
+    help: 'Encoded bytes (key + value + headers) of one transactional append to satellite.raw',
+    buckets: [1_024, 16_384, 65_536, 262_144, 524_288, 1_048_576, 4_194_304, 16_777_216],
+    registers: [metricsRegistry],
+});
+
+export const satelliteBatchChunks = new Histogram({
+    name: `${SAT}batch_chunks`,
+    help: 'Produce requests (record batches) one transactional append was split into, bounded by bytes',
+    buckets: [1, 2, 3, 5, 10, 20, 50],
+    registers: [metricsRegistry],
+});
+
+export const satelliteOversizedRecordsTotal = new Counter({
+    name: `${SAT}oversized_records_total`,
+    help: 'Events whose encoded satellite.raw record exceeds the per-record byte limit; stored in the DLQ, offset kept as an unprocessed record',
     registers: [metricsRegistry],
 });
 

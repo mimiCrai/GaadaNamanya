@@ -4,7 +4,8 @@ import { ErrorCategory } from '../../libs/processing-error';
 export const unprocessedMessages = 'unprocessed_messages';
 export const unprocessedPayloadBucket = 'unprocessed_payloads';
 
-export type UnprocessedStatus = 'retrying' | 'parked' | 'recovered';
+/** recovered = replay applied; superseded = replay closed because a newer version was already stored (review #3). */
+export type UnprocessedStatus = 'retrying' | 'parked' | 'recovered' | 'superseded';
 
 export interface UnprocessedContext {
     kind: string;

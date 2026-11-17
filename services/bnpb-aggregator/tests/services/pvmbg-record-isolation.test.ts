@@ -4,9 +4,9 @@ import { HazardEvent, HazardSeverity, HazardSource, HazardType } from '../../src
 import { LeaseLostError } from '../../src/db/schema/background-leases';
 import { HazardEventChangeType } from '../../src/db/schema/outbox-events';
 import { toRawRecords } from '../../src/libs/safe-decode';
-import { IHazardEventRepository } from '../../src/repositories/hazard-event.repository';
+import { IHazardEventRepository, isSupersededVersion } from '../../src/repositories/hazard-event.repository';
 import { IPendingTsunamiWarningRepository } from '../../src/repositories/pending-tsunami-warning.repository';
-import { HazardEventIngestionService } from '../../src/services/hazard-event-ingestion.service';
+import { HazardEventIngestionService, pvmbgVersion } from '../../src/services/hazard-event-ingestion.service';
 import { IUnprocessedRecorder } from '../../src/services/unprocessed-recorder.service';
 
 const lease = { ownerId: 'isolation-test', epoch: 3 };
@@ -121,11 +121,59 @@ describe('PVMBG record isolation', () => {
     });
 
     it('reprocesses a stored record from its raw bytes', async () => {
-        await expect(service.reprocessVolcanicRecord(Buffer.from(good('r-9')), 'corr-9', lease)).resolves.toBe(
-            'hz-r-9'
-        );
-        await expect(service.reprocessVolcanicRecord(Buffer.from('{"report_id":'), 'c', lease)).rejects.toMatchObject({
-            category: 'malformed_json',
+        const receivedAt = new Date('2026-11-12T02:40:11.000Z');
+        await expect(
+            service.reprocessVolcanicRecord(Buffer.from(good('r-9')), 'corr-9', lease, receivedAt)
+        ).resolves.toEqual({ hazardId: 'hz-r-9', superseded: false });
+        await expect(
+            service.reprocessVolcanicRecord(Buffer.from('{"report_id":'), 'c', lease, receivedAt)
+        ).rejects.toMatchObject({ category: 'malformed_json' });
+    });
+
+    it('review #3: writes carry the version reported_at|first-receipt time, live and replay alike', async () => {
+        const receivedAt = new Date('2026-11-12T02:40:11.000Z');
+        await service.reprocessVolcanicRecord(Buffer.from(good('r-10')), 'c', lease, receivedAt);
+        const input = repository.upsertAndEnqueue.mock.calls.at(-1)![0];
+        expect(input.version).toBe(`${input.occurredAt.toISOString()}|2026-11-12T02:40:11.000Z`);
+
+        const before = new Date().toISOString();
+        await service.ingestVolcanicReports([JSON.parse(good('r-11'))], 'c', lease);
+        const live = repository.upsertAndEnqueue.mock.calls.at(-1)![0];
+        const [reported, received] = live.version!.split('|');
+        expect(reported).toBe('2026-11-12T02:40:11.000Z');
+        expect(received >= before).toBe(true); // the live receive time, later than any earlier receipt
+    });
+
+    it('review #3: version order = reported_at, then receive order (plain string comparison)', () => {
+        const at = (iso: string) => new Date(iso);
+        const v = (reported: string, received: string) => pvmbgVersion(at(reported), at(received));
+        expect(
+            v('2026-11-12T10:00:00Z', '2026-11-12T10:05:00Z') < v('2026-11-12T10:01:00Z', '2026-11-12T10:01:30Z')
+        ).toBe(true);
+        expect(
+            v('2026-11-12T10:01:00Z', '2026-11-12T10:02:00Z') < v('2026-11-12T10:01:00Z', '2026-11-12T10:03:00Z')
+        ).toBe(true);
+        expect(
+            isSupersededVersion(
+                v('2026-11-12T10:01:00Z', '2026-11-12T10:03:00Z'),
+                v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z')
+            )
+        ).toBe(true);
+        expect(isSupersededVersion(undefined, v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z'))).toBe(false);
+        expect(isSupersededVersion('x', undefined)).toBe(false);
+        const same = v('2026-11-12T10:00:00Z', '2026-11-12T10:09:00Z');
+        expect(isSupersededVersion(same, same)).toBe(false); // equal = idempotent re-apply, never superseded
+    });
+
+    it('review #3: an older report reports superseded instead of failing', async () => {
+        repository.upsertAndEnqueue.mockResolvedValueOnce({
+            hazardEvent: { hazardId: 'hz-r-12' } as never,
+            changeType: null,
+            superseded: true,
         });
+        await expect(
+            service.reprocessVolcanicRecord(Buffer.from(good('r-12')), 'c', lease, new Date())
+        ).resolves.toEqual({ hazardId: 'hz-r-12', superseded: true });
+        expect(recorder.record).not.toHaveBeenCalled();
     });
 });
