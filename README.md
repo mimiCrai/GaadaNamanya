@@ -65,6 +65,14 @@ Suite load test Aggregator P2 tersedia melalui `bash scripts/run-aggregator-load
 
 Sensor Pantai M2 dijalankan dari image resmi pada `http://localhost:8083`. Aggregator membaca station/observation dengan cursor dan circuit breaker, menyimpan hazard COASTAL atau karantina data rusak, serta meneruskan event kritis ke notifikasi. Gunakan `bash scripts/test-sensor-pantai.sh` untuk pengujian otomatis; lihat [integrasi Sensor Pantai](docs/sensor-pantai.md).
 
+## Observabilitas
+
+Jalankan `bash scripts/start-observability.sh` untuk menambahkan Prometheus, Grafana, OpenTelemetry Collector, dan Tempo ke stack. Grafana tersedia di `http://localhost:3006`, dengan dashboard **BNPB → BNPB Overview** dan pencarian trace melalui **Explore → Tempo**. Port, akun Grafana, dan sampling trace tersedia pada bagian monitoring di `.env.example`; nilai default juga berlaku untuk `.env` lama.
+
+Ketujuh service menyediakan `/metrics`. Dashboard mencakup throughput, error, p95 HTTP, status sumber/circuit, leader, backlog outbox, admission control per role, dan pemrosesan consumer. Trace HTTP diteruskan otomatis; trace polling disimpan pada outbox dan dilanjutkan lewat header Kafka. Log JSON memuat `correlationId`, `traceId`, dan `spanId` selama span aktif.
+
+Gunakan `bash scripts/test-observability.sh` untuk menguji scrape seluruh service/replica, provisioning dashboard, trace Client API–Auth–Aggregator, serta trace polling–outbox–Kafka–kedua consumer. Test memakai project dan volume terpisah, lalu membersihkannya; ringkasan hasil disimpan di `test-results/observability/summary.json`. Lihat [panduan observabilitas](docs/observability.md) untuk cara membaca metrik, alur trace, dan batas pengujiannya.
+
 ## Autentikasi dan Client API
 
 BNPB Auth (`http://localhost:3001`) mengelola kredensial pengguna dan sesi refresh. Service ini menandatangani access token RS256 berumur pendek (secara default 60 detik) menggunakan private key miliknya; BNPB Client API hanya menerima public key milik Auth untuk keperluan verifikasi. Refresh token disimpan oleh Auth dalam bentuk hash, dirotasi setiap kali refresh, dan tidak pernah dikirimkan ke Aggregator, BMKG, maupun PVMBG.

@@ -1,3 +1,5 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
+import { registerAggregatorCollectors } from './telemetry/aggregator-metrics';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { db } from './db';
@@ -24,6 +26,7 @@ async function main() {
         const messagePublisher = container.get<IMessagePublisher>(TYPES.IMessagePublisher);
         const leadership = container.get<IBackgroundLeadershipService>(TYPES.IBackgroundLeadershipService);
         const sensorPantai = container.get<ISensorPantaiService>(TYPES.ISensorPantaiService);
+        registerAggregatorCollectors(db, leadership);
         leadership.start();
         poller.start();
         outboxRelay.start();
@@ -43,7 +46,7 @@ async function main() {
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();
-            server.close(() => process.exit(0));
+            server.close(() => void shutdownTelemetry().finally(() => process.exit(0)));
         };
 
         process.once('SIGTERM', () => void shutdown('SIGTERM'));

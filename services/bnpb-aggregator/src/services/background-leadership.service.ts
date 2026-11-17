@@ -1,5 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
+import { leadershipChanges, renewalErrors } from '../telemetry/aggregator-metrics';
 import { hostname } from 'node:os';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
@@ -36,7 +37,10 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
     }
 
     invalidate(token: LeaseToken): void {
-        if (this.token?.ownerId === token.ownerId && this.token.epoch === token.epoch) this.token = null;
+        if (this.token?.ownerId === token.ownerId && this.token.epoch === token.epoch) {
+            leadershipChanges.inc({ state: 'follower' });
+            this.token = null;
+        }
     }
 
     async stop(): Promise<void> {
@@ -45,6 +49,7 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
         await this.pending;
         const token = this.token;
         this.token = null;
+        if (token) leadershipChanges.inc({ state: 'follower' });
         if (token)
             await this.leases
                 .release(token)
@@ -68,12 +73,15 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
             const previous = this.token;
             this.token = lease ? { ownerId: this.instanceId, epoch: lease.epoch } : null;
             if (this.token?.epoch !== previous?.epoch || Boolean(this.token) !== Boolean(previous)) {
+                leadershipChanges.inc({ state: this.token ? 'leader' : 'follower' });
                 logger.info(
                     { instanceId: this.instanceId, epoch: this.token?.epoch, leader: Boolean(this.token) },
                     'Background leadership changed'
                 );
             }
         } catch (error) {
+            renewalErrors.inc();
+            if (this.token) leadershipChanges.inc({ state: 'follower' });
             this.token = null;
             logger.warn(
                 { error, instanceId: this.instanceId },

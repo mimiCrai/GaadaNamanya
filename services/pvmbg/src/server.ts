@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
 import { ZodError } from 'zod';
 import { createApp } from './app';
 import { AppConfig, loadConfig } from './config/env';
@@ -52,7 +53,9 @@ async function main() {
         generator.stop();
         outage.releaseAll();
         server.close(() => {
-            pool.end().finally(() => process.exit(0));
+            pool.end()
+                .then(() => shutdownTelemetry())
+                .finally(() => process.exit(0));
         });
         setTimeout(() => process.exit(0), 5_000).unref();
     };

@@ -88,7 +88,12 @@ export class OutboxRelayService implements IOutboxRelayService {
                     options: {
                         topic: event.topic,
                         key: event.partitionKey,
-                        headers: { event_type: event.eventType, outbox_event_id: event.outboxEventId },
+                        headers: {
+                            ...event.traceContext,
+                            event_type: event.eventType,
+                            outbox_event_id: event.outboxEventId,
+                            correlation_id: String(event.payload.correlationId ?? ''),
+                        },
                     },
                 })),
                 lease
