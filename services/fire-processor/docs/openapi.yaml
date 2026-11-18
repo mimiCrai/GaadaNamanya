@@ -1,0 +1,61 @@
+openapi: 3.0.3
+info:
+    title: Fire Processor API
+    description: BNPB fire processor (satellite.raw hotspots to WILDFIRE HazardEvents)
+    version: 1.0.0
+
+servers:
+    - url: http://localhost:3000
+      description: Local development server
+
+paths:
+    /health:
+        get:
+            summary: Health check
+            operationId: getHealth
+            tags: [Health]
+            responses:
+                '200':
+                    description: Service is healthy
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/HealthResponse'
+                '503':
+                    description: Service is unhealthy
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/HealthResponse'
+
+    /health/live:
+        get:
+            summary: Liveness probe
+            operationId: getLiveness
+            tags: [Health]
+            responses:
+                '200':
+                    description: Service is alive
+
+    /health/ready:
+        get:
+            summary: Readiness probe
+            operationId: getReadiness
+            tags: [Health]
+            responses:
+                '200':
+                    description: Service is ready
+                '503':
+                    description: Service is not ready
+
+components:
+    schemas:
+        HealthResponse:
+            type: object
+            properties:
+                status:
+                    type: string
+                    enum: [healthy, unhealthy]
+                timestamp:
+                    type: string
+                    format: date-time

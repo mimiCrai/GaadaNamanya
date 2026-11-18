@@ -1,0 +1,268 @@
+{
+    "description": "Titik pusat (centroid area, rumus shoelace pada koordinat lon/lat WGS84) 38 provinsi Indonesia untuk area_name HazardEvent WILDFIRE.",
+    "sources": [
+        {
+            "dataset": "geoBoundaries gbOpen IDN ADM1 (34 provinsi, sebelum pemekaran Papua 2022)",
+            "url": "https://www.geoboundaries.org/api/current/gbOpen/IDN/ADM1/",
+            "upstream": "OpenStreetMap, Wambacher (2017)",
+            "license": "ODbL 1.0",
+            "used_for": "32 provinsi selain Papua dan Papua Barat"
+        },
+        {
+            "dataset": "geoBoundaries gbOpen IDN ADM2 (519 kabupaten/kota)",
+            "url": "https://www.geoboundaries.org/api/current/gbOpen/IDN/ADM2/",
+            "upstream": "BPS, World Food Programme, OCHA ROAP (2020)",
+            "license": "CC BY 3.0 IGO",
+            "used_for": "Papua, Papua Barat, Papua Selatan, Papua Tengah, Papua Pegunungan, Papua Barat Daya (gabungan kabupaten sesuai UU 14, 15, 16, 29 Tahun 2022)"
+        }
+    ],
+    "generator": "scripts/satellite/build-provinces.mjs",
+    "papua_regencies": {
+        "Papua": [
+            "Jayapura",
+            "Kota Jayapura",
+            "Keerom",
+            "Sarmi",
+            "Mamberamo Raya",
+            "Biak Numfor",
+            "Supiori",
+            "Kepulauan Yapen",
+            "Waropen"
+        ],
+        "Papua Selatan": [
+            "Merauke",
+            "Boven Digoel",
+            "Mappi",
+            "Asmat"
+        ],
+        "Papua Tengah": [
+            "Nabire",
+            "Paniai",
+            "Mimika",
+            "Puncak Jaya",
+            "Puncak",
+            "Dogiyai",
+            "Intan Jaya",
+            "Deiyai"
+        ],
+        "Papua Pegunungan": [
+            "Jayawijaya",
+            "Lanny Jaya",
+            "Mamberamo Tengah",
+            "Nduga",
+            "Pegunungan Bintang",
+            "Tolikara",
+            "Yahukimo",
+            "Yalimo"
+        ],
+        "Papua Barat": [
+            "Manokwari",
+            "Manokwari Selatan",
+            "Pegunungan Arfak",
+            "Teluk Bintuni",
+            "Teluk Wondama",
+            "Fakfak",
+            "Kaimana"
+        ],
+        "Papua Barat Daya": [
+            "Sorong",
+            "Kota Sorong",
+            "Sorong Selatan",
+            "Raja Ampat",
+            "Tambrauw",
+            "Maybrat"
+        ]
+    },
+    "provinces": [
+        {
+            "name": "Aceh",
+            "longitude": 96.90964,
+            "latitude": 4.22566
+        },
+        {
+            "name": "Bali",
+            "longitude": 115.13208,
+            "latitude": -8.36906
+        },
+        {
+            "name": "Banten",
+            "longitude": 106.10956,
+            "latitude": -6.45633
+        },
+        {
+            "name": "Bengkulu",
+            "longitude": 102.38333,
+            "latitude": -3.58888
+        },
+        {
+            "name": "DI Yogyakarta",
+            "longitude": 110.44577,
+            "latitude": -7.89519
+        },
+        {
+            "name": "DKI Jakarta",
+            "longitude": 106.83805,
+            "latitude": -6.20774
+        },
+        {
+            "name": "Gorontalo",
+            "longitude": 122.37886,
+            "latitude": 0.68623
+        },
+        {
+            "name": "Jambi",
+            "longitude": 102.72162,
+            "latitude": -1.69795
+        },
+        {
+            "name": "Jawa Barat",
+            "longitude": 107.62247,
+            "latitude": -6.92428
+        },
+        {
+            "name": "Jawa Tengah",
+            "longitude": 110.22633,
+            "latitude": -7.2622
+        },
+        {
+            "name": "Jawa Timur",
+            "longitude": 112.7252,
+            "latitude": -7.72081
+        },
+        {
+            "name": "Kalimantan Barat",
+            "longitude": 111.12208,
+            "latitude": -0.08511
+        },
+        {
+            "name": "Kalimantan Selatan",
+            "longitude": 115.43568,
+            "latitude": -3.00019
+        },
+        {
+            "name": "Kalimantan Tengah",
+            "longitude": 113.41673,
+            "latitude": -1.59983
+        },
+        {
+            "name": "Kalimantan Timur",
+            "longitude": 116.47455,
+            "latitude": 0.45289
+        },
+        {
+            "name": "Kalimantan Utara",
+            "longitude": 116.22464,
+            "latitude": 2.89429
+        },
+        {
+            "name": "Kepulauan Bangka Belitung",
+            "longitude": 106.57247,
+            "latitude": -2.42065
+        },
+        {
+            "name": "Kepulauan Riau",
+            "longitude": 105.40742,
+            "latitude": 1.49083
+        },
+        {
+            "name": "Lampung",
+            "longitude": 105.02216,
+            "latitude": -4.9177
+        },
+        {
+            "name": "Maluku",
+            "longitude": 129.84762,
+            "latitude": -4.74194
+        },
+        {
+            "name": "Maluku Utara",
+            "longitude": 127.54008,
+            "latitude": 0.21438
+        },
+        {
+            "name": "Nusa Tenggara Barat",
+            "longitude": 117.50891,
+            "latitude": -8.60593
+        },
+        {
+            "name": "Nusa Tenggara Timur",
+            "longitude": 122.1794,
+            "latitude": -9.2592
+        },
+        {
+            "name": "Papua",
+            "longitude": 138.52119,
+            "latitude": -2.6218
+        },
+        {
+            "name": "Papua Barat",
+            "longitude": 133.60043,
+            "latitude": -2.60291
+        },
+        {
+            "name": "Papua Barat Daya",
+            "longitude": 131.89654,
+            "latitude": -1.08025
+        },
+        {
+            "name": "Papua Pegunungan",
+            "longitude": 139.4394,
+            "latitude": -4.26693
+        },
+        {
+            "name": "Papua Selatan",
+            "longitude": 139.52886,
+            "latitude": -6.65748
+        },
+        {
+            "name": "Papua Tengah",
+            "longitude": 136.54048,
+            "latitude": -3.88242
+        },
+        {
+            "name": "Riau",
+            "longitude": 101.82312,
+            "latitude": 0.50938
+        },
+        {
+            "name": "Sulawesi Barat",
+            "longitude": 119.33975,
+            "latitude": -2.46249
+        },
+        {
+            "name": "Sulawesi Selatan",
+            "longitude": 120.1692,
+            "latitude": -3.70506
+        },
+        {
+            "name": "Sulawesi Tengah",
+            "longitude": 121.19272,
+            "latitude": -0.98268
+        },
+        {
+            "name": "Sulawesi Tenggara",
+            "longitude": 122.0732,
+            "latitude": -4.11393
+        },
+        {
+            "name": "Sulawesi Utara",
+            "longitude": 124.5222,
+            "latitude": 1.25874
+        },
+        {
+            "name": "Sumatera Barat",
+            "longitude": 100.46168,
+            "latitude": -0.83589
+        },
+        {
+            "name": "Sumatera Selatan",
+            "longitude": 104.17849,
+            "latitude": -3.20437
+        },
+        {
+            "name": "Sumatera Utara",
+            "longitude": 99.0553,
+            "latitude": 2.18991
+        }
+    ]
+}
