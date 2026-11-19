@@ -14,7 +14,10 @@ export interface IBackgroundLeadershipService {
     stop(): Promise<void>;
     current(): LeaseToken | null;
     invalidate(token: LeaseToken): void;
+    onChange(listener: LeadershipListener): () => void;
 }
+
+export type LeadershipListener = (token: LeaseToken | null) => void;
 
 @injectable()
 export class BackgroundLeadershipService implements IBackgroundLeadershipService {
@@ -23,6 +26,7 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
     private timer: NodeJS.Timeout | undefined;
     private stopped = true;
     private pending: Promise<void> | undefined;
+    private readonly listeners = new Set<LeadershipListener>();
 
     constructor(@inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository) {}
 
@@ -37,9 +41,26 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
     }
 
     invalidate(token: LeaseToken): void {
-        if (this.token?.ownerId === token.ownerId && this.token.epoch === token.epoch) {
-            leadershipChanges.inc({ state: 'follower' });
-            this.token = null;
+        if (this.token?.ownerId === token.ownerId && this.token.epoch === token.epoch) this.setToken(null);
+    }
+
+    onChange(listener: LeadershipListener): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    private setToken(next: LeaseToken | null): void {
+        const previous = this.token;
+        this.token = next;
+        if (previous?.epoch === next?.epoch && Boolean(previous) === Boolean(next)) return;
+        leadershipChanges.inc({ state: next ? 'leader' : 'follower' });
+        const view = next && !this.stopped ? { ...next } : null;
+        for (const listener of this.listeners) {
+            try {
+                listener(view);
+            } catch (error) {
+                logger.error({ error, instanceId: this.instanceId }, 'Leadership listener failed');
+            }
         }
     }
 
@@ -48,8 +69,7 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
         if (this.timer) clearTimeout(this.timer);
         await this.pending;
         const token = this.token;
-        this.token = null;
-        if (token) leadershipChanges.inc({ state: 'follower' });
+        this.setToken(null);
         if (token)
             await this.leases
                 .release(token)
@@ -71,9 +91,8 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
         try {
             const lease = await this.leases.acquireOrRenew(this.instanceId);
             const previous = this.token;
-            this.token = lease ? { ownerId: this.instanceId, epoch: lease.epoch } : null;
+            this.setToken(lease ? { ownerId: this.instanceId, epoch: lease.epoch } : null);
             if (this.token?.epoch !== previous?.epoch || Boolean(this.token) !== Boolean(previous)) {
-                leadershipChanges.inc({ state: this.token ? 'leader' : 'follower' });
                 logger.info(
                     { instanceId: this.instanceId, epoch: this.token?.epoch, leader: Boolean(this.token) },
                     'Background leadership changed'
@@ -81,8 +100,7 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
             }
         } catch (error) {
             renewalErrors.inc();
-            if (this.token) leadershipChanges.inc({ state: 'follower' });
-            this.token = null;
+            this.setToken(null);
             logger.warn(
                 { error, instanceId: this.instanceId },
                 'Cannot verify background leadership; work is disabled'

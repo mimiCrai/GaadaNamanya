@@ -28,4 +28,16 @@ export const TYPES = {
     IMessagePublisher: Symbol.for('IMessagePublisher'),
 
     InternalAuthMiddleware: Symbol.for('InternalAuthMiddleware'),
+
+    IPayloadStore: Symbol.for('IPayloadStore'),
+    IUnprocessedMessageRepository: Symbol.for('IUnprocessedMessageRepository'),
+    IUnprocessedRecorder: Symbol.for('IUnprocessedRecorder'),
+    IOrderingSequenceRepository: Symbol.for('IOrderingSequenceRepository'),
+    IUnprocessedHandlerRegistry: Symbol.for('IUnprocessedHandlerRegistry'),
+    IUnprocessedRetryService: Symbol.for('IUnprocessedRetryService'),
+    IUnprocessedQueryService: Symbol.for('IUnprocessedQueryService'),
+
+    ISatelliteFeedClient: Symbol.for('ISatelliteFeedClient'),
+    ISatelliteLogWriter: Symbol.for('ISatelliteLogWriter'),
+    ISatelliteIngestService: Symbol.for('ISatelliteIngestService'),
 };

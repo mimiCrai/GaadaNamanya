@@ -116,5 +116,33 @@ test('observability: real HTTP, durable outbox, Kafka, metrics and provisioned d
         assert.equal(metrics.length, 2);
         assert.ok(metrics.every(row => Number(row.value[1]) > 0));
     });
+    await t.test('exports live DLQ and satellite activity on the shared Aggregator scrape', async () => {
+        await waitFor('quarantined PVMBG probe', async () => {
+            const rows = await query('max(bnpb_aggregator_unprocessed_messages{source="PVMBG",status="parked"})');
+            return Number(rows[0]?.value[1]) >= 1;
+        });
+        await waitFor('PVMBG failure counter', async () => {
+            const rows = await query('sum(bnpb_aggregator_parse_failures_total{source="PVMBG"})');
+            return Number(rows[0]?.value[1]) >= 1;
+        });
+        await waitFor('satellite Kafka commits', async () => {
+            const rows = await query('max(bnpb_aggregator_satellite_last_offset_durable)');
+            return Number(rows[0]?.value[1]) >= 10;
+        });
+        const queries = ['bnpb_http_requests_total', 'process_resident_memory_bytes', 'bnpb_aggregator_satellite_batch_commit_seconds_count'];
+        for (const name of queries) await waitFor(name, async () => (await query(`${name}{service="bnpb-aggregator"}`)).length > 0);
+        const q = encodeURIComponent('{ resource.service.name = "bnpb-aggregator" && name = "satellite.flush" }');
+        await waitFor('satellite flush and Kafka trace', async () => {
+            const search = await json(`${tempo}/api/search?q=${q}&limit=10`);
+            for (const item of search.traces ?? []) {
+                const body = await json(`${tempo}/api/traces/${item.traceID}`);
+                if (JSON.stringify(body).includes('kafka.publish') && JSON.stringify(body).includes('satellite.raw')) {
+                    evidence.satelliteTraceId = item.traceID;
+                    return true;
+                }
+            }
+        });
+    });
+
     await writeFile('/results/summary.json', JSON.stringify(evidence, null, 2) + '\n');
 });

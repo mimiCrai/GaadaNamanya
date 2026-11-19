@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 
 import express, { Request, Response, NextFunction } from 'express';
-import { installHttpMetrics } from './telemetry/metrics';
+import { installHttpMetrics, metricsRegistry } from './telemetry/metrics';
 import { annotateCorrelation } from './telemetry/context';
 import bodyParser from 'body-parser';
 import compression from 'compression';
@@ -19,6 +19,10 @@ import './controllers/health.controller';
 import './controllers/hazard-event.controller';
 import './controllers/audit.controller';
 import './controllers/leadership.controller';
+import './controllers/audit-unprocessed.controller';
+import './controllers/dlq.controller';
+import './controllers/metrics.controller';
+import './controllers/satellite.controller';
 import './controllers/sensor-pantai.controller';
 
 export async function createContainer(): Promise<Container> {
@@ -32,7 +36,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
 
     const app = express();
     app.disable('x-powered-by');
-    installHttpMetrics(app);
+    installHttpMetrics(app, metricsRegistry, false);
     app.use(compression());
     app.use(bodyParser.json({ limit: '5mb' }));
     app.use(bodyParser.urlencoded({ extended: true }));

@@ -24,11 +24,31 @@ export interface UpsertHazardEventInput {
     topic: string;
     correlationId: string;
     lease: LeaseToken;
+    /**
+     * Optional ordering version per (source, source_ref_id), compared as a string (fixed-width, sortable).
+     * When set, the write applies only if it is >= the stored version; an older write is `superseded`
+     * (review #3). Writes without a version are not guarded (BMKG, tsunami warnings).
+     */
+    version?: string;
 }
 
 export interface HazardEventUpsertResult {
     hazardEvent: HazardEvent;
     changeType: HazardEventChangeType | null;
+    /** The stored event carries a newer version: nothing was written and nothing enqueued. */
+    superseded?: boolean;
+}
+
+/**
+ * PERLU DIKONFIRMASI KE A/B: `version` is an internal field of hazard_events (ordering guard, review #3).
+ * It is excluded from every read of this repository and never enters outbox payloads or audit items.
+ */
+type StoredHazardEvent = HazardEvent & { version?: string };
+const HIDE_INTERNAL = { _id: 0, version: 0 } as const;
+
+/** True when the incoming write is older than what is stored (both versioned). */
+export function isSupersededVersion(stored: string | undefined, incoming: string | undefined): boolean {
+    return stored !== undefined && incoming !== undefined && incoming < stored;
 }
 
 export interface IHazardEventRepository {
@@ -53,7 +73,7 @@ export class HazardEventRepository implements IHazardEventRepository {
         };
         return this.db
             .collection<HazardEvent>(hazardEvents)
-            .find<HazardEvent>(filter, { projection: { _id: 0 } })
+            .find<HazardEvent>(filter, { projection: HIDE_INTERNAL })
             .sort(ingestedSince ? { ingestedAt: 1, hazardId: 1 } : { occurredAt: -1, hazardId: 1 })
             .toArray();
     }
@@ -62,7 +82,7 @@ export class HazardEventRepository implements IHazardEventRepository {
         return (
             (await this.db
                 .collection<HazardEvent>(hazardEvents)
-                .findOne<HazardEvent>({ _id: hazardId }, { projection: { _id: 0 } })) ?? undefined
+                .findOne<HazardEvent>({ _id: hazardId }, { projection: HIDE_INTERNAL })) ?? undefined
         );
     }
 
@@ -78,11 +98,26 @@ export class HazardEventRepository implements IHazardEventRepository {
         for (let attempt = 0; ; attempt++) {
             try {
                 return await this.leases.withLease(input.lease, async (session, now) => {
-                    const existing = await this.db
-                        .collection<HazardEvent>(hazardEvents)
-                        .findOne<HazardEvent>({ _id: hazardId }, { session, projection: { _id: 0 } });
+                    const collection = this.db.collection<StoredHazardEvent>(hazardEvents);
+                    const stored = await collection.findOne<StoredHazardEvent>(
+                        { _id: hazardId },
+                        { session, projection: { _id: 0 } }
+                    );
+                    const { version: storedVersion, ...existingEvent } = stored ?? {};
+                    const existing = stored ? (existingEvent as HazardEvent) : null;
 
+                    if (existing && isSupersededVersion(storedVersion, input.version)) {
+                        return { hazardEvent: existing, changeType: null, superseded: true };
+                    }
                     if (existing && this.hasSameContent(existing, input)) {
+                        // Same content received again later: move the version so an older replay stays older.
+                        if (input.version !== undefined && input.version !== storedVersion) {
+                            await collection.updateOne(
+                                { _id: hazardId },
+                                { $set: { version: input.version } },
+                                { session }
+                            );
+                        }
                         return { hazardEvent: existing, changeType: null };
                     }
 
@@ -100,14 +135,23 @@ export class HazardEventRepository implements IHazardEventRepository {
                         attributes: input.attributes,
                     };
                     const changeType = existing ? HazardEventChangeType.Updated : HazardEventChangeType.Created;
+                    const document: StoredHazardEvent =
+                        input.version === undefined ? hazardEvent : { ...hazardEvent, version: input.version };
                     if (existing) {
-                        await this.db
-                            .collection<HazardEvent>(hazardEvents)
-                            .replaceOne({ _id: hazardId }, hazardEvent, { session });
+                        // The guard is also in the filter (shard key _id + version), so the store itself refuses an
+                        // older write even if the read above were stale; matched 0 → superseded, nothing enqueued.
+                        const guard =
+                            input.version === undefined
+                                ? {}
+                                : { $or: [{ version: { $exists: false } }, { version: { $lte: input.version } }] };
+                        const replaced = await collection.replaceOne({ _id: hazardId, ...guard }, document, {
+                            session,
+                        });
+                        if (replaced.matchedCount !== 1) {
+                            return { hazardEvent: existing, changeType: null, superseded: true };
+                        }
                     } else {
-                        await this.db
-                            .collection<HazardEvent>(hazardEvents)
-                            .insertOne({ _id: hazardId, ...hazardEvent }, { session });
+                        await collection.insertOne({ _id: hazardId, ...document }, { session });
                     }
 
                     await this.db.collection<OutboxEvent>(outboxEvents).insertOne(

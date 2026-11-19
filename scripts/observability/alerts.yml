@@ -36,3 +36,10 @@ groups:
           severity: warning
         annotations:
           summary: 'Aggregator cannot read storage metrics'
+      - alert: DlqMetricsUnavailable
+        expr: bnpb_aggregator_unprocessed_messages_scrape_error == 1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: 'DLQ storage snapshot is unavailable'

@@ -1,0 +1,20 @@
+id: 0
+event: detection
+data: {"offset":0,"detection":{"version":"2.0NRT","scan":0.39,"acq_date":"2026-11-14","acq_time":2350,"bright_ti4":355.6,"bright_ti5":291.91,"confidence":"l","daynight":"D","frp":11.71,"instrument":"VIIRS","latitude":-8.35726,"longitude":122.48591,"satellite":"N21","track":0.37}}
+
+id: 1
+event: detection
+data: {"offset":1,"detection":{"version":"2.0NRT","scan":0.45,"acq_date":"2026-11-14","acq_time":2301,"bright_ti4":303.02,"bright_ti5":300.75,"confidence":"n","daynight":"D","frp":0.81,"instrument":"VIIRS","latitude":-1.63961,"longitude":116.83571,"satellite":"N20","track":0.45}}
+
+id: 2
+event: detection
+data: {"offset":2,"detection":{"version":"2.0NRT","scan":0.41,"acq_date":"2026-11-14","acq_time":2354,"bright_ti4":346.27,"bright_ti5":290.97,"confidence":"n","daynight":"D","frp":22.77,"instrument":"VIIRS","latitude":-8.36005,"longitude":122.48899,"satellite":"N20","track":0.39}}
+
+id: 3
+event: detection
+data: {"offset":3,"detection":{"version":"2.0NRT","scan":0.52,"acq_date":"2026-11-14","acq_time":2349,"bright_ti4":324.1,"bright_ti5":298.53,"confidence":"n","daynight":"D","frp":2.81,"instrument":"VIIRS","latitude":-8.36102,"longitude":122.48849,"satellite":"N","track":0.58}}
+
+id: 4
+event: detection
+data: {"offset":4,"detection":{"version":"2.0NRT","scan":0.49,"acq_date":"2026-11-14","acq_time":2357,"bright_ti4":367.0,"bright_ti5":295.65,"confidence":"h","daynight":"D","frp":13.54,"instrument":"VIIRS","latitude":-8.36336,"longitude":122.48715,"satellite":"N","track":0.55}}
+

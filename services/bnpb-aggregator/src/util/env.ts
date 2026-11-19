@@ -73,6 +73,71 @@ const envSchema = z
         POLL_OVERLAP_MS: z.coerce.number().int().min(0).default(1_000),
         OUTBOX_RELAY_INTERVAL_MS: z.coerce.number().int().positive().default(250),
         OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(1_000).default(100),
+
+        // Safe decoding and unprocessed-message store (DLQ)
+        PVMBG_MAX_BODY_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(64 * 1024 * 1024)
+            .default(5 * 1024 * 1024),
+        DECODE_MAX_DEPTH: z.coerce.number().int().min(4).max(1_000).default(64),
+        DLQ_INLINE_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(8 * 1024 * 1024)
+            .default(1024 * 1024),
+        DLQ_INSPECT_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(32 * 1024 * 1024)
+            .default(8 * 1024 * 1024),
+        DLQ_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(5),
+        DLQ_RETRY_BASE_MS: z.coerce.number().int().min(100).default(2_000),
+        DLQ_RETRY_CAP_MS: z.coerce.number().int().min(1_000).default(300_000),
+        DLQ_RETRY_INTERVAL_MS: z.coerce.number().int().min(100).default(2_000),
+        DLQ_RETRY_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(20),
+        DLQ_CLAIM_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+
+        // Satellite feed (P4). Off by default so dev/e2e stacks never open a stream by accident (rule 2).
+        SATELLITE_INGEST_ENABLED: z
+            .enum(['true', 'false'])
+            .default('false')
+            .transform((value) => value === 'true'),
+        SATELLITE_BASE_URL: z.string().url().default('https://satellite.naufarrel.dev'),
+        SATELLITE_TOKEN: z.string().default(''),
+        SATELLITE_RAW_TOPIC: z.string().min(1).default('satellite.raw'),
+        KAFKA_SATELLITE_TRANSACTIONAL_ID: z.string().min(1).default('bnpb-aggregator-satellite'),
+        SATELLITE_CHECKPOINT_GROUP: z.string().min(1).default('bnpb-satellite-checkpoint'),
+        SATELLITE_BATCH_MAX: z.coerce.number().int().min(1).max(5_000).default(200),
+        // Byte budget of one produce request (record batch) inside an append; also the largest single record.
+        // Capped at start by the topic's max.message.bytes minus overhead (see SatelliteLogWriter.prepare).
+        SATELLITE_BATCH_MAX_BYTES: z.coerce
+            .number()
+            .int()
+            .min(16 * 1024)
+            .max(64 * 1024 * 1024)
+            .default(900 * 1024),
+        SATELLITE_BATCH_LINGER_MS: z.coerce.number().int().min(0).max(5_000).default(100),
+        SATELLITE_MAX_EVENT_BYTES: z.coerce
+            .number()
+            .int()
+            .min(1_024)
+            .max(16 * 1024 * 1024)
+            .default(1024 * 1024),
+        SATELLITE_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(500).max(60_000).default(10_000),
+        SATELLITE_IDLE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(60_000),
+        SATELLITE_SESSION_POLL_MS: z.coerce.number().int().min(1_000).max(300_000).default(10_000),
+        SATELLITE_BACKOFF_BASE_MS: z.coerce.number().int().min(50).default(1_000),
+        SATELLITE_BACKOFF_CAP_MS: z.coerce.number().int().min(100).default(60_000),
+        SATELLITE_429_BACKOFF_BASE_MS: z.coerce.number().int().min(50).default(2_000),
+        SATELLITE_429_BACKOFF_CAP_MS: z.coerce.number().int().min(100).default(30_000),
+        SATELLITE_AUTH_BACKOFF_MS: z.coerce.number().int().min(1_000).default(300_000),
+    })
+    .refine((values) => !values.SATELLITE_INGEST_ENABLED || values.SATELLITE_TOKEN.length > 0, {
+        message: 'SATELLITE_TOKEN is required when SATELLITE_INGEST_ENABLED=true',
     })
     .refine((values) => !values.SENSOR_PANTAI_ENABLED || values.SENSOR_PANTAI_TOKEN.length > 0, {
         message: 'Enabled Sensor Pantai requires a nonempty SENSOR_PANTAI_TOKEN',
