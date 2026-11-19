@@ -1,5 +1,5 @@
 import { inject, injectable } from 'inversify';
-import { Document, Long } from 'mongodb';
+import { Document, Long, ReadPreference } from 'mongodb';
 import { TYPES } from '../constants/types';
 import { CanonicalStore } from '../db';
 import { IStorageTopologyService } from '../services/storage-topology.service';
@@ -42,7 +42,7 @@ export class CanonicalReadRepository implements ICanonicalReadRepository {
                 if (remaining <= 0) throw new Error('Storage read deadline exceeded');
                 const result = await this.store.database.command(
                     { ...command, ...(command.find ? { maxTimeMS: remaining } : {}) },
-                    { session, timeoutMS: remaining }
+                    { session, timeoutMS: remaining, readPreference: ReadPreference.secondaryPreferred }
                 );
                 const cursor = result.cursor;
                 cursorId = Long.fromValue(cursor.id);

@@ -1,0 +1,10 @@
+# Copy to /etc/rancher/k3s/config.yaml on VM A after replacing VM_A_IP.
+node-name: bnpb-a
+node-ip: VM_A_IP
+advertise-address: VM_A_IP
+tls-san:
+  - VM_A_IP
+# If using NAT plus host-only networking, uncomment and set the host-only NIC:
+# flannel-iface: enp0s8
+# K3s server remains schedulable and also acts as a worker.
+# Keep the built-in NetworkPolicy controller enabled.

@@ -77,3 +77,26 @@ test(`Audit API / storage reads: ${stage}`, { timeout: 120_000 }, async () => {
         assert.ok(last.body.items.length > 0);
     }
 });
+
+
+test(`Canonical analytics coverage: ${stage}`, { timeout: 30_000 }, async () => {
+    const analytics = await get('/internal/analytics', { 'X-BNPB-Internal-Key': process.env.BNPB_INTERNAL_API_KEY });
+    assert.equal(analytics.status, 200);
+    const expectedPartial = stage === 'outage';
+    assert.equal(analytics.body.partial, expectedPartial);
+    assert.equal(Object.values(analytics.body.byType).reduce((a,b) => a+b, 0), analytics.body.total);
+    assert.equal(Object.values(analytics.body.byArea).reduce((a,b) => a+b, 0), analytics.body.total);
+    assert.equal(Object.values(analytics.body.bySeverity).reduce((a,b) => a+b, 0), analytics.body.total);
+    if (expectedPartial) {
+        assert.ok(analytics.body.unavailable_units.includes('canonical-shard-b'));
+        assert.equal(analytics.body.degraded, true);
+    }
+    const invalidRange = await get('/internal/analytics?' + new URLSearchParams({ from: '2026-02-01T00:00:00Z', to: '2026-01-01T00:00:00Z' }), { 'X-BNPB-Internal-Key': process.env.BNPB_INTERNAL_API_KEY });
+    assert.equal(invalidRange.status, 400);
+    if (process.env.DASHBOARD_URL) {
+        const dashboard = await fetch(`${process.env.DASHBOARD_URL}/api/hazards/analytics?${new URLSearchParams({ from: "2000-01-01T00:00:00Z" })}`, { signal: AbortSignal.timeout(12_000) });
+        const body = await dashboard.json();
+        assert.equal(dashboard.status, 200, JSON.stringify(body));
+        assert.equal(body.partial, expectedPartial);
+    }
+});

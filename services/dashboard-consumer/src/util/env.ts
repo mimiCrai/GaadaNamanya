@@ -9,6 +9,9 @@ const envSchema = z.object({
     // Database owned by Dashboard Consumer
     DATABASE_URL: z.string().url(),
 
+    CANONICAL_ANALYTICS_URL: z.string().url().optional(),
+    BNPB_INTERNAL_API_KEY: z.string().optional(),
+
     // Kafka
     KAFKA_BROKERS: z
         .string()

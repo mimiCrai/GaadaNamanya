@@ -18,7 +18,8 @@
         "format:check": "prettier --config .prettierrc.json --check '**/*.{js,jsx,ts,tsx,css,json,yml,yaml}'",
         "test:integration": "node --test --test-concurrency=1 tests/integration/mongo-outbox.test.cjs tests/integration/leadership.test.cjs tests/integration/unprocessed.test.cjs tests/integration/satellite-log.test.cjs tests/integration/satellite-kafka.test.cjs tests/integration/pvmbg-ordering.test.cjs",
         "test:integration:kafka": "node --test --test-concurrency=1 tests/integration/satellite-kafka.test.cjs",
-        "db:migrate": "node --env-file-if-exists=.env ./dist/src/db/migrate.js"
+        "db:migrate": "node --env-file-if-exists=.env ./dist/src/db/migrate.js",
+        "data:import": "node --env-file-if-exists=.env ./dist/src/import-historical.js"
     },
     "dependencies": {
         "body-parser": "^1.20.2",
@@ -54,7 +55,8 @@
         "supertest": "^7.0.0",
         "ts-jest": "^29.2.4",
         "tsx": "^4.19.0",
-        "typescript": "^5.5.4"
+        "typescript": "^5.5.4",
+        "typescript-eslint": "8.71.0"
     },
     "author": "",
     "license": "UNLICENSED",

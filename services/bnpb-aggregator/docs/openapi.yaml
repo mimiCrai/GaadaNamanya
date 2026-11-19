@@ -10,6 +10,17 @@ servers:
       description: Local development server
 
 paths:
+    /internal/analytics:
+        get:
+            summary: Canonical counts across shards, with UTC occurrence range and availability
+            parameters:
+                - { in: query, name: from, schema: { type: string, format: date-time } }
+                - { in: query, name: to, schema: { type: string, format: date-time } }
+            responses:
+                '200': { description: Counts and daily series; inspect partial and degraded }
+                '400': { description: Invalid range }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
     /internal/sensor-pantai/status:
         get:
             summary: Sensor freshness, checkpoint timestamps, and circuit breaker retry time
