@@ -21,17 +21,6 @@ function record(offset: number, overrides: Partial<SatelliteRawRecord> = {}): Sa
 }
 
 describe('encodeRawRecord', () => {
-    it('keeps tracing in Kafka headers and includes it in the encoded byte budget', () => {
-        const raw = record(17, { dataRaw: '{"offset":17,"frp":367.0}' });
-        const carrier = { traceparent: '00-' + 'a'.repeat(32) + '-' + 'b'.repeat(16) + '-01' };
-        const plain = encodeRawRecord(raw, lease);
-        const traced = encodeRawRecord(raw, lease, carrier);
-        expect(traced.value).toBe(plain.value);
-        expect(traced.headers).toMatchObject(carrier);
-        expect(encodedMessageBytes(traced) - encodedMessageBytes(plain)).toBe(
-            Buffer.byteLength('traceparent') + Buffer.byteLength(carrier.traceparent)
-        );
-    });
     it('keys by offset and keeps the raw data text untouched', () => {
         const message = encodeRawRecord(record(17, { dataRaw: '{"offset":17,"frp":367.0}' }), lease);
         expect(message.key).toBe('17');

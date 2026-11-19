@@ -1,8 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { Admin, ConfigResourceTypes, Kafka, Message, Producer } from 'kafkajs';
 import { randomUUID } from 'node:crypto';
-import { SpanKind } from '@opentelemetry/api';
-import { captureTrace, traced, TraceCarrier } from '../telemetry/context';
 import { TYPES } from '../constants/types';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
 import { logger } from '../libs/logger';
@@ -40,11 +38,7 @@ export interface ISatelliteLogWriter {
 
 export const SATELLITE_RECORD_VERSION = 1;
 
-export function encodeRawRecord(
-    record: SatelliteRawRecord,
-    lease: LeaseToken,
-    traceContext: TraceCarrier = {}
-): Message {
+export function encodeRawRecord(record: SatelliteRawRecord, lease: LeaseToken): Message {
     const value: Record<string, unknown> = {
         v: SATELLITE_RECORD_VERSION,
         offset: record.offset,
@@ -64,7 +58,6 @@ export function encodeRawRecord(
             fencing_token: String(lease.epoch),
             instance_id: lease.ownerId,
             correlation_id: record.correlationId,
-            ...traceContext,
         },
     };
 }
@@ -299,64 +292,51 @@ export class SatelliteLogWriter implements ISatelliteLogWriter {
 
     async append(records: SatelliteRawRecord[], lease: LeaseToken): Promise<void> {
         if (records.length === 0) return;
-        return traced(
-            'kafka.publish',
-            {
-                'messaging.system': 'kafka',
-                'messaging.destination.name': env.SATELLITE_RAW_TOPIC,
-                'messaging.batch.message_count': records.length,
-                'correlation.id': records[0].correlationId,
-            },
-            async () => {
-                assertConsecutive(records);
-                if (this.epoch !== lease.epoch || !this.producer) throw new LeaseLostError();
-                assertContinuesCheckpoint(records, this.nextOffset);
-                const messages = records.map((record) => encodeRawRecord(record, lease, captureTrace()));
-                let totalBytes = 0;
-                messages.forEach((message, index) => {
-                    const bytes = encodedMessageBytes(message);
-                    totalBytes += bytes;
-                    // The ingest service diverts such events to the DLQ first; sent to Kafka it would fail the same way forever.
-                    if (bytes > this.recordLimit) {
-                        throw new SatelliteRecordTooLargeError(records[index].offset, bytes, this.recordLimit);
-                    }
-                });
-                // One send = one record batch per partition, and max.message.bytes applies per batch (review #4).
-                const chunks = chunkByBytes(messages, this.recordLimit);
-                const producer = this.producer;
-                const stop = satelliteBatchCommitSeconds.startTimer();
-                await this.leases.requireActive(lease);
-                const transaction = await producer.transaction();
-                try {
-                    // Sequential sends inside the same transaction: offsets stay in order and the commit stays atomic.
-                    for (const chunk of chunks) {
-                        await transaction.send({ topic: env.SATELLITE_RAW_TOPIC, acks: -1, messages: chunk });
-                    }
-                    await transaction.sendOffsets({
-                        consumerGroupId: env.SATELLITE_CHECKPOINT_GROUP,
-                        topics: [
-                            {
-                                topic: env.SATELLITE_RAW_TOPIC,
-                                partitions: [{ partition: 0, offset: String(records[records.length - 1].offset + 1) }],
-                            },
-                        ],
-                    });
-                    await this.leases.requireActive(lease);
-                    await transaction.commit();
-                    this.nextOffset = records[records.length - 1].offset + 1;
-                    stop();
-                    satelliteBatchBytes.observe(totalBytes);
-                    satelliteBatchChunks.observe(chunks.length);
-                } catch (error) {
-                    await transaction.abort().catch(() => undefined);
-                    await this.close();
-                    if (error instanceof LeaseLostError || isFencedError(error)) throw new LeaseLostError();
-                    throw error;
-                }
-            },
-            undefined,
-            SpanKind.PRODUCER
-        );
+        assertConsecutive(records);
+        if (this.epoch !== lease.epoch || !this.producer) throw new LeaseLostError();
+        assertContinuesCheckpoint(records, this.nextOffset);
+        const messages = records.map((record) => encodeRawRecord(record, lease));
+        let totalBytes = 0;
+        messages.forEach((message, index) => {
+            const bytes = encodedMessageBytes(message);
+            totalBytes += bytes;
+            // The ingest service diverts such events to the DLQ first; sent to Kafka it would fail the same way forever.
+            if (bytes > this.recordLimit) {
+                throw new SatelliteRecordTooLargeError(records[index].offset, bytes, this.recordLimit);
+            }
+        });
+        // One send = one record batch per partition, and max.message.bytes applies per batch (review #4).
+        const chunks = chunkByBytes(messages, this.recordLimit);
+        const producer = this.producer;
+        const stop = satelliteBatchCommitSeconds.startTimer();
+        await this.leases.requireActive(lease);
+        const transaction = await producer.transaction();
+        try {
+            // Sequential sends inside the same transaction: offsets stay in order and the commit stays atomic.
+            for (const chunk of chunks) {
+                await transaction.send({ topic: env.SATELLITE_RAW_TOPIC, acks: -1, messages: chunk });
+            }
+            await transaction.sendOffsets({
+                consumerGroupId: env.SATELLITE_CHECKPOINT_GROUP,
+                topics: [
+                    {
+                        topic: env.SATELLITE_RAW_TOPIC,
+                        partitions: [{ partition: 0, offset: String(records[records.length - 1].offset + 1) }],
+                    },
+                ],
+            });
+            await this.leases.requireActive(lease);
+            await transaction.commit();
+            this.nextOffset = records[records.length - 1].offset + 1;
+            stop();
+            satelliteBatchBytes.observe(totalBytes);
+            satelliteBatchChunks.observe(chunks.length);
+        } catch (error) {
+            await transaction.abort().catch(() => undefined);
+            await this.close();
+            if (error instanceof LeaseLostError || isFencedError(error)) throw new LeaseLostError();
+            throw error;
+        }
     }
 
     async close(): Promise<void> {

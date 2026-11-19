@@ -13,7 +13,6 @@ import {
 import { computeBackoffMs } from '../libs/backoff';
 import { ProcessingError } from '../libs/processing-error';
 import type { ReceiveOrder } from '../libs/receive-order';
-import { captureTrace } from '../telemetry/context';
 import { PayloadRef } from '../libs/safe-decode';
 import env from '../util/env';
 import { IBackgroundLeaseRepository } from './background-lease.repository';
@@ -82,7 +81,6 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
     }
 
     async record(input: RecordUnprocessedInput, lease?: LeaseToken): Promise<RecordUnprocessedResult> {
-        const traceContext = captureTrace();
         const stored = await this.placePayload(input);
         const messageId = computeMessageId(input.source, input.context.kind, stored.sha256);
         const { error } = input;
@@ -120,7 +118,6 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
                         sizeBytes: stored.size,
                         sha256: stored.sha256,
                         correlationId: input.correlationId,
-                        ...(Object.keys(traceContext).length ? { traceContext } : {}),
                         sourceRefId: input.sourceRefId ?? null,
                         ordering: input.ordering ?? null,
                         recoveredAt: null,
@@ -145,7 +142,6 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
                             recoveredAt: null,
                             recoveredHazardId: null,
                             ...(input.ordering ? { ordering: input.ordering } : {}),
-                            traceContext,
                         },
                         $push: { history: { $each: [historyEntry], $slice: -HISTORY_LIMIT } },
                     },
@@ -296,7 +292,7 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
         const rows = await this.collection()
             .aggregate<{ _id: { source: string; status: UnprocessedStatus }; count: number }>(
                 [{ $group: { _id: { source: '$source', status: '$status' }, count: { $sum: 1 } } }],
-                { maxTimeMS: env.STORAGE_READ_TIMEOUT_MS, timeoutMS: env.STORAGE_READ_TIMEOUT_MS }
+                { maxTimeMS: env.STORAGE_READ_TIMEOUT_MS }
             )
             .toArray();
         return rows.map((row) => ({ source: row._id.source, status: row._id.status, count: row.count }));

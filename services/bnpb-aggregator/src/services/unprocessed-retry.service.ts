@@ -1,5 +1,4 @@
 import { inject, injectable } from 'inversify';
-import { traced } from '../telemetry/context';
 import { TYPES } from '../constants/types';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
 import { UnprocessedMessage } from '../db/schema/unprocessed-messages';
@@ -106,78 +105,71 @@ export class UnprocessedRetryService implements IUnprocessedRetryService {
     }
 
     private async process(entry: UnprocessedMessage, lease: LeaseToken): Promise<boolean> {
-        return traced(
-            'dlq.process',
-            { 'dlq.source': entry.source, 'dlq.kind': entry.context.kind, 'correlation.id': entry.correlationId },
-            async () => {
-                const log = {
-                    messageId: entry.messageId,
-                    source: entry.source,
-                    kind: entry.context.kind,
-                    attempt: entry.attempts + 1,
-                    correlationId: entry.correlationId,
-                };
-                let outcome: CompletionOutcome;
-                const handler = this.registry.get(entry.source, entry.context.kind);
-                if (!handler) {
-                    outcome = {
-                        kind: 'parked',
-                        error: new ProcessingError(
-                            'handler_missing',
-                            `tidak ada handler untuk ${entry.source}:${entry.context.kind}`
-                        ),
-                    };
-                } else {
-                    try {
-                        const raw = await this.repository.readPayload(
-                            entry,
-                            Math.max(env.PVMBG_MAX_BODY_BYTES, env.DLQ_INLINE_MAX_BYTES)
-                        );
-                        const result = await handler(raw, entry, lease);
-                        // An older replay of a report whose newer version is stored is closed, not parked (review #3).
-                        outcome = result.superseded
-                            ? { kind: 'superseded', hazardId: result.hazardId }
-                            : { kind: 'recovered', hazardId: result.hazardId };
-                    } catch (error) {
-                        if (error instanceof LeaseLostError) {
-                            this.leadership.invalidate(lease);
-                            logger.info(log, 'Lost background lease during retry; claim will expire');
-                            return false;
-                        }
-                        outcome = decideFailureOutcome(entry.attempts, classifyError(error), {
-                            maxAttempts: entry.maxAttempts,
-                            baseMs: env.DLQ_RETRY_BASE_MS,
-                            capMs: env.DLQ_RETRY_CAP_MS,
-                        });
-                    }
+        const log = {
+            messageId: entry.messageId,
+            source: entry.source,
+            kind: entry.context.kind,
+            attempt: entry.attempts + 1,
+            correlationId: entry.correlationId,
+        };
+        let outcome: CompletionOutcome;
+        const handler = this.registry.get(entry.source, entry.context.kind);
+        if (!handler) {
+            outcome = {
+                kind: 'parked',
+                error: new ProcessingError(
+                    'handler_missing',
+                    `tidak ada handler untuk ${entry.source}:${entry.context.kind}`
+                ),
+            };
+        } else {
+            try {
+                const raw = await this.repository.readPayload(
+                    entry,
+                    Math.max(env.PVMBG_MAX_BODY_BYTES, env.DLQ_INLINE_MAX_BYTES)
+                );
+                const result = await handler(raw, entry, lease);
+                // An older replay of a report whose newer version is stored is closed, not parked (review #3).
+                outcome = result.superseded
+                    ? { kind: 'superseded', hazardId: result.hazardId }
+                    : { kind: 'recovered', hazardId: result.hazardId };
+            } catch (error) {
+                if (error instanceof LeaseLostError) {
+                    this.leadership.invalidate(lease);
+                    logger.info(log, 'Lost background lease during retry; claim will expire');
+                    return false;
                 }
+                outcome = decideFailureOutcome(entry.attempts, classifyError(error), {
+                    maxAttempts: entry.maxAttempts,
+                    baseMs: env.DLQ_RETRY_BASE_MS,
+                    capMs: env.DLQ_RETRY_CAP_MS,
+                });
+            }
+        }
 
-                try {
-                    const applied = await this.repository.complete(entry, lease, outcome);
-                    unprocessedRetryTotal.inc({ source: entry.source, outcome: applied ? outcome.kind : 'lost_claim' });
-                    logger.info(
-                        {
-                            ...log,
-                            outcome: outcome.kind,
-                            applied,
-                            reason: 'error' in outcome ? outcome.error.reason : undefined,
-                        },
-                        'Processed unprocessed message retry'
-                    );
-                    return true;
-                } catch (error) {
-                    if (error instanceof LeaseLostError) {
-                        this.leadership.invalidate(lease);
-                        return false;
-                    }
-                    logger.error(
-                        { ...log, error },
-                        'Could not record retry outcome; claim will expire and the entry is retried'
-                    );
-                    return true;
-                }
-            },
-            entry.traceContext
-        );
+        try {
+            const applied = await this.repository.complete(entry, lease, outcome);
+            unprocessedRetryTotal.inc({ source: entry.source, outcome: applied ? outcome.kind : 'lost_claim' });
+            logger.info(
+                {
+                    ...log,
+                    outcome: outcome.kind,
+                    applied,
+                    reason: 'error' in outcome ? outcome.error.reason : undefined,
+                },
+                'Processed unprocessed message retry'
+            );
+            return true;
+        } catch (error) {
+            if (error instanceof LeaseLostError) {
+                this.leadership.invalidate(lease);
+                return false;
+            }
+            logger.error(
+                { ...log, error },
+                'Could not record retry outcome; claim will expire and the entry is retried'
+            );
+            return true;
+        }
     }
 }

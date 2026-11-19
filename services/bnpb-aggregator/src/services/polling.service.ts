@@ -1,7 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
 import { markActiveSpanError, traced } from '../telemetry/context';
-import { pollDuration, pollRuns } from '../telemetry/aggregator-metrics';
 import { IBmkgClient } from '../clients/bmkg.client';
 import { IPvmbgClient } from '../clients/pvmbg.client';
 import { PollRequestOptions } from '../clients/source-client.types';
@@ -91,8 +90,6 @@ export class PollingService implements IPollingService {
         if (!lease) return;
         const correlationId = randomUUID();
         return traced('source.poll', { 'source.stream': sourceStream, 'correlation.id': correlationId }, async () => {
-            const started = performance.now();
-            let outcome = 'success';
             try {
                 const state = await this.sourceSyncStateService.getState(sourceStream);
                 const since = state?.lastSuccessfulPollAt
@@ -111,7 +108,6 @@ export class PollingService implements IPollingService {
                     'Source poll completed successfully'
                 );
             } catch (error) {
-                outcome = error instanceof LeaseLostError ? 'cancelled' : 'error';
                 if (error instanceof LeaseLostError) {
                     this.leadership.invalidate(lease);
                     logger.info(
@@ -136,9 +132,6 @@ export class PollingService implements IPollingService {
                         'Failed to record source poll failure'
                     );
                 }
-            } finally {
-                pollRuns.inc({ stream: sourceStream, outcome });
-                pollDuration.observe({ stream: sourceStream }, (performance.now() - started) / 1000);
             }
         });
     }

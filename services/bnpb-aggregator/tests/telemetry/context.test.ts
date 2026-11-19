@@ -1,10 +1,6 @@
 import { Attributes, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { NodeSDK, NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import { captureTrace, producerTrace, readTraceHeaders, traced, traceLogFields } from '../../src/telemetry/context';
-import { UnprocessedRetryService } from '../../src/services/unprocessed-retry.service';
-import { IUnprocessedMessageRepository } from '../../src/repositories/unprocessed-message.repository';
-import { IUnprocessedHandlerRegistry } from '../../src/services/unprocessed-handler.registry';
-import { IBackgroundLeadershipService } from '../../src/services/background-leadership.service';
 
 it('keeps independent async flows isolated and restores an outbox parent for publishing and consuming', async () => {
     const exported: Array<{ name: string; attributes: Attributes; status: { code: SpanStatusCode } }> = [];
@@ -47,39 +43,6 @@ it('keeps independent async flows isolated and restores an outbox parent for pub
             SpanKind.CONSUMER
         );
         producer.span.end();
-        const entry = {
-            messageId: 'retry-entry',
-            source: 'PVMBG',
-            context: { kind: 'poll.volcanic-report' },
-            correlationId: 'original-poll',
-            attempts: 1,
-            traceContext: persisted,
-        };
-        const repository = {
-            findDueIds: async () => [entry.messageId],
-            claim: async () => entry,
-            readPayload: async () => Buffer.from('{}'),
-            complete: jest.fn(async () => {
-                expect(traceLogFields().traceId).toBe(first.fields.traceId);
-                return true;
-            }),
-        };
-        const handler = jest.fn(async () => {
-            expect(traceLogFields().traceId).toBe(first.fields.traceId);
-            expect(captureTrace().traceparent).toContain(first.fields.traceId);
-            return { hazardId: 'recovered-hazard' };
-        });
-        const worker = new UnprocessedRetryService(
-            repository as unknown as IUnprocessedMessageRepository,
-            { get: () => handler } as unknown as IUnprocessedHandlerRegistry,
-            { current: () => ({ ownerId: 'test-owner', epoch: 1 }) } as IBackgroundLeadershipService
-        );
-        expect(await worker.runOnce()).toBe(1);
-        expect(handler).toHaveBeenCalledTimes(1);
-        expect(repository.complete).toHaveBeenCalledWith(entry, expect.anything(), {
-            kind: 'recovered',
-            hazardId: 'recovered-hazard',
-        });
         await expect(
             traced('failed-work', {}, async () => {
                 throw new Error('private database details');

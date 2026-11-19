@@ -44,7 +44,6 @@ export interface UnprocessedMessage {
     sizeBytes: number;
     sha256: string;
     correlationId: string;
-    traceContext?: Record<string, string>;
     sourceRefId: string | null;
     /** Receive order of the quarantined record, reused on replay (absent on entries written before it existed). */
     ordering?: ReceiveOrder | null;

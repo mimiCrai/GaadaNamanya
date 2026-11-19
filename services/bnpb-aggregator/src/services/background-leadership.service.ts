@@ -1,6 +1,5 @@
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
-import { leadershipChanges, renewalErrors } from '../telemetry/aggregator-metrics';
 import { hostname } from 'node:os';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
@@ -53,7 +52,6 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
         const previous = this.token;
         this.token = next;
         if (previous?.epoch === next?.epoch && Boolean(previous) === Boolean(next)) return;
-        leadershipChanges.inc({ state: next ? 'leader' : 'follower' });
         const view = next && !this.stopped ? { ...next } : null;
         for (const listener of this.listeners) {
             try {
@@ -99,7 +97,6 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
                 );
             }
         } catch (error) {
-            renewalErrors.inc();
             this.setToken(null);
             logger.warn(
                 { error, instanceId: this.instanceId },

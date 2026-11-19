@@ -1,5 +1,4 @@
 import { shutdownTelemetry } from './telemetry/instrumentation';
-import { registerAggregatorCollectors } from './telemetry/aggregator-metrics';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { db } from './db';
@@ -33,7 +32,6 @@ async function main() {
         const satelliteIngest = container.get<ISatelliteIngestService>(TYPES.ISatelliteIngestService);
         const unprocessedRepository = container.get<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository);
         const sensorPantai = container.get<ISensorPantaiService>(TYPES.ISensorPantaiService);
-        registerAggregatorCollectors(db, leadership);
         setUnprocessedCounter(() => unprocessedRepository.countByStatus());
         leadership.start();
         poller.start();

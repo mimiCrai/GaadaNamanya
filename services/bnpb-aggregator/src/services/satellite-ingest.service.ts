@@ -1,6 +1,5 @@
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
-import { captureTrace, traced } from '../telemetry/context';
 import { ISatelliteFeedClient, SATELLITE_STREAM_ENDPOINT, SatelliteHttpError } from '../clients/satellite.client';
 import { TYPES } from '../constants/types';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
@@ -601,32 +600,26 @@ export class SatelliteIngestService implements ISatelliteIngestService {
         }
         const batch = session.pending.splice(0);
         if (batch.length === 0) return;
-        return traced(
-            'satellite.flush',
-            { 'correlation.id': session.correlationId, 'messaging.batch.message_count': batch.length },
-            async () => {
-                try {
-                    this.divertOversized(session, batch);
-                    // DLQ first: if the append below fails, the replayed event maps to the same message_id (no duplicate).
-                    for (const entry of batch) {
-                        if (!entry.dlq) continue;
-                        const stored = await this.recorder.record(entry.dlq, session.lease);
-                        if (entry.record) entry.record.messageId = stored.messageId;
-                    }
-                    const records = batch.flatMap((entry) => (entry.record ? [entry.record] : []));
-                    if (records.length === 0) return;
-                    await this.writer.append(records, session.lease);
-                    this.setDurable(records[records.length - 1].offset);
-                } catch (error) {
-                    const failure = error instanceof LeaseLostError ? error : new SatelliteWriteError(error);
-                    // Synchronously, in the same microtask as the rejection: the next queued flushNow sees it first.
-                    session.poisoned = failure;
-                    session.discard = true;
-                    session.pending = [];
-                    throw failure;
-                }
+        try {
+            this.divertOversized(session, batch);
+            // DLQ first: if the append below fails, the replayed event maps to the same message_id (no duplicate).
+            for (const entry of batch) {
+                if (!entry.dlq) continue;
+                const stored = await this.recorder.record(entry.dlq, session.lease);
+                if (entry.record) entry.record.messageId = stored.messageId;
             }
-        );
+            const records = batch.flatMap((entry) => (entry.record ? [entry.record] : []));
+            if (records.length === 0) return;
+            await this.writer.append(records, session.lease);
+            this.setDurable(records[records.length - 1].offset);
+        } catch (error) {
+            const failure = error instanceof LeaseLostError ? error : new SatelliteWriteError(error);
+            // Synchronously, in the same microtask as the rejection: the next queued flushNow sees it first.
+            session.poisoned = failure;
+            session.discard = true;
+            session.pending = [];
+            throw failure;
+        }
     }
 
     /**
@@ -639,7 +632,7 @@ export class SatelliteIngestService implements ISatelliteIngestService {
         for (const entry of batch) {
             const record = entry.record;
             if (!record || record.kind === 'unprocessed') continue;
-            const bytes = encodedMessageBytes(encodeRawRecord(record, session.lease, captureTrace()));
+            const bytes = encodedMessageBytes(encodeRawRecord(record, session.lease));
             if (bytes <= limit) continue;
             const error = payloadTooLarge(bytes, limit);
             entry.dlq = {
