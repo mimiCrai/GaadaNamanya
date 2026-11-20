@@ -14,6 +14,7 @@ async function main() {
         const shutdown = () => {
             if (stopping) return;
             stopping = true;
+            setTimeout(() => process.exit(1), 5000).unref();
             server.close(() => void shutdownTelemetry().finally(() => process.exit(0)));
         };
         process.once('SIGINT', shutdown);

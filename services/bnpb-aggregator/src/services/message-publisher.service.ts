@@ -1,6 +1,7 @@
 import { inject, injectable } from 'inversify';
 import { Kafka, Message, Producer, Transaction } from 'kafkajs';
 import { logger } from '../libs/logger';
+import { fencingRejectionsTotal } from '../libs/metrics';
 import env from '../util/env';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
@@ -149,6 +150,16 @@ export class MessagePublisher implements IMessagePublisher {
             logger.debug(context, 'Kafka message transaction committed');
         } catch (error) {
             await transaction?.abort().catch(() => undefined);
+            if (
+                error &&
+                typeof error === 'object' &&
+                'type' in error &&
+                ['PRODUCER_FENCED', 'INVALID_PRODUCER_EPOCH', 'TRANSACTION_COORDINATOR_FENCED'].includes(
+                    String(error.type)
+                )
+            ) {
+                fencingRejectionsTotal.inc({ backend: 'kafka' });
+            }
             await this.close();
             logger.error({ error, ...context }, 'Failed to publish Kafka message');
             throw error;

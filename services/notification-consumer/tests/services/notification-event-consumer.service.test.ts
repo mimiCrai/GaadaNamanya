@@ -2,6 +2,7 @@ import { HazardEventMessage } from '../../src/contracts/hazard-event-message';
 import { NotificationEventConsumer } from '../../src/services/notification-event-consumer.service';
 import { INotificationService } from '../../src/services/notification.service';
 import { IMessageSubscriber, MessageHandler, SubscribeOptions } from '../../src/services/message-subscriber.service';
+import { criticalNotificationDelivery } from '../../src/telemetry/consumer-metrics';
 
 const message: HazardEventMessage = {
     eventId: '11111111-1111-4111-8111-111111111111',
@@ -38,6 +39,7 @@ describe('NotificationEventConsumer', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        criticalNotificationDelivery.reset();
     });
 
     it('validates and applies a hazard event to the notification inbox', async () => {
@@ -47,7 +49,10 @@ describe('NotificationEventConsumer', () => {
         await consumer.start();
         await handler(message);
 
-        expect(subscriber.subscribe).toHaveBeenCalledWith({ topic: expect.any(String), fromBeginning: true }, expect.any(Function));
+        expect(subscriber.subscribe).toHaveBeenCalledWith(
+            { topic: expect.any(String), fromBeginning: true },
+            expect.any(Function)
+        );
         expect(notificationService.apply).toHaveBeenCalledWith(message);
     });
 
@@ -63,9 +68,53 @@ describe('NotificationEventConsumer', () => {
     it('accepts critical coastal events without blocking the Kafka partition', async () => {
         const consumer = new NotificationEventConsumer(subscriber, notificationService);
         await consumer.start();
-        const coastal = { ...message, hazard: { ...message.hazard, source: 'SENSOR_PANTAI', hazardType: 'COASTAL', attributes: { critical: true } } };
+        const coastal = {
+            ...message,
+            hazard: {
+                ...message.hazard,
+                source: 'SENSOR_PANTAI',
+                hazardType: 'COASTAL',
+                attributes: { critical: true },
+            },
+        };
         await handler(coastal);
         expect(notificationService.apply).toHaveBeenCalledWith(coastal);
+    });
+
+    it('measures committed critical delivery using ingestion time, not the sensor virtual clock', async () => {
+        (notificationService.apply as jest.Mock).mockResolvedValue('created');
+        const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(message.hazard.ingestedAt) + 2500);
+        try {
+            const consumer = new NotificationEventConsumer(subscriber, notificationService);
+            await consumer.start();
+            await handler({
+                ...message,
+                hazard: { ...message.hazard, source: 'SENSOR_PANTAI', attributes: { critical: true } },
+            });
+            const values = (await criticalNotificationDelivery.get()).values;
+            expect(values.find((value) => value.metricName?.endsWith('_count'))?.value).toBe(1);
+            expect(values.find((value) => value.metricName?.endsWith('_sum'))?.value).toBe(2.5);
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    it.each(['duplicate', 'ignored', 'failed'])('does not count %s critical deliveries', async (result) => {
+        const apply = notificationService.apply as jest.Mock;
+        if (result === 'failed') apply.mockRejectedValueOnce(new Error('store down'));
+        else apply.mockResolvedValueOnce(result);
+        const consumer = new NotificationEventConsumer(subscriber, notificationService);
+        await consumer.start();
+        const work = handler({
+            ...message,
+            hazard: { ...message.hazard, source: 'SENSOR_PANTAI', attributes: { critical: true } },
+        });
+        if (result === 'failed') await expect(work).rejects.toThrow('store down');
+        else await work;
+        expect(
+            (await criticalNotificationDelivery.get()).values.find((value) => value.metricName?.endsWith('_count'))
+                ?.value ?? 0
+        ).toBe(0);
     });
 
     it.each(['ignored', 'duplicate'] as const)(

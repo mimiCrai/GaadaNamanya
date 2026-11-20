@@ -14,3 +14,10 @@ export const consumerDuration = new Histogram({
     buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
     registers: [metricsRegistry],
 });
+
+export const criticalNotificationDelivery = new Histogram({
+    name: 'bnpb_critical_notification_delivery_seconds',
+    help: 'Critical Sensor Pantai delivery from canonical ingestedAt to inbox commit; excludes source polling delay',
+    buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 3, 4, 5, 10, 30, 60],
+    registers: [metricsRegistry],
+});

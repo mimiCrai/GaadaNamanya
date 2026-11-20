@@ -5,6 +5,7 @@ import { logger } from '../libs/logger';
 import { INotificationService } from './notification.service';
 import { IMessageSubscriber } from './message-subscriber.service';
 import env from '../util/env';
+import { criticalNotificationDelivery } from '../telemetry/consumer-metrics';
 
 export interface INotificationEventConsumer {
     start(): Promise<void>;
@@ -22,6 +23,14 @@ export class NotificationEventConsumer implements INotificationEventConsumer {
         await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC, fromBeginning: true }, async (event) => {
             const message = hazardEventMessageSchema.parse(event);
             const result = await this.notificationService.apply(message);
+            if (
+                result === 'created' &&
+                message.hazard.source === 'SENSOR_PANTAI' &&
+                message.hazard.attributes.critical === true
+            ) {
+                const seconds = (Date.now() - Date.parse(message.hazard.ingestedAt)) / 1000;
+                if (seconds >= 0) criticalNotificationDelivery.observe(seconds);
+            }
             logger.info(
                 {
                     eventId: message.eventId,

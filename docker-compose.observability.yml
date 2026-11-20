@@ -5,7 +5,6 @@ x-telemetry: &telemetry
     OTEL_BSP_SCHEDULE_DELAY: 1000
     OTEL_TRACES_SAMPLER: parentbased_traceidratio
     OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
-    NODE_ENV: production
 
 services:
     bmkg:

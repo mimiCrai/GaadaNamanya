@@ -4,6 +4,7 @@ import { SourceStream, SourceSyncStatus } from '../../src/db/schema/source-sync-
 import { LeaseLostError } from '../../src/db/schema/background-leases';
 import { SensorClientError } from '../../src/clients/sensor-pantai.types';
 import env from '../../src/util/env';
+import { sensorCircuitState } from '../../src/libs/metrics';
 
 describe('Sensor Pantai ingestion', () => {
     const lease = { ownerId: 'leader', epoch: 7 };
@@ -43,6 +44,7 @@ describe('Sensor Pantai ingestion', () => {
 
     beforeEach(() => {
         jest.resetAllMocks();
+        sensorCircuitState.reset();
         state = {
             sourceStream: SourceStream.SensorPantai,
             status: SourceSyncStatus.Unavailable,
@@ -87,6 +89,7 @@ describe('Sensor Pantai ingestion', () => {
         await poll();
         expect(client.getStations).not.toHaveBeenCalled();
         expect(client.getObservations).not.toHaveBeenCalled();
+        expect((await sensorCircuitState.get()).values[0].value).toBe(1);
     });
 
     it('maps a critical observation to COASTAL/AWAS using source station coordinates', async () => {

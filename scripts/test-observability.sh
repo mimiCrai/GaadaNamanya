@@ -21,3 +21,5 @@ trap cleanup EXIT
 "${compose[@]}" up --build -d
 "${compose[@]}" --profile test build observability-tests
 "${compose[@]}" --profile test run --rm --no-deps observability-tests
+"${compose[@]}" --profile test run --build --rm --no-deps \
+    canonical-store-tests node --test tests/integration/leadership.test.cjs

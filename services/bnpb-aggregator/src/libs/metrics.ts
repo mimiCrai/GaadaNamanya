@@ -4,6 +4,53 @@ export { metricsRegistry };
 
 const PREFIX = 'bnpb_aggregator_';
 
+export const backgroundLeader = new Gauge({
+    name: `${PREFIX}background_leader`,
+    help: '1 while this instance believes it owns the background lease; Mongo fencing remains authoritative',
+    registers: [metricsRegistry],
+});
+
+export const leadershipChangesTotal = new Counter({
+    name: `${PREFIX}leadership_changes_total`,
+    help: 'Background lease grants, epoch changes and losses',
+    labelNames: ['role'] as const,
+    registers: [metricsRegistry],
+});
+
+export const fencingRejectionsTotal = new Counter({
+    name: `${PREFIX}fencing_rejections_total`,
+    help: 'Operations rejected by Mongo lease guards or Kafka producer fencing; includes retry attempts',
+    labelNames: ['backend'] as const,
+    registers: [metricsRegistry],
+});
+
+export const sensorRequestsTotal = new Counter({
+    name: `${PREFIX}sensor_requests_total`,
+    help: 'Sensor Pantai HTTP attempts, including failures and timeouts',
+    labelNames: ['endpoint', 'status_code'] as const,
+    registers: [metricsRegistry],
+});
+
+export const sensorRequestSeconds = new Histogram({
+    name: `${PREFIX}sensor_request_seconds`,
+    help: 'Sensor Pantai HTTP response and body-read duration',
+    labelNames: ['endpoint'] as const,
+    buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [metricsRegistry],
+});
+
+export const sensorCircuitState = new Gauge({
+    name: `${PREFIX}sensor_circuit_state`,
+    help: 'Sensor Pantai circuit: 0 closed, 1 open, 2 probing after cooldown; read on the current leader',
+    registers: [metricsRegistry],
+});
+
+export const sensorSourceLagSeconds = new Gauge({
+    name: `${PREFIX}sensor_source_lag_seconds`,
+    help: 'Latest observation lag relative to generated_at, both on the sensor virtual clock',
+    registers: [metricsRegistry],
+});
+
 export const parseFailuresTotal = new Counter({
     name: `${PREFIX}parse_failures_total`,
     help: 'Inbound messages that could not be processed, by source and failure category',

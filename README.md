@@ -69,9 +69,15 @@ Sensor Pantai M2 dijalankan dari image resmi pada `http://localhost:8083`. Aggre
 
 Jalankan `bash scripts/start-observability.sh` untuk menambahkan Prometheus, Grafana, OpenTelemetry Collector, dan Tempo ke stack. Grafana tersedia di `http://localhost:3006`, dengan dashboard **BNPB → BNPB Overview** dan pencarian trace melalui **Explore → Tempo**. Port, akun Grafana, dan sampling trace tersedia pada bagian monitoring di `.env.example`; nilai default juga berlaku untuk `.env` lama.
 
-Ketujuh service menyediakan `/metrics`. Dashboard menampilkan throughput, error, dan p95 HTTP, pemrosesan consumer, serta metrik DLQ/satelit yang sudah tersedia. HTTP dan database di-trace otomatis; context pada alur polling BMKG/PVMBG diteruskan melalui outbox dan Kafka ke consumer. Log JSON menambahkan `traceId` dan `spanId` selama span aktif pada correlation ID yang sudah ada.
+Ketujuh service menyediakan `/metrics`. Dashboard menampilkan throughput, error, dan p95 HTTP, pemrosesan consumer, DLQ/satelit, serta indikator P2/P5 berikut:
 
-Gunakan `bash scripts/test-observability.sh` untuk menguji scrape seluruh service/replica, dashboard, trace Client API–Auth–Aggregator, dan trace polling–outbox–Kafka–kedua consumer. Test memakai project/volume terpisah dan membersihkannya setelah selesai; ringkasan hasil disimpan di `test-results/observability/summary.json`. Lihat [panduan observabilitas](docs/observability.md).
+- Leader Aggregator, perubahan leadership, dan penolakan fencing Mongo/Kafka.
+- Jumlah request, p95 HTTP, circuit breaker, dan source lag Sensor Pantai. Status circuit hanya ditampilkan dari leader: `0` closed, `1` open, `2` probing.
+- p95 pengiriman event kritis Sensor Pantai dari `ingestedAt` kanonik sampai inbox notifikasi berhasil commit. Duplikat dan transaksi gagal tidak dihitung. Batas 5 detik ditandai pada grafik; metrik ini belum mencakup waktu sebelum ingestion, sehingga pembuktian penuh P5 tetap membutuhkan pengujian dari sisi sumber. Timestamp virtual `observed_at` tidak dibandingkan langsung dengan jam server.
+
+HTTP dan database di-trace otomatis; context polling BMKG/PVMBG/Sensor Pantai diteruskan melalui outbox dan Kafka ke consumer. Log menambahkan `traceId` dan `spanId` selama span aktif pada correlation ID yang sudah ada. Cari span `source.poll` di Tempo, lalu filter atribut `source.stream=SENSOR_PANTAI` untuk jalur sensor. Overlay tidak mengubah `NODE_ENV`, ukuran connection pool, atau format log service, sehingga konfigurasi runtime tetap sebanding dengan stack tanpa observabilitas.
+
+Gunakan `bash scripts/test-observability.sh` untuk menguji scrape seluruh service/replica, query dashboard, metrik P2/P5, trace Client API–Auth–Aggregator, dan trace polling–outbox–Kafka–kedua consumer, termasuk Sensor Pantai. Test memakai project/volume terpisah dan membersihkannya setelah selesai; ringkasan hasil disimpan di `test-results/observability/summary.json`.
 
 ## Autentikasi dan Client API
 

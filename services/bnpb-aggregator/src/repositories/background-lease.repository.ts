@@ -10,6 +10,7 @@ import {
     LeaseToken,
 } from '../db/schema/background-leases';
 import env from '../util/env';
+import { fencingRejectionsTotal } from '../libs/metrics';
 
 export interface IBackgroundLeaseRepository {
     acquireOrRenew(ownerId: string): Promise<BackgroundLease | null>;
@@ -71,7 +72,10 @@ export class BackgroundLeaseRepository implements IBackgroundLeaseRepository {
             [{ $set: { checkedAt: '$$NOW', guardVersion: { $add: ['$guardVersion', 1] } } }],
             { session, returnDocument: 'after', ...(session ? {} : { timeoutMS: env.LEASE_OPERATION_TIMEOUT_MS }) }
         );
-        if (!result) throw new LeaseLostError();
+        if (!result) {
+            fencingRejectionsTotal.inc({ backend: 'mongo' });
+            throw new LeaseLostError();
+        }
         return result.checkedAt;
     }
 

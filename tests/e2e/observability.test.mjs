@@ -56,7 +56,9 @@ test('observability: real HTTP, durable outbox, Kafka, metrics and provisioned d
         const credentials = Buffer.from(`${process.env.GRAFANA_ADMIN_USER ?? 'admin'}:${process.env.GRAFANA_ADMIN_PASSWORD ?? 'local-grafana-password'}`).toString('base64');
         const options = { headers: { Authorization: `Basic ${credentials}` } };
         const dashboard = await waitFor('provisioned Grafana dashboard', () => json(`${grafana}/api/dashboards/uid/bnpb-overview`, options));
-        assert.equal(dashboard.dashboard.panels.length, 10);
+        for (const title of ['Aggregator background leader', 'Fencing rejections', 'Sensor Pantai circuit', 'Critical notification p95: canonical to inbox']) {
+            assert.ok(dashboard.dashboard.panels.some(panel => panel.title === title), `Missing panel: ${title}`);
+        }
         const sources = await json(`${grafana}/api/datasources`, options);
         assert.ok(sources.some(source => source.uid === 'prometheus'));
         assert.ok(sources.some(source => source.uid === 'tempo'));
@@ -109,6 +111,38 @@ test('observability: real HTTP, durable outbox, Kafka, metrics and provisioned d
         const metrics = await query('sum by(service) (bnpb_consumer_messages_total{outcome="processed"})');
         assert.equal(metrics.length, 2);
         assert.ok(metrics.every(row => Number(row.value[1]) > 0));
+    });
+
+    await t.test('exposes P2/P5 leadership, sensor circuit and critical notification metrics', async () => {
+        await waitFor('one active leader', async () => Number((await query('sum(bnpb_aggregator_background_leader)'))[0]?.value[1]) === 1);
+        await waitFor('sensor HTTP attempts', async () => Number((await query('sum(bnpb_aggregator_sensor_requests_total)'))[0]?.value[1]) > 0);
+        const circuit = await query('bnpb_aggregator_sensor_circuit_state and on(instance) (bnpb_aggregator_background_leader == 1)');
+        assert.equal(circuit.length, 1);
+        assert.ok([0, 1, 2].includes(Number(circuit[0].value[1])));
+        const deliveries = await waitFor('committed critical deliveries', async () => {
+            const rows = await query('sum(bnpb_critical_notification_delivery_seconds_count)');
+            return Number(rows[0]?.value[1]) > 0 ? Number(rows[0].value[1]) : undefined;
+        });
+        evidence.criticalNotificationsMeasured = deliveries;
+        evidence.latencyScope = 'canonical ingestedAt to notification inbox commit; excludes sensor polling delay';
+    });
+
+    await t.test('traces Sensor Pantai HTTP polling through outbox and both Kafka consumers', async () => {
+        const chain = await waitFor('Sensor Pantai ingestion trace', async () => {
+            const q = encodeURIComponent('{ resource.service.name = "bnpb-aggregator" && name = "source.poll" }');
+            const search = await json(`${tempo}/api/search?q=${q}&limit=50`);
+            for (const candidate of search.traces ?? []) {
+                const body = await json(`${tempo}/api/traces/${candidate.traceID}`);
+                const serialized = JSON.stringify(body);
+                const names = servicesIn(body);
+                if (serialized.includes('SENSOR_PANTAI') && serialized.includes('/v1/observations') &&
+                    serialized.includes('kafka.publish') && names.has('dashboard-consumer') && names.has('notification-consumer')) {
+                    return { id: candidate.traceID, body };
+                }
+            }
+        });
+        evidence.sensorTraceId = chain.id;
+        evidence.sensorServices = [...servicesIn(chain.body)];
     });
     await writeFile('/results/summary.json', JSON.stringify(evidence, null, 2) + '\n');
 });

@@ -1,5 +1,6 @@
 import { BackgroundLeadershipService } from '../../src/services/background-leadership.service';
 import { IBackgroundLeaseRepository } from '../../src/repositories/background-lease.repository';
+import { backgroundLeader, leadershipChangesTotal } from '../../src/libs/metrics';
 
 describe('BackgroundLeadershipService', () => {
     const leases = { acquireOrRenew: jest.fn(), release: jest.fn() };
@@ -8,6 +9,8 @@ describe('BackgroundLeadershipService', () => {
     beforeEach(() => {
         jest.useFakeTimers();
         jest.resetAllMocks();
+        backgroundLeader.reset();
+        leadershipChangesTotal.reset();
         leases.release.mockResolvedValue(undefined);
         service = new BackgroundLeadershipService(leases as unknown as IBackgroundLeaseRepository);
     });
@@ -47,6 +50,13 @@ describe('BackgroundLeadershipService', () => {
         expect(service.current()?.epoch).toBe(3);
         await jest.advanceTimersByTimeAsync(2000);
         expect(service.current()).toBeNull();
+        expect((await backgroundLeader.get()).values[0].value).toBe(0);
+        expect((await leadershipChangesTotal.get()).values).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ labels: { role: 'leader' }, value: 1 }),
+                expect.objectContaining({ labels: { role: 'follower' }, value: 1 }),
+            ])
+        );
     });
 
     it('does not let a delayed old task invalidate a newer grant', async () => {

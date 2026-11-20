@@ -1,6 +1,7 @@
 import { SensorPantaiClient } from '../../src/clients/sensor-pantai.client';
 import { SensorClientError } from '../../src/clients/sensor-pantai.types';
 import env from '../../src/util/env';
+import { sensorRequestsTotal } from '../../src/libs/metrics';
 
 describe('SensorPantaiClient', () => {
     const options = { correlationId: 'request-1', instanceId: 'owner-1', fencingToken: 7 };
@@ -10,6 +11,7 @@ describe('SensorPantaiClient', () => {
     const validPage = { generated_at: '2026-11-12T00:00:00Z', items: [], next_cursor: null };
     beforeEach(() => {
         fetchMock.mockReset();
+        sensorRequestsTotal.reset();
         global.fetch = fetchMock;
         env.SENSOR_PANTAI_MAX_RESPONSE_BYTES = originalLimit;
     });
@@ -37,6 +39,20 @@ describe('SensorPantaiClient', () => {
             status: 429,
             retryAfterMs: 3000,
         });
+        expect((await sensorRequestsTotal.get()).values).toEqual([
+            expect.objectContaining({ labels: { endpoint: '/v1/observations', status_code: '429' }, value: 1 }),
+        ]);
+    });
+
+    it('counts a timeout without including the cursor or credential in metric labels', async () => {
+        fetchMock.mockRejectedValue(new DOMException('Timed out', 'TimeoutError'));
+        await expect(new SensorPantaiClient().getObservations('private-cursor', options)).rejects.toThrow();
+        expect((await sensorRequestsTotal.get()).values).toEqual([
+            expect.objectContaining({
+                labels: { endpoint: '/v1/observations', status_code: 'network_error' },
+                value: 1,
+            }),
+        ]);
     });
 
     it.each([
