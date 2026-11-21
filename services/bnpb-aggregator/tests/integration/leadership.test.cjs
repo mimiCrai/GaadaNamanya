@@ -14,6 +14,7 @@ const { PendingTsunamiWarningRepository } = require('../../dist/src/repositories
 const { OutboxEventRepository } = require('../../dist/src/repositories/outbox-event.repository');
 const { LeaseLostError, backgroundLeaseId } = require('../../dist/src/db/schema/background-leases');
 const { SensorPantaiRepository } = require('../../dist/src/repositories/sensor-pantai.repository');
+const { fencingRejectionsTotal } = require('../../dist/src/libs/metrics');
 
 test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, async (t) => {
     assert.match(process.env.DATABASE_NAME, /_integration$/);
@@ -109,6 +110,8 @@ test('MongoDB lease election and transactional fencing', { timeout: 120_000 }, a
                     () => sensor.rejectBatch([{ payload: { stale: true }, reason: 'old owner' }], 'fence-test', old),
                 ])
                     await assert.rejects(work(), LeaseLostError);
+                const fenceMetrics = await fencingRejectionsTotal.get();
+                assert.ok(fenceMetrics.values.some(row => row.labels.backend === 'mongo' && row.value >= 15));
                 assert.equal(await db.collection('hazard_events').countDocuments(), 1);
                 assert.equal((await pending.findOldest(10)).length, 1);
                 assert.equal((await outbox.findUnpublished(10)).length, 1);

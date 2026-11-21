@@ -6,6 +6,7 @@ import { LeaseToken } from '../db/schema/background-leases';
 import { SourceStream, SourceSyncState, SourceSyncStatus, sourceSyncStates } from '../db/schema/source-sync-states';
 import { SensorStation } from '../clients/sensor-pantai.types';
 import env from '../util/env';
+import { sensorCircuitState } from '../libs/metrics';
 import { IBackgroundLeaseRepository } from './background-lease.repository';
 
 export const sensorRejectedMessages = 'sensor_rejected_messages';
@@ -62,7 +63,7 @@ export class SensorPantaiRepository implements ISensorPantaiRepository {
     }
 
     async checkpoint(state: SensorSyncState, stale: boolean, lease: LeaseToken): Promise<SensorSyncState> {
-        return this.leases.withLease(lease, async (session, at) => {
+        const next = await this.leases.withLease(lease, async (session, at) => {
             const failures = stale ? state.consecutiveFailures + 1 : 0;
             const next = {
                 ...state,
@@ -82,10 +83,12 @@ export class SensorPantaiRepository implements ISensorPantaiRepository {
                 .updateOne({ _id: SourceStream.SensorPantai }, { $set: next }, { session });
             return next;
         });
+        sensorCircuitState.set(next.retryAt ? 1 : 0);
+        return next;
     }
 
     async recordFailure(message: string, retryAfterMs: number, lease: LeaseToken): Promise<void> {
-        await this.leases.withLease(lease, async (session, at) => {
+        const delay = await this.leases.withLease(lease, async (session, at) => {
             const previous = await this.db
                 .collection<SensorSyncState>(sourceSyncStates)
                 .findOne({ _id: SourceStream.SensorPantai }, { session });
@@ -108,7 +111,9 @@ export class SensorPantaiRepository implements ISensorPantaiRepository {
                 },
                 { session }
             );
+            return delay;
         });
+        sensorCircuitState.set(delay > 0 ? 1 : 0);
     }
 
     async reject(payload: unknown, reason: string, correlationId: string, lease: LeaseToken): Promise<void> {

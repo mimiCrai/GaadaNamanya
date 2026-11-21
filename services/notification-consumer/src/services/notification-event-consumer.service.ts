@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import { inject, injectable } from 'inversify';
 import { hazardEventMessageSchema } from '../contracts/hazard-event-message';
 import { TYPES } from '../constants/types';
@@ -5,6 +6,7 @@ import { logger } from '../libs/logger';
 import { INotificationService } from './notification.service';
 import { IMessageSubscriber } from './message-subscriber.service';
 import env from '../util/env';
+import { criticalNotificationProcessing } from '../telemetry/consumer-metrics';
 
 export interface INotificationEventConsumer {
     start(): Promise<void>;
@@ -21,7 +23,15 @@ export class NotificationEventConsumer implements INotificationEventConsumer {
     async start(): Promise<void> {
         await this.subscriber.subscribe<unknown>({ topic: env.KAFKA_TOPIC, fromBeginning: true }, async (event) => {
             const message = hazardEventMessageSchema.parse(event);
+            const startedAt = performance.now();
             const result = await this.notificationService.apply(message);
+            if (
+                result === 'created' &&
+                message.hazard.source === 'SENSOR_PANTAI' &&
+                message.hazard.attributes.critical === true
+            ) {
+                criticalNotificationProcessing.observe((performance.now() - startedAt) / 1000);
+            }
             logger.info(
                 {
                     eventId: message.eventId,

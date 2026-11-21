@@ -106,6 +106,10 @@ describe('Hazard admission over HTTP with verified JWT roles', () => {
         pending.forEach((work) => work.resolve(payload));
         expect((await media).status).toBe(200);
         expect((await field).status).toBe(200);
+        const metrics = await request(app).get('/metrics').expect(200);
+        for (const role of ['public', 'lapangan', 'internal']) {
+            expect(metrics.text).toContain(`status_code="503",role="${role}"`);
+        }
     });
 
     it('does not let a public token claim reserved capacity through role headers', async () => {

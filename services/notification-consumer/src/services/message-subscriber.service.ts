@@ -1,5 +1,8 @@
 import { injectable } from 'inversify';
 import { Consumer, Kafka } from 'kafkajs';
+import { SpanKind } from '@opentelemetry/api';
+import { readTraceHeaders, traced } from '../telemetry/context';
+import { consumedMessages, consumerDuration } from '../telemetry/consumer-metrics';
 import { logger } from '../libs/logger';
 import env from '../util/env';
 
@@ -52,14 +55,42 @@ export class MessageSubscriber implements IMessageSubscriber {
         await this.consumer.run({
             autoCommit: false,
             eachMessage: async ({ topic, partition, message }) => {
+                const started = performance.now();
+                let outcome = 'error';
                 try {
-                    await handler(JSON.parse(message.value?.toString() ?? 'null') as T);
-                    await this.consumer?.commitOffsets([
-                        { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
-                    ]);
-                } catch (error) {
-                    logger.error({ error, topic, partition, offset: message.offset }, 'Error processing Kafka message');
-                    throw error;
+                    await traced(
+                        'kafka.process',
+                        {
+                            'messaging.system': 'kafka',
+                            'messaging.destination.name': topic,
+                            'messaging.consumer.group.name': env.KAFKA_GROUP_ID,
+                            'messaging.destination.partition.id': String(partition),
+                            'messaging.kafka.message.offset': message.offset,
+                        },
+                        async () => {
+                            try {
+                                await handler(JSON.parse(message.value?.toString() ?? 'null') as T);
+                                await this.consumer?.commitOffsets([
+                                    { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
+                                ]);
+                            } catch (error) {
+                                logger.error(
+                                    { err: error, topic, partition, offset: message.offset },
+                                    'Error processing Kafka message'
+                                );
+                                throw error;
+                            }
+                        },
+                        readTraceHeaders(message.headers),
+                        SpanKind.CONSUMER
+                    );
+                    outcome = 'processed';
+                } finally {
+                    consumedMessages.inc({ topic, group: env.KAFKA_GROUP_ID, outcome });
+                    consumerDuration.observe(
+                        { topic, group: env.KAFKA_GROUP_ID },
+                        (performance.now() - started) / 1000
+                    );
                 }
             },
         });

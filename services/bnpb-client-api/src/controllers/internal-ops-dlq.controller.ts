@@ -49,6 +49,7 @@ export class InternalOpsDlqController {
 
     private async requireInternalOps(req: Request, res: Response): Promise<void> {
         const auth = await this.jwtAuthenticator.authenticate(req.header('authorization'), res.locals.correlationId);
+        res.locals.authRole = auth.role;
         if (auth.role !== 'internal') {
             throw new ApiError(
                 'Hanya BNPB Internal Ops yang boleh memeriksa pesan yang gagal diproses',
