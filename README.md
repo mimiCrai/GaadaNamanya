@@ -288,7 +288,7 @@ Catatan: Anda dapat melacak satu alur berdasarkan correlation ID-nya (dikembalik
 
 ## M2 P3 — Schema evolution, DLQ, dan laporan lapangan (Orang C)
 
-Kebijakan perubahan skema PVMBG dideklarasikan di [SCHEMA_POLICY](docs/orang-c/SCHEMA_POLICY.md); keputusan di [DECISIONS](docs/orang-c/DECISIONS.md) (D-34 s.d. D-41) dan bukti di [EVIDENCE](docs/orang-c/EVIDENCE.md).
+Kebijakan perubahan skema PVMBG dideklarasikan di [SCHEMA_POLICY](docs/SCHEMA_POLICY.md); keputusan di [DECISIONS](docs/orang-c/DECISIONS.md) (D-34 s.d. D-41) dan bukti di [EVIDENCE](docs/orang-c/EVIDENCE.md).
 
 - Mock PVMBG: `POST /admin/schema-version {"mode":"v1|v2_confidence|rename_field|type_change|missing_required"}` (body M1 `{"version":1|2}` tetap berlaku) dan `POST /admin/malformed {"kind":"truncated|deep_nesting|invalid_utf8|oversized","count":1}`.
 - Aggregator: mapping PVMBG dibaca dari direktori `BNPB_AGGREGATOR_PVMBG_MAPPING_DIR` (default `services/bnpb-aggregator/config/pvmbg-mapping`, di-mount read-only) dan dimuat ulang saat hash isinya berubah; status per replica di `GET /internal/pvmbg/mapping`. Pesan terparkir diproses ulang lewat `POST /internal-ops/dlq/replay` di Client API (role `internal`).
