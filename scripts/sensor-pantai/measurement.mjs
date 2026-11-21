@@ -16,42 +16,80 @@ export class Measurement {
     inbox = new Map();
     issues = new Set();
     errors = {};
-    healthy = { sensor: false, audit: false, notification: false };
+    healthy = { sensor: null, audit: null, notification: null };
     previousSourceStart = null;
     previousGeneratedAt = null;
     previousInboxStart = null;
     previousIds = new Set();
     historicalCount = 0;
+    baselineStart = null;
+    latestSourceKey = null;
 
-    source(items, { start, end, generatedAt = null, behindSourceClock = false }, baseline = false) {
+    source(
+        items,
+        {
+            start,
+            end,
+            generatedAt = null,
+            behindSourceClock = false,
+            incremental = false,
+            advance = true,
+            availabilityLower,
+        },
+        baseline = false
+    ) {
         if (behindSourceClock) this.issues.add('source_data_behind_clock');
         if (generatedAt !== null && this.previousGeneratedAt !== null && generatedAt < this.previousGeneratedAt) {
             this.issues.add('source_clock_regressed');
         }
         const ids = new Set(items.map((item) => item.observation_id));
-        if (!baseline && [...this.previousIds].some((id) => !ids.has(id))) this.issues.add('source_history_regressed');
+        if (!baseline && !incremental && [...this.previousIds].some((id) => !ids.has(id)))
+            this.issues.add('source_history_regressed');
+        const priorKey = this.latestSourceKey;
         for (const item of items) {
             const id = item.observation_id;
             const prior = this.known.get(id);
             const next = signature(item);
             if (prior !== undefined && prior !== next) this.issues.add('source_id_changed');
+            const key = `${new Date(item.observed_at).toISOString()}|${id}`;
+            if (incremental && advance && !baseline && prior === undefined && priorKey && key < priorKey) {
+                this.issues.add('source_out_of_order_arrival');
+            }
             if (!baseline && prior === undefined && item.critical === true) {
-                this.expected.set(id, { sourceLower: this.previousSourceStart, sourceUpper: end });
+                this.expected.set(id, { sourceLower: availabilityLower ?? this.previousSourceStart, sourceUpper: end });
             }
             this.known.set(id, next);
+            if (!this.latestSourceKey || key > this.latestSourceKey) this.latestSourceKey = key;
         }
-        if (baseline) this.historicalCount = ids.size;
-        this.previousIds = ids;
+        if (baseline) {
+            this.historicalCount = this.known.size;
+            this.baselineStart ??= start;
+        }
+        if (!incremental) this.previousIds = ids;
         if (
-            baseline ||
-            generatedAt === null ||
-            this.previousGeneratedAt === null ||
-            generatedAt > this.previousGeneratedAt
+            advance &&
+            (baseline ||
+                generatedAt === null ||
+                this.previousGeneratedAt === null ||
+                generatedAt > this.previousGeneratedAt)
         ) {
             this.previousSourceStart = start;
         }
         if (generatedAt !== null)
             this.previousGeneratedAt = Math.max(this.previousGeneratedAt ?? -Infinity, generatedAt);
+    }
+
+    verifySource(items, frame, knownAtStart) {
+        const ids = new Set(items.map((item) => item.observation_id));
+        if ([...knownAtStart].some((id) => !ids.has(id))) this.issues.add('source_history_regressed');
+        if (items.some((item) => !this.known.has(item.observation_id))) this.issues.add('source_cursor_missed_event');
+        this.source(items, {
+            ...frame,
+            generatedAt: null,
+            incremental: true,
+            advance: false,
+            availabilityLower: this.baselineStart,
+        });
     }
 
     audit(items) {
@@ -112,7 +150,7 @@ export class Measurement {
             scope: 'New valid critical observation IDs absent from the baseline and exposed by source scans during collection; receiver is the notification inbox.',
             timing: 'Availability-to-inbox observation bounds from one monotonic observer clock. No source, MongoDB, PostgreSQL or node wall-clock subtraction.',
             assumptions:
-                'Source pagination exposes a complete, consistent retained history with stable observation IDs. Events the source never exposes cannot be counted.',
+                'Source cursors preserve position for appended observations, with consistent retained history and stable IDs. A final full scan checks for cursor omissions; detected out-of-order arrivals or omissions prevent certification. Events the source never exposes cannot be counted.',
             target: { deliveryRatio: 1, onTimeRatio: 0.95, deadlineMs: 5000 },
             historicalExcluded: this.historicalCount,
             newObservationIds: this.known.size - this.historicalCount,
@@ -139,7 +177,7 @@ export class Measurement {
                 lateRemaining: { minimum: allowedLate - possiblyLate, maximum: allowedLate - definitelyLate },
             },
             issues: [...this.issues],
-            endpointHealthyAtEnd: { ...this.healthy },
+            lastEndpointReadHealthy: { ...this.healthy },
             observerErrors: { ...this.errors },
             samples,
         };

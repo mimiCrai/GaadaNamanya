@@ -48,9 +48,12 @@ export async function runMeasurement(
     let stations;
     let stationsAt = -Infinity;
     let nextSensorRequestAt = 0;
+    let sourceCursor = null;
+    let sensorQueue = Promise.resolve();
+    const sourceScans = { full: 0, incremental: 0 };
     const requests = { sensor: 0, audit: 0, notification: 0 };
 
-    async function json(endpoint, path, query = {}) {
+    async function requestJson(endpoint, path, query = {}) {
         if (endpoint === 'sensor') {
             await pause(Math.max(0, nextSensorRequestAt - now()));
             nextSensorRequestAt = now() + options.intervalMs;
@@ -62,7 +65,7 @@ export async function runMeasurement(
         let response;
         try {
             response = await fetchFn(url, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
+                headers: { 'User-Agent': 'bnpb-p5-observer', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                 signal: AbortSignal.timeout(options.timeoutMs),
                 redirect: 'error',
             });
@@ -87,10 +90,17 @@ export async function runMeasurement(
         }
     }
 
-    async function pages(endpoint, path, params = {}) {
-        let cursor = null;
+    function json(endpoint, path, query = {}) {
+        if (endpoint !== 'sensor') return requestJson(endpoint, path, query);
+        const request = sensorQueue.then(() => requestJson(endpoint, path, query));
+        sensorQueue = request.catch(() => undefined);
+        return request;
+    }
+
+    async function pages(endpoint, path, params = {}, initialCursor = null) {
+        let cursor = initialCursor;
         let bytes = 0;
-        const seen = new Set();
+        const seen = new Set(initialCursor === null ? [] : [initialCursor]);
         const result = [];
         for (let page = 0; page < options.maxPages; page++) {
             const body = await json(endpoint, path, { ...params, limit: '1000', cursor });
@@ -107,7 +117,8 @@ export async function runMeasurement(
             if (endpoint === 'sensor' && !iso(body.generated_at)) throw new Error('invalid generated_at');
             result.push(body);
             // The live sensor retains a resume cursor at its tail; a short page bounds this scan.
-            if (body.next_cursor === null || (endpoint === 'sensor' && body.items.length < 1000)) return result;
+            if (body.next_cursor === null || (endpoint === 'sensor' && body.items.length < 1000))
+                return { bodies: result, cursor };
             if (seen.has(body.next_cursor)) throw new Error('cursor cycle');
             seen.add(body.next_cursor);
             cursor = body.next_cursor;
@@ -137,10 +148,11 @@ export async function runMeasurement(
         stationsAt = now();
     }
 
-    async function readSource(baseline = false) {
+    async function readSource({ full = false, baseline = false } = {}) {
+        sourceScans[full ? 'full' : 'incremental']++;
         const start = now();
         if (!stations || now() - stationsAt >= 60000) await readStations();
-        const snapshots = await pages('sensor', '/v1/observations');
+        const { bodies: snapshots, cursor } = await pages('sensor', '/v1/observations', {}, full ? null : sourceCursor);
         if (
             snapshots.some((page) =>
                 page.items.some((item) => item && text(item.station_id) && !stations.has(item.station_id))
@@ -162,74 +174,99 @@ export async function runMeasurement(
             (max, item) => Math.max(max, Date.parse(item.observed_at)),
             -Infinity
         );
-        model.source(
-            [...items.values()],
-            {
-                start,
-                end: now(),
-                generatedAt,
-                behindSourceClock: items.size > 0 && generatedAt - observedAt > (options.maxSourceLagMs ?? 120000),
-            },
-            baseline
-        );
+        const frame = {
+            start,
+            end: now(),
+            generatedAt,
+            incremental: !full,
+            behindSourceClock: items.size > 0 && generatedAt - observedAt > (options.maxSourceLagMs ?? 120000),
+        };
+        if (!full || baseline) {
+            model.source([...items.values()], frame, baseline);
+            sourceCursor = cursor;
+        }
+        return { items: [...items.values()], frame };
     }
 
     async function capture(endpoint, work) {
         try {
-            await work();
+            const result = await work();
             model.healthy[endpoint] = true;
+            return result;
         } catch (error) {
             if (endpoint === 'sensor') nextSensorRequestAt = Math.max(nextSensorRequestAt, now() + 3000);
             model.failure(endpoint, error.message);
         }
     }
-    async function round(includeSource) {
-        await Promise.all([
-            includeSource ? capture('sensor', () => readSource()) : undefined,
-            capture('audit', async () => {
-                const snapshots = await pages('audit', '/internal/audit/events', { source: 'SENSOR_PANTAI' });
-                const items = snapshots.flatMap((page) => page.items);
-                if (
-                    items.some(
-                        (item) => item.source !== 'SENSOR_PANTAI' || !text(item.source_ref_id) || !text(item.hazard_id)
-                    )
+    const auditNeeded = () => [...model.expected.keys()].some((id) => !model.hazards.has(id));
+    const inboxNeeded = () => [...model.expected.keys()].some((id) => !model.inbox.has(model.hazards.get(id)));
+    async function readAudit() {
+        if (!auditNeeded()) return;
+        await capture('audit', async () => {
+            const { bodies } = await pages('audit', '/internal/audit/events', { source: 'SENSOR_PANTAI' });
+            const items = bodies.flatMap((page) => page.items);
+            if (
+                items.some(
+                    (item) => item.source !== 'SENSOR_PANTAI' || !text(item.source_ref_id) || !text(item.hazard_id)
                 )
-                    throw new Error('invalid audit items');
-                model.audit(items);
-            }),
-            capture('notification', async () => {
-                const start = now();
-                const body = await json('notification', '/api/notifications');
-                if (body.partial === true || body.meta?.partial === true || body.next_cursor != null)
-                    throw new Error('incomplete notification response');
-                if (!Array.isArray(body.data) || body.data.some((item) => !text(item.hazardId) || !text(item.eventId)))
-                    throw new Error('invalid notification response');
-                model.notifications(body.data, { start, end: now() });
-            }),
-        ]);
+            )
+                throw new Error('invalid audit items');
+            model.audit(items);
+        });
+    }
+    async function readInbox() {
+        if (!inboxNeeded()) return;
+        await capture('notification', async () => {
+            const start = now();
+            const body = await json('notification', '/api/notifications');
+            if (body.partial === true || body.meta?.partial === true || body.next_cursor != null)
+                throw new Error('incomplete notification response');
+            if (!Array.isArray(body.data) || body.data.some((item) => !text(item.hazardId) || !text(item.eventId)))
+                throw new Error('invalid notification response');
+            model.notifications(body.data, { start, end: now() });
+        });
     }
 
-    await readSource(true);
+    await readSource({ full: true, baseline: true });
+    // Warm the retained tail before starting the timer, excluding the cost of scanning old history.
+    await readSource({ baseline: true });
     model.healthy.sensor = true;
-    const collectionStarted = now();
-    while (!shouldStop() && now() - collectionStarted < options.durationMs) {
-        await round(true);
-        await pause(options.intervalMs);
+    let collecting = true;
+    let sampling = true;
+    async function loop(active, work) {
+        while (active()) {
+            await work();
+            if (active()) await pause(options.intervalMs);
+        }
     }
-    const collectionMs = now() - collectionStarted;
-    const drainStarted = now();
-    do {
-        await round(false);
-        if (now() - drainStarted >= options.drainMs) break;
-        await pause(options.intervalMs);
-    } while (true);
-    return {
-        ...model.report(),
-        collectionMs,
-        drainMs: now() - drainStarted,
-        requests,
-        rejectedPayloads: rejected.size,
-    };
+    const collectionStarted = now();
+    const sourceTask = loop(
+        () => collecting,
+        () => capture('sensor', () => readSource())
+    );
+    const auditTask = loop(() => sampling, readAudit);
+    const inboxTask = loop(() => sampling, readInbox);
+    let collectionMs;
+    let drainMs;
+    try {
+        while (!shouldStop() && now() - collectionStarted < options.durationMs) await pause(options.intervalMs);
+        const knownAtVerification = new Set(model.known.keys());
+        const verification = await capture('sensor', () => readSource({ full: true }));
+        if (!verification) model.issues.add('source_verification_failed');
+        collecting = false;
+        await sourceTask;
+        await capture('sensor', () => readSource());
+        if (verification) model.verifySource(verification.items, verification.frame, knownAtVerification);
+        collectionMs = now() - collectionStarted;
+        const drainStarted = now();
+        while (inboxNeeded() && now() - drainStarted < options.drainMs) await pause(options.intervalMs);
+        drainMs = now() - drainStarted;
+    } finally {
+        collecting = false;
+        sampling = false;
+        await Promise.all([sourceTask, auditTask, inboxTask]);
+    }
+    return { ...model.report(), collectionMs, drainMs, requests, sourceScans, rejectedPayloads: rejected.size };
 }
 
 async function main() {
@@ -325,7 +362,7 @@ async function main() {
                 p95Ms: result.p95Ms,
                 errorBudget: result.errorBudget,
                 issues: result.issues ?? [result.reason],
-                endpointHealthyAtEnd: result.endpointHealthyAtEnd,
+                lastEndpointReadHealthy: result.lastEndpointReadHealthy,
                 observerErrors: result.observerErrors,
                 output,
             },

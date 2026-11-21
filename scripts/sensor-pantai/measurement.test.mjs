@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Measurement } from './measurement.mjs';
 import { runMeasurement, validObservation } from './measure-e2e.mjs';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const observation = (id, critical = true) => ({
     observation_id: id,
@@ -153,25 +154,19 @@ const options = {
     notificationUrl: 'http://notification',
     sensorToken: 'source-secret',
     auditToken: 'audit-secret',
-    durationMs: 1000,
+    durationMs: 150,
     drainMs: 100,
-    intervalMs: 100,
+    intervalMs: 5,
     timeoutMs: 1000,
     maxPages: 4,
     maxRecordBytes: 8192,
     maxFutureMs: 30000,
 };
 function fixture(mode) {
-    let time = 0,
-        sourceCalls = 0,
+    let sourceCalls = 0,
         inboxCalls = 0;
     return {
-        now: () => time,
-        pause: async (ms) => {
-            time += ms;
-        },
         fetchFn: async (url, request) => {
-            time += 10;
             if (url.hostname === 'sensor') assert.equal(request.headers.Authorization, 'Bearer source-secret');
             if (url.hostname === 'aggregator') assert.equal(request.headers.Authorization, 'Bearer audit-secret');
             let body;
@@ -183,7 +178,7 @@ function fixture(mode) {
                 body = {
                     generated_at: '2026-11-12T00:01:00Z',
                     items:
-                        ++sourceCalls === 1
+                        ++sourceCalls <= 2
                             ? [observation('historical')]
                             : [observation('historical'), observation('new')],
                     next_cursor: mode === 'cycle' || mode === 'tail' ? 'same' : null,
@@ -243,4 +238,110 @@ test('excludes malformed critical observations according to the ingestion contra
         validObservation({ ...item, observed_at: '2026-11-12T00:00+0000' }, '2026-11-12T00:00:00Z', stations),
         true
     );
+});
+
+function historyFixture({ size = 6000, backfill = false, slowVerification = false } = {}) {
+    const history = Array.from({ length: size }, (_, i) => observation(`history-${String(i).padStart(6, '0')}`, false));
+    let live = false,
+        tailReads = 0;
+    const trace = {
+        fullStarts: 0,
+        incrementalCursors: [],
+        inboxReads: 0,
+        firstReceiptAt: null,
+        verificationPageAt: null,
+    };
+    return {
+        trace,
+        io: {
+            fetchFn: async (url) => {
+                let body;
+                if (url.pathname === '/v1/stations')
+                    body = {
+                        items: [
+                            { station_id: 'station', name: 'Coast', province: 'Province', latitude: 1, longitude: 1 },
+                        ],
+                    };
+                else if (url.pathname === '/v1/observations') {
+                    const cursor = url.searchParams.get('cursor');
+                    const offset = cursor === null ? 0 : Number(cursor);
+                    if (cursor === null) trace.fullStarts++;
+                    if (offset >= size) {
+                        trace.incrementalCursors.push(cursor);
+                        if (++tailReads >= 3) live = true;
+                    }
+                    if (slowVerification && trace.fullStarts === 2 && offset < size) {
+                        await delay(35);
+                        trace.verificationPageAt = performance.now();
+                    }
+                    const rows = [...history, ...(live ? [observation('zz-critical')] : [])];
+                    if (live && backfill)
+                        rows.unshift({ ...observation('backfilled-critical'), observed_at: '2026-11-11T23:59:00Z' });
+                    const items = rows.slice(offset, offset + 1000);
+                    body = { generated_at: '2026-11-12T00:01:00Z', items, next_cursor: String(offset + items.length) };
+                } else if (url.pathname === '/internal/audit/events') {
+                    body = {
+                        items: [audit('zz-critical'), ...(backfill ? [audit('backfilled-critical')] : [])],
+                        partial: false,
+                        next_cursor: null,
+                    };
+                } else if (url.pathname === '/api/notifications') {
+                    trace.inboxReads++;
+                    const received = live && (!slowVerification || trace.fullStarts >= 2);
+                    if (received) trace.firstReceiptAt ??= performance.now();
+                    body = { data: received ? [inbox('zz-critical')] : [] };
+                } else throw new Error('Unexpected endpoint');
+                return new Response(JSON.stringify(body));
+            },
+        },
+    };
+}
+
+test('5,000 historical observations do not force an inconclusive result at the real 500 ms interval', async () => {
+    const fixture = historyFixture({ size: 5000 });
+    const report = await runMeasurement(
+        { ...options, intervalMs: 500, durationMs: 750, drainMs: 500, maxPages: 10 },
+        fixture.io
+    );
+    assert.equal(report.status, 'pass');
+    assert.equal(report.historicalExcluded, 5000);
+    assert.equal(report.delivered, 1);
+    assert.ok(report.p95Ms.upper < 5000);
+    assert.equal(fixture.trace.fullStarts, 2);
+    assert.equal(report.sourceScans.full, 2);
+    assert.ok(fixture.trace.incrementalCursors.every((cursor) => cursor === '5000'));
+});
+
+test('inbox sampling continues while the final full source verification is slow', async () => {
+    const fixture = historyFixture({ slowVerification: true });
+    const report = await runMeasurement({ ...options, maxPages: 10 }, fixture.io);
+    assert.equal(report.status, 'pass');
+    assert.ok(fixture.trace.firstReceiptAt < fixture.trace.verificationPageAt);
+    assert.equal(fixture.trace.fullStarts, 2);
+});
+
+test('a backfilled critical event skipped by the cursor is discovered and cannot produce a false pass', async () => {
+    const fixture = historyFixture({ backfill: true });
+    const report = await runMeasurement({ ...options, maxPages: 10 }, fixture.io);
+    assert.equal(report.criticalExpected, 2);
+    assert.equal(report.delivered, 1);
+    assert.equal(report.status, 'inconclusive');
+    assert.ok(report.issues.includes('source_cursor_missed_event'));
+});
+
+test('does not query Audit or the inbox repeatedly when there are no new critical events', async () => {
+    const io = fixture();
+    const fetchFn = io.fetchFn;
+    io.fetchFn = async (url, request) => {
+        const response = await fetchFn(url, request);
+        if (url.pathname !== '/v1/observations') return response;
+        const body = await response.json();
+        body.items = body.items.map((item) => ({ ...item, critical: false }));
+        return new Response(JSON.stringify(body));
+    };
+    const report = await runMeasurement(options, io);
+    assert.equal(report.status, 'inconclusive');
+    assert.equal(report.criticalExpected, 0);
+    assert.equal(report.requests.audit, 0);
+    assert.equal(report.requests.notification, 0);
 });
