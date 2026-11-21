@@ -43,6 +43,9 @@ services:
     field-report-processor:
         ports: !reset []
 
+    fire-processor:
+        ports: !reset []
+
     bmkg:
         ports: !reset []
         environment:

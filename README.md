@@ -32,7 +32,8 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | BNPB Auth | `services/bnpb-auth` | `http://localhost:3001/` |
 | Dashboard Consumer | `services/dashboard-consumer` | `http://localhost:3004/` |
 | Notification Consumer | `services/notification-consumer` | `http://localhost:3005/` |
-| Field Report Processor | `services/field-report-processor` | `http://localhost:3006/health` |
+| Field Report Processor | `services/field-report-processor` | `http://localhost:3007/health` |
+| Fire Processor | `services/fire-processor` | `http://localhost:3008/health` |
 
 ## Deployment demo Kubernetes
 
@@ -338,7 +339,7 @@ Hasil yang diharapkan: register mengembalikan `201`, seed mencetak `Admin accoun
 
 Catatan: Anda dapat melacak satu alur berdasarkan correlation ID-nya (dikembalikan sebagai response header `X-Correlation-ID`): `docker compose logs <svc> | grep <correlation_id>`.
 
-## M2 P3 — Schema evolution, DLQ, dan laporan lapangan (Orang C)
+## M2 P3 — Schema evolution, DLQ, dan laporan lapangan
 
 Kebijakan perubahan skema PVMBG dideklarasikan di [SCHEMA_POLICY](docs/SCHEMA_POLICY.md); keputusan di [DECISIONS](docs/orang-c/DECISIONS.md) (D-34 s.d. D-41) dan bukti di [EVIDENCE](docs/orang-c/EVIDENCE.md).
 
@@ -450,6 +451,10 @@ FIELD_REPORT_PROCESSOR_MAX_MESSAGE_BYTES=
 FIELD_REPORT_PROCESSOR_MAX_PERMANENT_ATTEMPTS=
 FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS=
 FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS=
+
+# Fire Processor
+FIRE_PROCESSOR_HOST_PORT=
+FIRE_PROCESSOR_NODE_ENV=
 
 # Dashboard Consumer
 DASHBOARD_STORE_DB_USER=

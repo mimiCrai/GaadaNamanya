@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { logger } from './libs/logger';
@@ -29,6 +30,7 @@ async function main() {
         const shutdown = async (signal: string) => {
             logger.info({ signal }, 'Shutting down field report processor');
             await consumer.stop();
+            await shutdownTelemetry().catch(() => undefined);
             server.close(() => process.exit(0));
         };
 

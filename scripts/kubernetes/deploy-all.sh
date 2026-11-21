@@ -45,7 +45,7 @@ tag=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["imageTag"
 pull_secret=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("imagePullSecret", ""))' "$config")
 if [[ -n "$pull_secret" ]]; then kubectl -n "$namespace" get secret "$pull_secret" >/dev/null; fi
 if [[ ${SKIP_IMAGE_BUILD:-0} != 1 ]]; then
-  for app in bnpb-auth bnpb-client-api bnpb-aggregator dashboard-consumer notification-consumer bmkg pvmbg; do
+  for app in bnpb-auth bnpb-client-api bnpb-aggregator dashboard-consumer notification-consumer bmkg pvmbg field-report-processor fire-processor; do
     docker build -t "$repository:$app-$tag" "$root/services/$app"
     docker push "$repository:$app-$tag"
   done
@@ -76,7 +76,7 @@ for set in auth-store dashboard-store notification-store bmkg-store pvmbg-store 
 done
 run_job kafka-job
 kubectl -n "$namespace" apply -f "$tmp_dir/applications.json"
-for app in bnpb-auth bnpb-client-api bnpb-aggregator dashboard-consumer notification-consumer bmkg pvmbg; do
+for app in bnpb-auth bnpb-client-api bnpb-aggregator dashboard-consumer notification-consumer bmkg pvmbg field-report-processor fire-processor; do
   kubectl -n "$namespace" rollout status "deployment/$app" --timeout=15m
 done
 bash "$root/scripts/kubernetes/verify-mongo.sh" "$namespace"

@@ -53,7 +53,7 @@ RESTARTS_BEFORE=$(restart_snapshot)
 BMKG_BEFORE=$(count_source BMKG)
 
 bold "1. Skenario 1 — empat jenis body rusak berturut-turut (4 < K=$K, checkpoint harus ditahan)"
-HELD0=$(metric_all 'bnpb_aggregator_pvmbg_body_failures_total\{outcome="held"\}')
+HELD0=$(metric_all 'bnpb_aggregator_pvmbg_body_failures_total\{[^}]*outcome="held"[^}]*\}')
 bodies=()
 for kind in truncated deep_nesting invalid_utf8 oversized; do
     show "POST /admin/malformed {\"kind\":\"$kind\",\"count\":1}"
@@ -85,7 +85,7 @@ recovered() { local cp; cp=$(checkpoint); [[ $cp != "$L0" && $(body_failures) ==
 wait_until 'poll sukses setelah body rusak (checkpoint maju, counter reset)' 120 recovered
 L1=$(checkpoint)
 info "checkpoint setelah pulih: $L1"
-HELD1=$(metric_all 'bnpb_aggregator_pvmbg_body_failures_total\{outcome="held"\}')
+HELD1=$(metric_all 'bnpb_aggregator_pvmbg_body_failures_total\{[^}]*outcome="held"[^}]*\}')
 check "metrik held naik ≥ 4 ($HELD0 → $HELD1)" test $(( HELD1 - HELD0 )) -ge 4
 dlq_pvmbg > "$OUT/dlq-pvmbg-1.json"
 categories=$(node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log([...new Set(j.items.map(i=>i.category))].sort().join(","))' "$OUT/dlq-pvmbg-1.json")

@@ -50,11 +50,18 @@ export class DlqGateway implements IDlqGateway {
 
     // D-37: forwarded as-is; the Aggregator validates the filter
     async replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown> {
-        const response = await this.request('/internal/dlq/replay', correlationId, {}, filter);
+        // a batch of CAS requeues: own, longer budget than single reads (504 seen at 5 s on a loaded host)
+        const response = await this.request('/internal/dlq/replay', correlationId, {}, filter, env.DLQ_REPLAY_TIMEOUT_MS);
         return response.json();
     }
 
-    private async request(path: string, correlationId: string, query: object = {}, jsonBody?: object): Promise<Response> {
+    private async request(
+        path: string,
+        correlationId: string,
+        query: object = {},
+        jsonBody?: object,
+        timeoutMs: number = env.BNPB_GATEWAY_TIMEOUT_MS
+    ): Promise<Response> {
         const url = new URL(path, `${env.BNPB_GATEWAY_BASE_URL}/`);
         for (const [name, value] of Object.entries(query)) {
             if (typeof value === 'string') url.searchParams.set(name, value);
@@ -70,7 +77,7 @@ export class DlqGateway implements IDlqGateway {
                     ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
                 },
                 ...(jsonBody ? { body: JSON.stringify(jsonBody) } : {}),
-                signal: AbortSignal.timeout(env.BNPB_GATEWAY_TIMEOUT_MS),
+                signal: AbortSignal.timeout(timeoutMs),
             });
         } catch (error) {
             const timedOut = (error as { name?: unknown } | null)?.name === 'TimeoutError';

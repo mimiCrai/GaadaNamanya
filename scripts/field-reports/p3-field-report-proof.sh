@@ -125,11 +125,11 @@ for fault in "${FAULTS[@]}"; do
             wait_until 'consumer tergabung lagi' 120 proc_ready || true
             ;;
         stop_aggregator)
-            e0=$(proc_metric 'bnpb_field_report_processor_store_errors_total\{kind="transient"\}'); a0=$(num accepted)
+            e0=$(proc_metric 'bnpb_field_report_processor_store_errors_total\{[^}]*kind="transient"[^}]*\}'); a0=$(num accepted)
             show "${compose[*]} stop bnpb-aggregator   (±15 s)"
             "${compose[@]}" stop bnpb-aggregator >/dev/null
             sleep 15
-            e1=$(proc_metric 'bnpb_field_report_processor_store_errors_total\{kind="transient"\}'); a1=$(num accepted); lag=$(group_lag)
+            e1=$(proc_metric 'bnpb_field_report_processor_store_errors_total\{[^}]*kind="transient"[^}]*\}'); a1=$(num accepted); lag=$(group_lag)
             info "store_errors transient: $e0 → $e1, lag=$lag, 202 selama Aggregator mati: $(( a1 - a0 ))"
             check "Aggregator mati berefek (store_errors $e0→$e1, lag=$lag)" bash -c "(( $e1 > $e0 || $lag > 0 ))"
             check "202 tetap dibalas selama hilir mati ($(( a1 - a0 )) balasan)" test $(( a1 - a0 )) -gt 0

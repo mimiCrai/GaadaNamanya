@@ -1,7 +1,9 @@
+import { SpanKind } from '@opentelemetry/api';
 import { injectable } from 'inversify';
 import { Admin, Consumer, Kafka, logLevel } from 'kafkajs';
 import { logger } from '../libs/logger';
 import { lagMessages } from '../libs/metrics';
+import { readTraceHeaders, traced } from '../telemetry/context';
 import { KafkaRecord } from '../types';
 import env from '../util/env';
 
@@ -61,9 +63,27 @@ export class MessageSubscriber implements IMessageSubscriber {
                 const headers = Object.fromEntries(
                     Object.entries(message.headers ?? {}).map(([key, value]) => [key, value?.toString() ?? ''])
                 );
-                await handler({ topic, partition, offset: message.offset, value: message.value, headers }, heartbeat);
-                // at-least-once: a crash before this line redelivers the record; the store insert is idempotent
-                await this.consumer?.commitOffsets([{ topic, partition, offset: (BigInt(message.offset) + 1n).toString() }]);
+                // one consumer span per record, child of the POST /field-reports trace carried in the headers
+                await traced(
+                    'kafka.process',
+                    {
+                        'messaging.system': 'kafka',
+                        'messaging.destination.name': topic,
+                        'messaging.consumer.group.name': env.KAFKA_GROUP_ID,
+                        'messaging.destination.partition.id': String(partition),
+                        'messaging.kafka.message.offset': message.offset,
+                        'correlation.id': headers.correlation_id ?? '',
+                    },
+                    async () => {
+                        await handler({ topic, partition, offset: message.offset, value: message.value, headers }, heartbeat);
+                        // at-least-once: a crash before this line redelivers the record; the store insert is idempotent
+                        await this.consumer?.commitOffsets([
+                            { topic, partition, offset: (BigInt(message.offset) + 1n).toString() },
+                        ]);
+                    },
+                    readTraceHeaders(headers),
+                    SpanKind.CONSUMER
+                );
             },
         });
         this.lagTimer = setInterval(() => void this.measureLag(topic), env.LAG_POLL_INTERVAL_MS);

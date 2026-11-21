@@ -73,6 +73,7 @@ services:
             FIELD_REPORT_PUBLISH_TIMEOUT_MS: ${BNPB_CLIENT_API_FIELD_REPORT_PUBLISH_TIMEOUT_MS:-2000}
             FIELD_REPORT_MAX_BODY_BYTES: ${BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES:-16384}
             FIELD_REPORT_RETRY_AFTER_SECONDS: ${BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS:-2}
+            DLQ_REPLAY_TIMEOUT_MS: ${BNPB_CLIENT_API_DLQ_REPLAY_TIMEOUT_MS:-30000}
         ports:
             - '${BNPB_CLIENT_API_HOST_PORT}:3000'
         depends_on:
@@ -464,9 +465,29 @@ services:
             FIELD_REPORT_BACKOFF_BASE_MS: ${FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS:-500}
             FIELD_REPORT_BACKOFF_CAP_MS: ${FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS:-30000}
         ports:
-            - '${FIELD_REPORT_PROCESSOR_HOST_PORT:-3006}:3000'
+            - '${FIELD_REPORT_PROCESSOR_HOST_PORT:-3007}:3000'
         mem_limit: 256m
         # not on the Aggregator: while it is down the consumer backs off without committing (D-39)
+        depends_on:
+            kafka-topic-init:
+                condition: service_completed_successfully
+        healthcheck:
+            test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+            interval: 5s
+            timeout: 5s
+            start_period: 15s
+            retries: 12
+
+    # P4 (Tahap 3): Fire Definition engine + health only; satellite.raw consumer and Aggregator writes wait for CP 3.4/3.5
+    fire-processor:
+        build: ./services/fire-processor
+        environment:
+            PORT: 3000
+            SERVICE_NAME: fire-processor
+            NODE_ENV: ${FIRE_PROCESSOR_NODE_ENV:-local}
+        ports:
+            - '${FIRE_PROCESSOR_HOST_PORT:-3008}:3000'
+        mem_limit: 1g
         depends_on:
             kafka-topic-init:
                 condition: service_completed_successfully

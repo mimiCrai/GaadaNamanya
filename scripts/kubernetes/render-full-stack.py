@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 APPS = [
     "bnpb-auth", "bnpb-client-api", "bnpb-aggregator",
     "dashboard-consumer", "notification-consumer", "bmkg", "pvmbg",
+    "field-report-processor", "fire-processor",
 ]
 STORES = {
     "auth-store": "bnpb-auth",
@@ -26,6 +27,7 @@ PORTS = {
     "bnpb-auth": 3000, "bnpb-client-api": 3000, "bnpb-aggregator": 3000,
     "dashboard-consumer": 3000, "notification-consumer": 3000,
     "bmkg": 8081, "pvmbg": 8082, "sensor-pantai": 8080,
+    "field-report-processor": 3000, "fire-processor": 3000,
 }
 NODE_PORTS = {
     "bnpb-client-api": 30000, "bnpb-auth": 30001,
@@ -48,7 +50,11 @@ MEMORY_LIMITS = {
     "notification-consumer": ("128Mi", "256Mi"),
     "bmkg": ("64Mi", "128Mi"), "pvmbg": ("64Mi", "128Mi"),
     "sensor-pantai": ("128Mi", "256Mi"),
+    "field-report-processor": ("128Mi", "256Mi"), "fire-processor": ("512Mi", "1Gi"),
 }
+FIELD_REPORT_PARTITIONS = 3
+FIELD_REPORT_RETENTION_MS = 2592000000
+PVMBG_MAPPING_FILE = "services/bnpb-aggregator/config/pvmbg-mapping/mapping.json"
 
 
 def run(*args):
@@ -136,9 +142,9 @@ def labels(name):
     role = ("store" if name in STORES or name in MONGO_APPS[:3] else
             "aggregator" if name == "bnpb-aggregator" else
             "api" if name in ("bnpb-auth", "bnpb-client-api") else
-            "consumer" if name.endswith("-consumer") else
+            "consumer" if name.endswith("-consumer") or name == "field-report-processor" else
             "mock" if name in ("bmkg", "pvmbg") else
-            "broker" if name == "kafka" else
+            "broker" if name in ("kafka", "fire-processor") else
             "sensor" if name == "sensor-pantai" else "other")
     return {"app": name, "part-of": "bnpb", "role": role}
 
@@ -411,7 +417,7 @@ def main():
     for name in APPS:
         env = services[name]["environment"].copy()
         env["NODE_ENV"] = "production"
-        if name == "bnpb-client-api":
+        if name in ("bnpb-client-api", "field-report-processor"):
             env["BNPB_GATEWAY_BASE_URL"] = "http://bnpb-aggregator:3000"
         if name == "bnpb-aggregator":
             env["MONGO_NODE_MAP"] = "{}"
@@ -427,6 +433,13 @@ def main():
                                     node_name=None if name == "bnpb-aggregator" else stable_node))
         if name == "bnpb-aggregator":
             applications[-1]["spec"]["template"]["spec"]["serviceAccountName"] = "aggregator-topology"
+            pod_spec = applications[-1]["spec"]["template"]["spec"]
+            pod_spec.setdefault("volumes", []).append({"name": "pvmbg-mapping", "configMap": {"name": "pvmbg-mapping"}})
+            pod_spec["containers"][0].setdefault("volumeMounts", []).append(
+                {"name": "pvmbg-mapping", "mountPath": "/app/config/pvmbg-mapping", "readOnly": True})
+    mapping_file = ROOT / config.get("pvmbgMappingFile", PVMBG_MAPPING_FILE)
+    objects.append({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "pvmbg-mapping"},
+                    "data": {"mapping.json": mapping_file.read_text()}})
     applications.append({
         "apiVersion": "policy/v1", "kind": "PodDisruptionBudget",
         "metadata": {"name": "bnpb-aggregator"},
@@ -440,7 +453,8 @@ def main():
                                "ports": [{"port": 3000, "targetPort": 3000}]}})
     topic_env = {"KAFKA_INTERNAL_BOOTSTRAP_SERVER": "kafka:29092",
                  "KAFKA_TOPIC": services["kafka-topic-init"]["environment"]["KAFKA_TOPIC"],
-                 "SATELLITE_RAW_TOPIC": services["kafka-topic-init"]["environment"]["SATELLITE_RAW_TOPIC"]}
+                 "SATELLITE_RAW_TOPIC": services["kafka-topic-init"]["environment"]["SATELLITE_RAW_TOPIC"],
+                 "FIELD_REPORT_TOPIC": services["kafka-topic-init"]["environment"]["FIELD_REPORT_TOPIC"]}
     env_objs, refs = env_objects("kafka-topic-init", topic_env)
     objects += env_objs
     topic_job = {
@@ -454,7 +468,11 @@ def main():
                         "kafka-topics --bootstrap-server \"$KAFKA_INTERNAL_BOOTSTRAP_SERVER\" "
                         "--create --if-not-exists --topic \"$KAFKA_TOPIC\" --partitions 1 --replication-factor 1; "
                         "kafka-topics --bootstrap-server \"$KAFKA_INTERNAL_BOOTSTRAP_SERVER\" "
-                        "--create --if-not-exists --topic \"$SATELLITE_RAW_TOPIC\" --partitions 1 --replication-factor 1 --config retention.ms=-1"],
+                        "--create --if-not-exists --topic \"$SATELLITE_RAW_TOPIC\" --partitions 1 --replication-factor 1 --config retention.ms=-1; "
+                        # field reports keyed by report_id; long retention so consumers may be down for days (D-38, D-40)
+                        "kafka-topics --bootstrap-server \"$KAFKA_INTERNAL_BOOTSTRAP_SERVER\" "
+                        "--create --if-not-exists --topic \"$FIELD_REPORT_TOPIC\" --partitions " + str(FIELD_REPORT_PARTITIONS) +
+                        " --replication-factor 1 --config retention.ms=" + str(FIELD_REPORT_RETENTION_MS)],
                 }]}}},
     }
     objects += [
@@ -513,7 +531,8 @@ def main():
         policies.append(policy(name, egress=destinations(MONGO_APPS, 27017)))
     for store, owner in STORES.items():
         policies.append(policy(store, peers([owner], 5432)))
-    kafka_users = ["bnpb-aggregator", "dashboard-consumer", "notification-consumer", "kafka-topic-init"]
+    kafka_users = ["bnpb-aggregator", "dashboard-consumer", "notification-consumer", "kafka-topic-init",
+                   "bnpb-client-api", "field-report-processor", "fire-processor"]
     policies.append(policy("kafka", peers(kafka_users, 29092)))
     policies.append(policy("kafka-topic-init", egress=destinations(["kafka"], 29092)))
     policies.append(policy("sensor-pantai", peers(["bnpb-aggregator"], 8080)))
@@ -528,8 +547,11 @@ def main():
                            destinations(["pvmbg"], 8082) +
                            destinations(["sensor-pantai"], 8080) +
                            [{"ports": [{"protocol": "TCP", "port": 443}, {"protocol": "TCP", "port": 6443}]}]))
+    # Client API publishes field reports to Kafka (D-38)
     policies.append(policy("bnpb-client-api", [{}],
-                           destinations(["bnpb-auth", "bnpb-aggregator"], 3000)))
+                           destinations(["bnpb-auth", "bnpb-aggregator"], 3000) + destinations(["kafka"], 29092)))
+    for name in ("field-report-processor", "fire-processor"):
+        policies.append(policy(name, [{}], destinations(["kafka"], 29092) + destinations(["bnpb-aggregator"], 3000)))
     for name, store in (("dashboard-consumer", "dashboard-store"),
                         ("notification-consumer", "notification-store")):
         policies.append(policy(name, [{}],

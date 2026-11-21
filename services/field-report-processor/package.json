@@ -18,6 +18,13 @@
         "format:check": "prettier --config .prettierrc.json --check '**/*.{js,jsx,ts,tsx,css,json,yml,yaml}'"
     },
     "dependencies": {
+        "@opentelemetry/api": "1.10.0",
+        "@opentelemetry/exporter-trace-otlp-http": "0.301.2",
+        "@opentelemetry/instrumentation-express": "0.73.0",
+        "@opentelemetry/instrumentation-http": "0.301.2",
+        "@opentelemetry/instrumentation-undici": "0.35.1",
+        "@opentelemetry/resources": "3.1.1",
+        "@opentelemetry/sdk-node": "0.301.2",
         "body-parser": "^1.20.2",
         "compression": "^1.7.4",
         "express": "^4.21.0",

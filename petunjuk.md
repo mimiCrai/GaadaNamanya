@@ -243,6 +243,8 @@ Seluruh aplikasi berada dalam namespace `$NS`; Tester Agent berada pada namespac
 | dashboard/notification consumer | image repo; 3000 | Kafka, store masing-masing; dashboard → Aggregator analitik | /health/live, /health/ready | consumer; 128Mi/256Mi |
 | BMKG/PVMBG | image repo; 8081/8082 | store masing-masing, Secret token, ConfigMap generator/delay | /health | mock; 64Mi/128Mi |
 | Sensor Pantai | digest resmi di Compose; 8080 | Secret PANTAI_AUTH_TOKEN, PVC 2Gi pada A | /healthz | sensor; 128Mi/256Mi (kelas other sementara) |
+| field-report-processor | image repo; 3000 (tanpa NodePort) | Kafka `field-reports`, Aggregator API + Secret internal key; tidak boleh ke MongoDB (aturan 5) | /health/live, /health/ready | consumer; 128Mi/256Mi |
+| fire-processor | image repo; 3000 (tanpa NodePort) | Kafka/Aggregator API (disiapkan; consumer `satellite.raw` menunggu CP 3.4/3.5) | /health/live, /health/ready | broker (pemroses stream); 512Mi/1Gi |
 | bootstrap/migration/topic Jobs | Mongo/Aggregator/Kafka image | Secret dan ConfigMap sesuai pemilik; tanpa persistent data sendiri | Job Complete | other; 128Mi/256Mi |
 | observabilitas lengkap | belum tersedia | lihat gap audit | belum tersedia | belum memenuhi instruksi |
 

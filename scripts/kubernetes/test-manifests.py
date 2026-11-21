@@ -121,6 +121,43 @@ class DeploymentTests(unittest.TestCase):
                 if obj['kind'] == 'Job':
                     self.assertRegex(obj['metadata']['name'], r'-[a-f0-9]{10}$')
                     self.assertGreater(obj['spec']['activeDeadlineSeconds'], 0)
+            self.assert_orang_c(objects, workloads)
+
+    def assert_orang_c(self, objects, workloads):
+        def pod(name):
+            return next(x for x in workloads if x['metadata']['name'] == name)['spec']['template']
+        for name, role, memory in [('field-report-processor', 'consumer', ('128Mi', '256Mi')),
+                                   ('fire-processor', 'broker', ('512Mi', '1Gi'))]:
+            template = pod(name)
+            self.assertEqual(template['metadata']['labels']['role'], role, name)
+            resources = template['spec']['containers'][0]['resources']
+            self.assertEqual((resources['requests']['memory'], resources['limits']['memory']), memory)
+            self.assertEqual(template['spec']['containers'][0]['readinessProbe']['httpGet']['path'], '/health/ready')
+        processor_env = next(x for x in objects if x['kind'] == 'ConfigMap' and x['metadata']['name'] == 'field-report-processor-config')['data']
+        self.assertEqual(processor_env['BNPB_GATEWAY_BASE_URL'], 'http://bnpb-aggregator:3000')
+        self.assertNotIn('DATABASE_URL', processor_env)
+        topic = next(x for x in workloads if x['kind'] == 'Job' and x['metadata']['name'].startswith('kafka-topic-init'))
+        command = topic['spec']['template']['spec']['containers'][0]['command'][-1]
+        self.assertIn('"$FIELD_REPORT_TOPIC" --partitions 3 --replication-factor 1 --config retention.ms=2592000000', command)
+        topic_env = next(x for x in objects if x['metadata']['name'] == 'kafka-topic-init-config')['data']
+        self.assertEqual(topic_env['FIELD_REPORT_TOPIC'], 'field-reports')
+        aggregator = pod('bnpb-aggregator')['spec']
+        mount = next(m for m in aggregator['containers'][0]['volumeMounts'] if m['name'] == 'pvmbg-mapping')
+        self.assertEqual(mount['mountPath'], '/app/config/pvmbg-mapping')
+        self.assertNotIn('subPath', mount)
+        self.assertIn({'name': 'pvmbg-mapping', 'configMap': {'name': 'pvmbg-mapping'}}, aggregator['volumes'])
+        mapping = next(x for x in objects if x['kind'] == 'ConfigMap' and x['metadata']['name'] == 'pvmbg-mapping')
+        self.assertEqual(json.loads(mapping['data']['mapping.json'])['label'], 'm1-contract')
+        policies = {x['metadata']['name']: x['spec'] for x in objects if x['kind'] == 'NetworkPolicy'}
+        def egress_apps(name):
+            return {p['podSelector']['matchLabels']['app'] for rule in policies[name]['egress'] for p in rule.get('to', [])}
+        kafka_from = {p['podSelector']['matchLabels']['app'] for rule in policies['kafka']['ingress'] for p in rule['from']}
+        for name in ('bnpb-client-api', 'field-report-processor', 'fire-processor'):
+            self.assertIn('kafka', egress_apps(name))
+            self.assertIn(name, kafka_from)
+        for name in ('field-report-processor', 'fire-processor'):
+            # rule 5: the Canonical Store only through the Aggregator API
+            self.assertEqual(egress_apps(name), {'kafka', 'bnpb-aggregator'})
 
 
 if __name__ == '__main__': unittest.main()

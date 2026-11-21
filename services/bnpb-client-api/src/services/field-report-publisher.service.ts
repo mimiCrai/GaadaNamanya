@@ -2,6 +2,7 @@ import { injectable } from 'inversify';
 import { Kafka, logLevel, Producer, RecordMetadata } from 'kafkajs';
 import { logger } from '../libs/logger';
 import { kafkaPublishSeconds } from '../libs/metrics';
+import { captureTrace } from '../telemetry/context';
 import env from '../util/env';
 import { FieldReportMessage } from '../types/field-report';
 
@@ -83,7 +84,7 @@ export class FieldReportPublisher implements IFieldReportPublisher {
                     {
                         key: message.report.report_id,
                         value: JSON.stringify(message),
-                        headers: { correlation_id: correlationId, report_id: message.report.report_id },
+                        headers: { ...captureTrace(), correlation_id: correlationId, report_id: message.report.report_id },
                     },
                 ],
             });
