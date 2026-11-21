@@ -54,12 +54,36 @@ paths:
                                             guardVersion: { type: integer }
                 '401': { description: Missing internal key }
                 '403': { description: Invalid internal key }
+    /internal/pvmbg/mapping:
+        get:
+            summary: PVMBG mapping active on THIS replica (hash, label, source, last error), D-36
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200':
+                    description: Active mapping; an invalid file shows up in last_error while the previous mapping stays
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [instance_id, hash, label, source, loaded_at, mapping]
+                                properties:
+                                    instance_id: { type: string }
+                                    path: { type: string }
+                                    hash: { type: string, description: sha256 of the file bytes (or of the builtin mapping) }
+                                    label: { type: string }
+                                    source: { type: string, enum: [builtin, file] }
+                                    loaded_at: { type: string, format: date-time }
+                                    last_checked_at: { type: string, format: date-time, nullable: true }
+                                    last_error: { type: string, nullable: true }
+                                    mapping: { type: object, additionalProperties: true }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
     /internal/audit/unprocessed:
         get:
             summary: Messages that could not be processed (Lampiran A); recovered messages are excluded
             security: [{ AuditBearer: [] }]
             parameters:
-                - { $ref: '#/components/parameters/AuditSource' }
+                - { $ref: '#/components/parameters/UnprocessedSource' }
                 - { $ref: '#/components/parameters/PageLimit' }
                 - { $ref: '#/components/parameters/PageCursor' }
             responses:
@@ -98,7 +122,7 @@ paths:
             summary: Internal Ops inspection list of unprocessed messages (metadata only)
             security: [{ BNPBInternalApiKey: [] }]
             parameters:
-                - { $ref: '#/components/parameters/AuditSource' }
+                - { $ref: '#/components/parameters/UnprocessedSource' }
                 - name: status
                   in: query
                   schema: { type: string, enum: [retrying, parked, recovered, superseded] }
@@ -109,7 +133,124 @@ paths:
                 '400': { description: Invalid query or cursor }
                 '401': { description: Missing internal API key }
                 '403': { description: Unrecognised internal API key }
+        post:
+            summary: Store a message another component could not process (field-report-processor, D-39)
+            description: Dedup by message_id (sha256 of source, kind and payload); 201 when new, 200 when already stored.
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [source, kind, payload_base64, content_type, correlation_id, category, detail]
+                            properties:
+                                source: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI, FIELD_REPORT] }
+                                kind: { type: string, example: kafka.field-report }
+                                topic: { type: string, nullable: true }
+                                endpoint: { type: string, nullable: true }
+                                payload_base64: { type: string, description: exact original bytes }
+                                content_type: { type: string }
+                                correlation_id: { type: string }
+                                source_ref_id: { type: string, nullable: true }
+                                category: { type: string, description: 'taxonomy category, e.g. conflict or malformed_json' }
+                                detail: { type: string }
+            responses:
+                '200': { description: Already stored (same bytes) }
+                '201': { description: Stored }
+                '400': { description: Invalid body }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
 
+    /internal/field-reports:
+        get:
+            summary: Stored field reports ordered by report_id (verification, P3 #6)
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: after, in: query, schema: { type: string, format: uuid } }
+                - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000 } }
+            responses:
+                '200': { description: '{items:[FieldReport], next_after: string|null}' }
+                '400': { description: Invalid after or limit }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+    /internal/field-reports/{reportId}:
+        parameters:
+            - { name: reportId, in: path, required: true, schema: { type: string } }
+        put:
+            summary: Idempotent insert of one field report (_id = report_id, first write wins), D-39
+            description: Served by any replica without the background lease. Result created, duplicate (same content) or conflict (different content; nothing changed).
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [message]
+                            properties:
+                                message: { type: object, description: 'field-reports Kafka message {v, report, reporter, accepted_at}' }
+                                kafka:
+                                    type: object
+                                    nullable: true
+                                    properties:
+                                        topic: { type: string }
+                                        partition: { type: integer }
+                                        offset: { type: string }
+            responses:
+                '200': { description: '{result: created|duplicate|conflict, incoming_sha256, report}' }
+                '400': { description: Invalid message or report_id mismatch }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+        get:
+            summary: One stored field report (status processed)
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200': { description: Stored field report }
+                '404': { description: Not stored (yet) }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+
+    /internal/dlq/replay:
+        post:
+            summary: Requeue unprocessed messages for the retry worker (D-37); default only parked entries
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: false
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            additionalProperties: false
+                            properties:
+                                source: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI, FIELD_REPORT] }
+                                category: { type: string, description: 'error category, e.g. schema_incompatible' }
+                                reason_prefix: { type: string, maxLength: 200 }
+                                status: { type: string, enum: [parked, retrying], default: parked }
+            responses:
+                '200':
+                    description: Requeued and skipped entries
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [matched, requeued, truncated, skipped]
+                                properties:
+                                    matched: { type: integer }
+                                    requeued: { type: integer }
+                                    truncated: { type: boolean }
+                                    skipped:
+                                        type: array
+                                        items:
+                                            type: object
+                                            required: [reason, count, message_ids]
+                                            properties:
+                                                reason: { type: string, enum: [handler_missing, claimed, status_changed] }
+                                                count: { type: integer }
+                                                message_ids: { type: array, items: { type: string } }
+                '400': { description: Invalid filter }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
     /internal/dlq/{messageId}:
         get:
             summary: One unprocessed message with its raw payload as base64
@@ -364,6 +505,10 @@ components:
             name: source
             in: query
             schema: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] }
+        UnprocessedSource:
+            name: source
+            in: query
+            schema: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI, FIELD_REPORT] }
         PageLimit:
             name: limit
             in: query

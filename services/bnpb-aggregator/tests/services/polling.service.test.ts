@@ -20,6 +20,7 @@ describe('Fenced source polling', () => {
     const states = { getState: jest.fn(), recordSuccessfulPoll: jest.fn(), recordFailedPoll: jest.fn() };
     const leadership = { current: jest.fn(), invalidate: jest.fn() };
     const leases = { requireActive: jest.fn() };
+    const bodyFailures = { onBodyFailure: jest.fn() };
     let poller: PollingService;
 
     beforeEach(() => {
@@ -37,7 +38,8 @@ describe('Fenced source polling', () => {
             ingestion as unknown as IHazardEventIngestionService,
             states as unknown as ISourceSyncStateService,
             leadership as unknown as IBackgroundLeadershipService,
-            leases as unknown as IBackgroundLeaseRepository
+            leases as unknown as IBackgroundLeaseRepository,
+            bodyFailures
         );
     });
     afterEach(() => {

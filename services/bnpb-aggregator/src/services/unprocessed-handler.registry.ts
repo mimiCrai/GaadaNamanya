@@ -1,10 +1,18 @@
-import { inject, injectable } from 'inversify';
+import { inject, injectable, optional } from 'inversify';
 import { PVMBG_RECORD_KIND, PVMBG_RESPONSE_KIND } from '../clients/pvmbg.client';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
 import { HazardSource } from '../db/schema/hazard-events';
 import { UnprocessedMessage } from '../db/schema/unprocessed-messages';
 import { IHazardEventIngestionService } from './hazard-event-ingestion.service';
+import { FIELD_REPORT_SOURCE } from '../db/schema/unprocessed-messages';
+import { fieldReportConflictError, fieldReportMessageSchema } from '../libs/field-report';
+import { ProcessingError } from '../libs/processing-error';
+import { decodeJson } from '../libs/safe-decode';
+import { IFieldReportRepository } from '../repositories/field-report.repository';
+import env from '../util/env';
+
+export const FIELD_REPORT_KIND = 'kafka.field-report';
 
 export type UnprocessedHandler = (
     raw: Buffer,
@@ -26,7 +34,10 @@ export function handlerKey(source: string, kind: string): string {
 export class UnprocessedHandlerRegistry implements IUnprocessedHandlerRegistry {
     private readonly handlers = new Map<string, UnprocessedHandler>();
 
-    constructor(@inject(TYPES.IHazardEventIngestionService) ingestion: IHazardEventIngestionService) {
+    constructor(
+        @inject(TYPES.IHazardEventIngestionService) ingestion: IHazardEventIngestionService,
+        @inject(TYPES.IFieldReportRepository) @optional() fieldReports?: IFieldReportRepository
+    ) {
         // entry.ordering = receive order stored at quarantine: a replay keeps its original place (review #3).
         this.register(HazardSource.Pvmbg, PVMBG_RECORD_KIND, (raw, entry, lease) =>
             ingestion.reprocessVolcanicRecord(raw, entry.correlationId, lease, entry.ordering)
@@ -35,6 +46,18 @@ export class UnprocessedHandlerRegistry implements IUnprocessedHandlerRegistry {
             await ingestion.reprocessVolcanicResponse(raw, entry.correlationId, lease, entry.ordering);
             return { hazardId: null };
         });
+        // replay of a field report the consumer could not store (D-39): the same idempotent insert
+        if (fieldReports) {
+            this.register(FIELD_REPORT_SOURCE, FIELD_REPORT_KIND, async (raw, entry) => {
+                const parsed = fieldReportMessageSchema.safeParse(decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH }));
+                if (!parsed.success) throw new ProcessingError('validation_failed', 'pesan field report tidak sesuai kontrak');
+                const write = await fieldReports.insertOnce(parsed.data, null, entry.correlationId);
+                if (write.result === 'conflict') {
+                    throw fieldReportConflictError(parsed.data.report.report_id, write.report.contentSha256, write.incomingSha256);
+                }
+                return { hazardId: null };
+            });
+        }
     }
 
     register(source: string, kind: string, handler: UnprocessedHandler): void {

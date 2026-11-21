@@ -3,11 +3,11 @@ import { inject } from 'inversify';
 import { controller, httpGet } from 'inversify-express-utils';
 import { z } from 'zod';
 import { TYPES } from '../constants/types';
-import { HazardSource } from '../db/schema/hazard-events';
 import { IUnprocessedQueryService } from '../services/unprocessed-query.service';
+import { DLQ_SOURCES } from '../db/schema/unprocessed-messages';
 
 export const unprocessedAuditQuerySchema = z.object({
-    source: z.nativeEnum(HazardSource).optional(),
+    source: z.enum(DLQ_SOURCES).optional(),
     limit: z.coerce.number().int().min(1).max(1000).optional(),
     cursor: z.string().min(1).max(4096).optional(),
 });

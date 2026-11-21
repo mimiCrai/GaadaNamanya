@@ -18,13 +18,17 @@ export function parseListQuery(req: Request, res: Response): ListQuery | undefin
     };
 }
 
-export function sendList<T>(req: Request, res: Response, data: T[]): Response {
-    return res.json({
+export function listEnvelope<T>(req: Request, data: T[]) {
+    return {
         data,
         meta: {
             count: data.length,
             since: typeof req.query.since === 'string' ? req.query.since : null,
             server_time: new Date().toISOString(),
         },
-    });
+    };
+}
+
+export function sendList<T>(req: Request, res: Response, data: T[]): Response {
+    return res.json(listEnvelope(req, data));
 }

@@ -11,7 +11,7 @@ import {
     unprocessedMessages,
 } from '../db/schema/unprocessed-messages';
 import { computeBackoffMs } from '../libs/backoff';
-import { ProcessingError } from '../libs/processing-error';
+import { ErrorCategory, ProcessingError } from '../libs/processing-error';
 import type { ReceiveOrder } from '../libs/receive-order';
 import { PayloadRef } from '../libs/safe-decode';
 import env from '../util/env';
@@ -45,6 +45,24 @@ export type CompletionOutcome =
     | { kind: 'retry'; error: ProcessingError; delayMs: number }
     | { kind: 'parked'; error: ProcessingError };
 
+export interface ReplayFilter {
+    source?: string;
+    category?: ErrorCategory;
+    reasonPrefix?: string;
+    status: 'parked' | 'retrying';
+}
+
+export interface ReplayCandidate {
+    messageId: string;
+    source: string;
+    kind: string;
+    status: UnprocessedStatus;
+    sourceRefId: string | null;
+    ordering: ReceiveOrder | null;
+    receivedAt: Date;
+    claimedUntil: Date | null;
+}
+
 export interface UnprocessedCount {
     source: string;
     status: UnprocessedStatus;
@@ -59,6 +77,8 @@ export interface IUnprocessedMessageRepository {
     findById(messageId: string): Promise<UnprocessedMessage | null>;
     readPayload(entry: UnprocessedMessage, maxBytes: number): Promise<Buffer>;
     countByStatus(): Promise<UnprocessedCount[]>;
+    findReplayCandidates(filter: ReplayFilter, limit: number): Promise<ReplayCandidate[]>;
+    requeue(messageId: string, expected: ReplayFilter['status'], delayMs: number, note: string): Promise<boolean>;
 }
 
 /** Stable id: the same broken bytes from the same source/context always map to one entry. */
@@ -298,6 +318,76 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
         return rows.map((row) => ({ source: row._id.source, status: row._id.status, count: row.count }));
     }
 
+    async findReplayCandidates(filter: ReplayFilter, limit: number): Promise<ReplayCandidate[]> {
+        const docs = await this.collection()
+            .find(
+                {
+                    status: filter.status,
+                    ...(filter.source ? { source: filter.source } : {}),
+                    ...(filter.category ? { category: filter.category } : {}),
+                    ...(filter.reasonPrefix ? { reason: { $regex: `^${escapeRegex(filter.reasonPrefix)}` } } : {}),
+                },
+                {
+                    projection: {
+                        _id: 1,
+                        source: 1,
+                        'context.kind': 1,
+                        status: 1,
+                        sourceRefId: 1,
+                        ordering: 1,
+                        receivedAt: 1,
+                        claimedUntil: 1,
+                    },
+                    timeoutMS: env.STORAGE_READ_TIMEOUT_MS,
+                }
+            )
+            .limit(limit)
+            .toArray();
+        return docs.map((doc) => ({
+            messageId: doc._id,
+            source: doc.source,
+            kind: doc.context.kind,
+            status: doc.status,
+            sourceRefId: doc.sourceRefId ?? null,
+            ordering: doc.ordering ?? null,
+            receivedAt: doc.receivedAt,
+            claimedUntil: doc.claimedUntil ?? null,
+        }));
+    }
+
+    /** Replay (D-37): CAS per _id (shard key) back to retrying with a fresh attempt budget; the worker does the rest. */
+    async requeue(messageId: string, expected: ReplayFilter['status'], delayMs: number, note: string): Promise<boolean> {
+        const unclaimed = { $or: [{ $eq: [{ $ifNull: ['$claimedUntil', null] }, null] }, { $lte: ['$claimedUntil', '$$NOW'] }] };
+        const result = await this.collection().updateOne(
+            { _id: messageId, status: expected, ...(expected === 'retrying' ? { $expr: unclaimed } : {}) },
+            [
+                {
+                    $set: {
+                        status: 'retrying',
+                        attempts: 0,
+                        nextAttemptAt: { $add: ['$$NOW', delayMs] },
+                        claimedBy: null,
+                        claimEpoch: null,
+                        claimedUntil: null,
+                        history: {
+                            $slice: [
+                                {
+                                    $concatArrays: [
+                                        { $ifNull: ['$history', []] },
+                                        [{ at: '$$NOW', attempt: 0, reason: { $literal: note }, retryable: '$retryable' }],
+                                    ],
+                                },
+                                -HISTORY_LIMIT,
+                            ],
+                        },
+                    },
+                },
+            ],
+            { timeoutMS: env.LEASE_OPERATION_TIMEOUT_MS }
+        );
+        return result.modifiedCount === 1;
+    }
+
     /** Large inline payloads (e.g. one huge record) are moved to GridFS so documents stay under 16 MiB. */
     private async placePayload(
         input: RecordUnprocessedInput
@@ -325,4 +415,8 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
         const existing = await this.collection().findOne({ _id: messageId }, { projection: { payloadRef: 1 } });
         if (!existing?.payloadRef || !existing.payloadRef.equals(ref)) await this.payloads.delete(ref);
     }
+}
+
+function escapeRegex(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

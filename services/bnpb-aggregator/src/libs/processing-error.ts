@@ -17,6 +17,8 @@ export const PERMANENT_CATEGORIES = [
     'validation_failed',
     'handler_missing',
     'retry_exhausted',
+    'window_skipped',
+    'conflict',
 ] as const;
 
 export type RetryableCategory = (typeof RETRYABLE_CATEGORIES)[number];

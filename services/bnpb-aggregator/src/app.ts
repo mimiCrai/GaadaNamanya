@@ -22,6 +22,8 @@ import './controllers/dlq.controller';
 import './controllers/metrics.controller';
 import './controllers/satellite.controller';
 import './controllers/sensor-pantai.controller';
+import './controllers/pvmbg-mapping.controller';
+import './controllers/field-report.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();

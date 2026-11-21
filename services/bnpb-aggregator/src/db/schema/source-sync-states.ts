@@ -21,4 +21,6 @@ export interface SourceSyncState {
     staleSince: Date | null;
     lastError: string | null;
     consecutiveFailures: number;
+    // D-34: whole-body decode failures only; reset by a successful poll (PERLU DIKONFIRMASI KE A/B)
+    consecutiveBodyFailures?: number;
 }

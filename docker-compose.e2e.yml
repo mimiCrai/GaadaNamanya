@@ -40,6 +40,9 @@ services:
     notification-consumer:
         ports: !reset []
 
+    field-report-processor:
+        ports: !reset []
+
     bmkg:
         ports: !reset []
         environment:

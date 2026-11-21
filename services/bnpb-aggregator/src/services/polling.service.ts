@@ -12,6 +12,7 @@ import { ISourceSyncStateService } from './source-sync-state.service';
 import { IBackgroundLeadershipService } from './background-leadership.service';
 import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
+import { IPvmbgBodyFailureService } from './pvmbg-body-failure.service';
 
 type PollWork = (options: PollRequestOptions, lease: LeaseToken) => Promise<void>;
 
@@ -31,7 +32,8 @@ export class PollingService implements IPollingService {
         @inject(TYPES.IHazardEventIngestionService) private readonly ingestionService: IHazardEventIngestionService,
         @inject(TYPES.ISourceSyncStateService) private readonly sourceSyncStateService: ISourceSyncStateService,
         @inject(TYPES.IBackgroundLeadershipService) private readonly leadership: IBackgroundLeadershipService,
-        @inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository
+        @inject(TYPES.IBackgroundLeaseRepository) private readonly leases: IBackgroundLeaseRepository,
+        @inject(TYPES.IPvmbgBodyFailureService) private readonly pvmbgBodyFailures: IPvmbgBodyFailureService
     ) {}
 
     start(): void {
@@ -95,7 +97,8 @@ export class PollingService implements IPollingService {
                 : undefined;
 
             const startedAt = await this.leases.requireActive(lease);
-            await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch }, lease);
+            // startedAt is additive (D-34 skipped-window record); PERLU DIKONFIRMASI KE A/B
+            await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch, startedAt }, lease);
             if (this.stopped) {
                 logger.info({ sourceStream, correlationId }, 'Source poll cancelled during shutdown');
                 return;
@@ -144,6 +147,14 @@ export class PollingService implements IPollingService {
 
     private async pollPvmbgVolcanic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
         const batch = await this.pvmbgClient.getVolcanicReports(options);
-        await this.ingestionService.ingestVolcanicBatch(batch, options.correlationId, lease);
+        const result = await this.ingestionService.ingestVolcanicBatch(batch, options.correlationId, lease);
+        // D-34: a broken body holds the checkpoint (throws) until K consecutive body failures
+        if (result?.bodyFailure) {
+            await this.pvmbgBodyFailures.onBodyFailure(
+                result.bodyFailure,
+                { since: options.since, until: options.startedAt ?? new Date(), correlationId: options.correlationId },
+                lease
+            );
+        }
     }
 }

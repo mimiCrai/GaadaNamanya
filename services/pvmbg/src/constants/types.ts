@@ -16,6 +16,7 @@ export const TYPES = {
     GeneratorService: Symbol.for('GeneratorService'),
     SchemaService: Symbol.for('SchemaService'),
     OutageService: Symbol.for('OutageService'),
+    MalformedService: Symbol.for('MalformedService'),
 
     // Middlewares
     OutageMiddleware: Symbol.for('OutageMiddleware'),

@@ -124,10 +124,12 @@ export class UnprocessedRetryService implements IUnprocessedRetryService {
             };
         } else {
             try {
-                const raw = await this.repository.readPayload(
-                    entry,
-                    Math.max(env.PVMBG_MAX_BODY_BYTES, env.DLQ_INLINE_MAX_BYTES)
-                );
+                const maxBytes = Math.max(env.PVMBG_MAX_BODY_BYTES, env.DLQ_INLINE_MAX_BYTES);
+                // an oversized body can never be read back: park it as permanent instead of retrying it as `unexpected`
+                if (entry.sizeBytes > maxBytes) {
+                    throw new ProcessingError('payload_too_large', `ukuran ${entry.sizeBytes} byte melebihi batas ${maxBytes} byte`);
+                }
+                const raw = await this.repository.readPayload(entry, maxBytes);
                 const result = await handler(raw, entry, lease);
                 // An older replay of a report whose newer version is stored is closed, not parked (review #3).
                 outcome = result.superseded

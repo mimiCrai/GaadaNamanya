@@ -172,3 +172,44 @@ export const satelliteCheckpointRecoveredTotal = new Counter({
     help: 'Checkpoints rebuilt by reading the tail of satellite.raw because the checkpoint offset was missing',
     registers: [metricsRegistry],
 });
+
+// P3 Tahap 4
+export const pvmbgBodyFailuresTotal = new Counter({
+    name: `${PREFIX}pvmbg_body_failures_total`,
+    help: 'Whole-body PVMBG decode failures, by outcome (held = checkpoint kept, advanced = K reached)',
+    labelNames: ['outcome'] as const,
+    registers: [metricsRegistry],
+});
+
+export const pvmbgSkippedWindowsTotal = new Counter({
+    name: `${PREFIX}pvmbg_skipped_windows_total`,
+    help: 'PVMBG poll windows skipped after K consecutive whole-body failures (recorded as window_skipped in the DLQ)',
+    registers: [metricsRegistry],
+});
+
+export const pvmbgMappingInfo = new Gauge({
+    name: `${PREFIX}pvmbg_mapping_info`,
+    help: 'Active PVMBG mapping on this replica (value 1), labelled by content hash and label',
+    labelNames: ['hash', 'label', 'source'] as const,
+    registers: [metricsRegistry],
+});
+
+export const pvmbgMappingReloadFailuresTotal = new Counter({
+    name: `${PREFIX}pvmbg_mapping_reload_failures_total`,
+    help: 'PVMBG mapping files that could not be read or validated; the previous mapping stays active',
+    registers: [metricsRegistry],
+});
+
+export const pvmbgMappingAliasConflictsTotal = new Counter({
+    name: `${PREFIX}pvmbg_mapping_alias_conflicts_total`,
+    help: 'Records carrying both a canonical field and one of its aliases (canonical wins, alias kept in attributes)',
+    labelNames: ['field'] as const,
+    registers: [metricsRegistry],
+});
+
+export const dlqReplayTotal = new Counter({
+    name: `${PREFIX}dlq_replay_total`,
+    help: 'Unprocessed messages handled by POST /internal/dlq/replay, by result (requeued or skip reason)',
+    labelNames: ['source', 'result'] as const,
+    registers: [metricsRegistry],
+});

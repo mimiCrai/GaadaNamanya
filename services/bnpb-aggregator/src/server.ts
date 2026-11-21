@@ -13,6 +13,7 @@ import { IUnprocessedMessageRepository } from './repositories/unprocessed-messag
 import { setUnprocessedCounter } from './libs/metrics';
 import { ISatelliteIngestService } from './services/satellite-ingest.service';
 import { ISensorPantaiService } from './services/sensor-pantai.service';
+import { IPvmbgMappingService } from './services/pvmbg-mapping.service';
 
 async function main() {
     try {
@@ -31,7 +32,10 @@ async function main() {
         const satelliteIngest = container.get<ISatelliteIngestService>(TYPES.ISatelliteIngestService);
         const unprocessedRepository = container.get<IUnprocessedMessageRepository>(TYPES.IUnprocessedMessageRepository);
         const sensorPantai = container.get<ISensorPantaiService>(TYPES.ISensorPantaiService);
+        const pvmbgMapping = container.get<IPvmbgMappingService>(TYPES.IPvmbgMappingService);
         setUnprocessedCounter(() => unprocessedRepository.countByStatus());
+        // every replica, not leader-only: the leader can change at any time (D-36)
+        pvmbgMapping.start();
         leadership.start();
         poller.start();
         outboxRelay.start();
@@ -47,6 +51,7 @@ async function main() {
             shuttingDown = true;
             logger.info({ signal }, 'Shutting down BNPB Aggregator');
             poller.stop();
+            pvmbgMapping.stop();
             outboxRelay.stop();
             unprocessedRetry.stop();
             // Close the feed stream before releasing the lease, so the next leader is not answered 429.

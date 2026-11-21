@@ -13,6 +13,8 @@ export const volcanicReports = pgTable(
         ashColumnHeightM: doublePrecision('ash_column_height_m').notNull(),
         reportedAt: timestamp('reported_at', { withTimezone: true }).notNull(),
         confidenceLevel: doublePrecision('confidence_level'),
+        // M2 (P3): wire shape chosen at creation; NULL = M1 record
+        schemaMode: varchar('schema_mode', { length: 32 }),
     },
     (table) => [
         index('volcanic_reports_reported_at_idx').on(table.reportedAt, table.reportId),

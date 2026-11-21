@@ -129,16 +129,18 @@ test('unprocessed messages on the sharded canonical store', { timeout: 180_000 }
                 const results = await Promise.all([repo.claim(id, 'replica-a', 1), repo.claim(id, 'replica-b', 2)]);
                 assert.equal(results.filter(Boolean).length, 1, `exactly one claim wins for ${id}`);
             }
-            const owner = (await repo.findById(ids[0])).claimedBy;
-            assert.equal(await repo.claim(ids[0], 'replica-c', 3), null, 'live claim is respected');
+            // the most recently claimed entry: on a slow host the first claims may already have expired (1.5 s)
+            const target = ids[ids.length - 1];
+            const owner = (await repo.findById(target)).claimedBy;
+            assert.equal(await repo.claim(target, 'replica-c', 3), null, 'live claim is respected');
             await sleep(Number(process.env.DLQ_CLAIM_MS) + 500);
-            const taken = await repo.claim(ids[0], 'replica-c', 3);
+            const taken = await repo.claim(target, 'replica-c', 3);
             assert.equal(taken.claimedBy, 'replica-c', `expired claim of ${owner} taken over`);
 
             const stale = { ...(await repo.findById(ids[1])), claimedBy: 'not-the-owner' };
             assert.equal(await repo.complete(stale, lease, { kind: 'recovered', hazardId: null }), false);
             assert.equal(await repo.complete(taken, lease, { kind: 'recovered', hazardId: 'hz-1' }), true);
-            assert.equal((await repo.findById(ids[0])).status, 'recovered');
+            assert.equal((await repo.findById(target)).status, 'recovered');
         });
 
         await t.test('audit pagination over the real store hides recovered entries', async () => {

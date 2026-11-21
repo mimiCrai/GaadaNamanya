@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { Request, Response } from 'express';
 import { inject } from 'inversify';
-import { controller, httpGet, request, requestParam, response } from 'inversify-express-utils';
+import { controller, httpGet, httpPost, request, requestParam, response } from 'inversify-express-utils';
 import { TYPES } from '../constants/types';
 import { ApiError } from '../errors/api-error';
 import { DlqListQuery, IDlqGateway } from '../services/dlq-gateway.service';
@@ -31,6 +31,14 @@ export class InternalOpsDlqController {
             if (typeof value === 'string' || typeof value === 'number') query[name] = String(value);
         }
         return res.json(await this.dlqGateway.list(query, res.locals.correlationId));
+    }
+
+    // P3 #4: reprocess parked messages after the system was adjusted (D-37)
+    @httpPost('/replay')
+    async replay(@request() req: Request, @response() res: Response) {
+        await this.requireInternalOps(req, res);
+        const filter = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+        return res.json(await this.dlqGateway.replay(filter, res.locals.correlationId));
     }
 
     @httpGet('/:messageId')

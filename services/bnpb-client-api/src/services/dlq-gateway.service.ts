@@ -19,6 +19,7 @@ export interface IDlqGateway {
     list(query: DlqListQuery, correlationId: string): Promise<unknown>;
     detail(messageId: string, correlationId: string): Promise<unknown>;
     raw(messageId: string, correlationId: string): Promise<DlqRawPayload>;
+    replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown>;
 }
 
 const RAW_HEADERS = ['content-type', 'content-length', 'x-payload-sha256', 'x-original-content-type'];
@@ -47,7 +48,13 @@ export class DlqGateway implements IDlqGateway {
         return { body: response.body, headers };
     }
 
-    private async request(path: string, correlationId: string, query: object = {}): Promise<Response> {
+    // D-37: forwarded as-is; the Aggregator validates the filter
+    async replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown> {
+        const response = await this.request('/internal/dlq/replay', correlationId, {}, filter);
+        return response.json();
+    }
+
+    private async request(path: string, correlationId: string, query: object = {}, jsonBody?: object): Promise<Response> {
         const url = new URL(path, `${env.BNPB_GATEWAY_BASE_URL}/`);
         for (const [name, value] of Object.entries(query)) {
             if (typeof value === 'string') url.searchParams.set(name, value);
@@ -56,7 +63,13 @@ export class DlqGateway implements IDlqGateway {
         let response: Response;
         try {
             response = await fetch(url, {
-                headers: { 'X-BNPB-Internal-Key': env.BNPB_INTERNAL_API_KEY, 'X-Correlation-ID': correlationId },
+                method: jsonBody ? 'POST' : 'GET',
+                headers: {
+                    'X-BNPB-Internal-Key': env.BNPB_INTERNAL_API_KEY,
+                    'X-Correlation-ID': correlationId,
+                    ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
+                },
+                ...(jsonBody ? { body: JSON.stringify(jsonBody) } : {}),
                 signal: AbortSignal.timeout(env.BNPB_GATEWAY_TIMEOUT_MS),
             });
         } catch (error) {

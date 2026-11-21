@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
+import express from 'express';
 import request from 'supertest';
 import { Binary } from 'mongodb';
 import { TYPES } from '../../src/constants/types';
@@ -13,14 +14,20 @@ import { parseFailuresTotal } from '../../src/libs/metrics';
 
 const query = { audit: jest.fn(), list: jest.fn(), detail: jest.fn(), entry: jest.fn() };
 const payloads = { openSink: jest.fn(), openDownload: jest.fn(), readAll: jest.fn(), delete: jest.fn() };
+const replays = { replay: jest.fn() };
+const recorder = { record: jest.fn() };
 
 describe('Unprocessed message endpoints', () => {
     const container = new Container();
     container.bind(TYPES.IUnprocessedQueryService).toConstantValue(query);
     container.bind(TYPES.IPayloadStore).toConstantValue(payloads);
+    container.bind(TYPES.IUnprocessedReplayService).toConstantValue(replays);
+    container.bind(TYPES.IUnprocessedRecorder).toConstantValue(recorder);
     container.bind(TYPES.AuditAuthMiddleware).to(AuditAuthMiddleware);
     container.bind(TYPES.InternalAuthMiddleware).to(InternalAuthMiddleware);
-    const app = new InversifyExpressServer(container).build();
+    const app = new InversifyExpressServer(container)
+        .setConfig((server) => server.use(express.json()))
+        .build();
     const audit = `Bearer ${process.env.BNPB_AUDIT_TOKEN}`;
     const internalKey = process.env.BNPB_INTERNAL_API_KEY!;
     beforeEach(() => jest.clearAllMocks());
@@ -122,5 +129,82 @@ describe('Unprocessed message endpoints', () => {
         expect(result.text).toContain('bnpb_aggregator_parse_failures_total{source="PVMBG",reason="malformed_json"} 1');
         expect(result.text).toContain('bnpb_aggregator_unprocessed_messages');
         expect(result.text).toContain('bnpb_aggregator_unprocessed_retry_total');
+    });
+
+    describe('POST /internal/dlq (field-report-processor, D-39)', () => {
+        const body = {
+            source: 'FIELD_REPORT',
+            kind: 'kafka.field-report',
+            topic: 'field-reports',
+            payload_base64: Buffer.from('{"v":1,"broken').toString('base64'),
+            content_type: 'application/json',
+            correlation_id: 'c-1',
+            source_ref_id: '6b0f8c44-1f43-4a54-9d55-2f1a3c9e7b10',
+            category: 'malformed_json',
+            detail: 'JSON terpotong',
+        };
+
+        it('stores the exact bytes with the taxonomy error; 201 new, 200 duplicate', async () => {
+            recorder.record.mockResolvedValueOnce({ messageId: 'msg-a', created: true, reopened: false, status: 'parked' });
+            const created = await request(app).post('/internal/dlq').set('X-BNPB-Internal-Key', internalKey).send(body);
+            expect(created.status).toBe(201);
+            expect(created.body).toEqual({ message_id: 'msg-a', created: true, reopened: false, status: 'parked' });
+            const [input] = recorder.record.mock.calls[0];
+            expect(input.payload.bytes.toString()).toBe('{"v":1,"broken');
+            expect(input.context).toEqual({ kind: 'kafka.field-report', endpoint: null, topic: 'field-reports' });
+            expect(input.error.reason).toBe('malformed_json: JSON terpotong');
+            expect(input.error.retryable).toBe(false);
+
+            recorder.record.mockResolvedValueOnce({ messageId: 'msg-a', created: false, reopened: false, status: 'parked' });
+            const again = await request(app).post('/internal/dlq').set('X-BNPB-Internal-Key', internalKey).send(body);
+            expect(again.status).toBe(200);
+        });
+
+        it.each([{ category: 'nope' }, { source: 'BPBD' }, { extra: true }])('rejects %j with 400', async (patch) => {
+            const result = await request(app)
+                .post('/internal/dlq')
+                .set('X-BNPB-Internal-Key', internalKey)
+                .send({ ...body, ...patch });
+            expect(result.status).toBe(400);
+        });
+    });
+
+    describe('POST /internal/dlq/replay (D-37)', () => {
+        it('requires the internal key', async () => {
+            expect((await request(app).post('/internal/dlq/replay').send({})).status).toBe(401);
+            expect(replays.replay).not.toHaveBeenCalled();
+        });
+
+        it('defaults to parked and passes the filter through', async () => {
+            const body = { matched: 2, requeued: 1, truncated: false, skipped: [] };
+            replays.replay.mockResolvedValue(body);
+            const result = await request(app)
+                .post('/internal/dlq/replay')
+                .set('X-BNPB-Internal-Key', internalKey)
+                .send({ source: 'PVMBG', category: 'schema_incompatible', reason_prefix: 'schema_incompatible: field' });
+            expect(result.status).toBe(200);
+            expect(result.body).toEqual(body);
+            expect(replays.replay).toHaveBeenCalledWith(
+                {
+                    source: 'PVMBG',
+                    category: 'schema_incompatible',
+                    reasonPrefix: 'schema_incompatible: field',
+                    status: 'parked',
+                },
+                expect.any(String)
+            );
+        });
+
+        it.each([{ status: 'recovered' }, { category: 'nope' }, { source: 'BPBD' }, { extra: 1 }])(
+            'rejects %j with 400',
+            async (body) => {
+                const result = await request(app)
+                    .post('/internal/dlq/replay')
+                    .set('X-BNPB-Internal-Key', internalKey)
+                    .send(body);
+                expect(result.status).toBe(400);
+                expect(result.body.error.code).toBe('bad_request');
+            }
+        );
     });
 });

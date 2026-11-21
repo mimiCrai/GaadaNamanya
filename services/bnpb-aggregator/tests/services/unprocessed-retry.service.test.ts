@@ -1,106 +1,11 @@
 import 'reflect-metadata';
 import { LeaseToken } from '../../src/db/schema/background-leases';
-import { UnprocessedMessage } from '../../src/db/schema/unprocessed-messages';
 import { ProcessingError } from '../../src/libs/processing-error';
-import {
-    CompletionOutcome,
-    IUnprocessedMessageRepository,
-} from '../../src/repositories/unprocessed-message.repository';
 import { IBackgroundLeadershipService } from '../../src/services/background-leadership.service';
 import { UnprocessedHandlerRegistry } from '../../src/services/unprocessed-handler.registry';
 import { UnprocessedRetryService } from '../../src/services/unprocessed-retry.service';
 
-const tick = () => new Promise((resolve) => setImmediate(resolve));
-
-/** In-memory repository with the same compare-and-set semantics as the Mongo queries. */
-class FakeRepository implements IUnprocessedMessageRepository {
-    readonly entries = new Map<string, UnprocessedMessage>();
-    now = () => Date.now();
-
-    add(id: string, overrides: Partial<UnprocessedMessage> = {}) {
-        this.entries.set(id, {
-            messageId: id,
-            source: 'PVMBG',
-            context: { kind: 'poll.volcanic-report', endpoint: null, topic: null },
-            receivedAt: new Date(0),
-            lastSeenAt: new Date(0),
-            seenCount: 1,
-            reason: 'store_unavailable: x',
-            category: 'store_unavailable',
-            retryable: true,
-            attempts: 1,
-            maxAttempts: 3,
-            status: 'retrying',
-            nextAttemptAt: new Date(0),
-            claimedBy: null,
-            claimEpoch: null,
-            claimedUntil: null,
-            payload: null,
-            payloadRef: null,
-            contentType: 'application/json',
-            sizeBytes: 2,
-            sha256: 'x',
-            correlationId: 'c',
-            sourceRefId: id,
-            recoveredAt: null,
-            recoveredHazardId: null,
-            history: [],
-            ...overrides,
-        });
-    }
-
-    async record(): Promise<never> {
-        throw new Error('unused');
-    }
-    async findDueIds(limit: number) {
-        await tick();
-        const now = this.now();
-        return [...this.entries.values()]
-            .filter(
-                (e) =>
-                    e.status === 'retrying' &&
-                    e.nextAttemptAt!.getTime() <= now &&
-                    (!e.claimedUntil || e.claimedUntil.getTime() <= now)
-            )
-            .slice(0, limit)
-            .map((e) => e.messageId);
-    }
-    async claim(id: string, owner: string, epoch: number) {
-        await tick();
-        // check-and-set without awaiting in between = atomic, like findOneAndUpdate
-        const e = this.entries.get(id);
-        const now = this.now();
-        if (!e || e.status !== 'retrying' || e.nextAttemptAt!.getTime() > now) return null;
-        if (e.claimedUntil && e.claimedUntil.getTime() > now) return null;
-        Object.assign(e, { claimedBy: owner, claimEpoch: epoch, claimedUntil: new Date(now + 30_000) });
-        return { ...e };
-    }
-    async complete(entry: UnprocessedMessage, _lease: LeaseToken, outcome: CompletionOutcome) {
-        await tick();
-        const e = this.entries.get(entry.messageId)!;
-        if (e.status !== 'retrying' || e.claimedBy !== entry.claimedBy || e.claimEpoch !== entry.claimEpoch)
-            return false;
-        e.attempts++;
-        Object.assign(e, { claimedBy: null, claimEpoch: null, claimedUntil: null });
-        if (outcome.kind === 'recovered')
-            Object.assign(e, { status: 'recovered', recoveredHazardId: outcome.hazardId });
-        else if (outcome.kind === 'superseded')
-            Object.assign(e, { status: 'superseded', recoveredHazardId: outcome.hazardId });
-        else if (outcome.kind === 'parked')
-            Object.assign(e, { status: 'parked', retryable: false, reason: outcome.error.reason });
-        else Object.assign(e, { nextAttemptAt: new Date(this.now() + outcome.delayMs), reason: outcome.error.reason });
-        return true;
-    }
-    async findById(id: string) {
-        return this.entries.get(id) ?? null;
-    }
-    async readPayload() {
-        return Buffer.from('{}');
-    }
-    async countByStatus() {
-        return [];
-    }
-}
+import { FakeRepository, tick } from '../helpers/fake-unprocessed-repository';
 
 function leadershipFor(token: LeaseToken): IBackgroundLeadershipService {
     return {
@@ -204,6 +109,20 @@ describe('UnprocessedRetryService', () => {
         const exhausted = repo.entries.get('msg-exhausted')!;
         expect(exhausted.status).toBe('parked');
         expect(exhausted.reason).toMatch(/^retry_exhausted: percobaan habis setelah 3 kali/);
+    });
+
+    it('parks a replayed oversized body at once as payload_too_large instead of retrying it as unexpected', async () => {
+        const repo = new FakeRepository();
+        repo.add('msg-oversized', { sizeBytes: 12 * 1024 * 1024 });
+        const handler = jest.fn(async () => undefined);
+        const worker = new UnprocessedRetryService(repo, registryWith(handler), leadershipFor({ ownerId: 'leader', epoch: 1 }));
+        await worker.runOnce();
+
+        const entry = repo.entries.get('msg-oversized')!;
+        expect(handler).not.toHaveBeenCalled();
+        expect(entry.status).toBe('parked');
+        expect(entry.retryable).toBe(false);
+        expect(entry.reason).toBe('payload_too_large: ukuran 12582912 byte melebihi batas 5242880 byte');
     });
 
     it('parks entries without a registered handler and does nothing without the lease', async () => {

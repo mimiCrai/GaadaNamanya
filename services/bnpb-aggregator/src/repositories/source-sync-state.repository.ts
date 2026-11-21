@@ -15,6 +15,7 @@ export interface ISourceSyncStateRepository {
         at: Date,
         lease: LeaseToken
     ): Promise<SourceSyncState>;
+    recordHeldBodyFailure(sourceStream: SourceStream, lease: LeaseToken): Promise<number>;
 }
 
 @injectable()
@@ -53,6 +54,7 @@ export class SourceSyncStateRepository implements ISourceSyncStateRepository {
                         staleSince: null,
                         lastError: null,
                         consecutiveFailures: 0,
+                        consecutiveBodyFailures: 0,
                     },
                 },
                 { upsert: true, session, returnDocument: 'after', projection: { _id: 0 } }
@@ -96,6 +98,20 @@ export class SourceSyncStateRepository implements ISourceSyncStateRepository {
                 ],
                 { upsert: true, session, returnDocument: 'after', projection: { _id: 0 } }
             ))!;
+        });
+    }
+
+    // D-34: counts only held whole-body failures; other failures leave it untouched (PERLU DIKONFIRMASI KE A/B)
+    async recordHeldBodyFailure(sourceStream: SourceStream, lease: LeaseToken): Promise<number> {
+        return this.leases.withLease(lease, async (session) => {
+            const state = await this.db
+                .collection<SourceSyncState>(sourceSyncStates)
+                .findOneAndUpdate(
+                    { _id: sourceStream },
+                    { $inc: { consecutiveBodyFailures: 1 } },
+                    { upsert: true, session, returnDocument: 'after', projection: { _id: 0 } }
+                );
+            return state?.consecutiveBodyFailures ?? 1;
         });
     }
 }

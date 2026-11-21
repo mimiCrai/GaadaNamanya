@@ -3,6 +3,7 @@ export interface PollRequestOptions {
     correlationId: string;
     instanceId?: string;
     fencingToken?: number;
+    startedAt?: Date;
 }
 
 export interface SeismicEvent {

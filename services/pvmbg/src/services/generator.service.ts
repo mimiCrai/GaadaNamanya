@@ -78,13 +78,14 @@ export class GeneratorService {
         const created: VolcanicReport[] = [];
         for (let i = 0; i < count; i++) {
             const volcanoId = this.pickVolcanoAndStep();
+            const mode = this.schema.mode;
             const withConfidence = this.schema.version === 2;
             const reportedAtMs = this.clock();
 
             let report: VolcanicReport | undefined;
             for (let attempt = 0; attempt < MAX_ID_ATTEMPTS && !report; attempt++) {
                 const candidate = this.buildReport(volcanoId, reportedAtMs, withConfidence);
-                if ((await this.reports.insert([candidate])) === 1) report = candidate;
+                if ((await this.reports.insert([candidate], mode)) === 1) report = candidate;
             }
             if (!report) throw new Error('Could not generate a unique report_id');
 
@@ -95,6 +96,7 @@ export class GeneratorService {
                     volcano_id: report.volcano_id,
                     alert_level: report.alert_level,
                     schema_version: withConfidence ? 2 : 1,
+                    schema_mode: mode,
                 },
                 'Generated volcanic report'
             );

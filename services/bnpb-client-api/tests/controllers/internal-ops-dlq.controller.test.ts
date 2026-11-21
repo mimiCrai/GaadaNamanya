@@ -9,7 +9,7 @@ import { ApiError } from '../../src/errors/api-error';
 
 describe('InternalOpsDlqController (P3 #5)', () => {
     const jwtAuthenticator = { authenticate: jest.fn() };
-    const dlqGateway = { list: jest.fn(), detail: jest.fn(), raw: jest.fn() };
+    const dlqGateway = { list: jest.fn(), detail: jest.fn(), raw: jest.fn(), replay: jest.fn() };
     let app: express.Application;
 
     beforeAll(async () => {
@@ -42,6 +42,35 @@ describe('InternalOpsDlqController (P3 #5)', () => {
             expect(dlqGateway.detail).not.toHaveBeenCalled();
             expect(dlqGateway.raw).not.toHaveBeenCalled();
         });
+
+        it('gets 403 with the standard error body on POST /internal-ops/dlq/replay', async () => {
+            jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'u', sid: 's', role });
+            const response = await request(app)
+                .post('/internal-ops/dlq/replay')
+                .set('Authorization', 'Bearer token')
+                .send({ source: 'PVMBG' });
+            expect(response.status).toBe(403);
+            expect(response.body).toEqual({
+                error: {
+                    code: 'forbidden',
+                    message: 'Hanya BNPB Internal Ops yang boleh memeriksa pesan yang gagal diproses',
+                },
+            });
+            expect(dlqGateway.replay).not.toHaveBeenCalled();
+        });
+    });
+
+    it('lets Internal Ops replay parked messages through the Aggregator', async () => {
+        jwtAuthenticator.authenticate.mockResolvedValue({ sub: 'u', sid: 's', role: 'internal' });
+        const result = { matched: 3, requeued: 2, truncated: false, skipped: [] };
+        dlqGateway.replay.mockResolvedValue(result);
+        const response = await request(app)
+            .post('/internal-ops/dlq/replay')
+            .set('Authorization', 'Bearer ops')
+            .send({ source: 'PVMBG', category: 'schema_incompatible' });
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual(result);
+        expect(dlqGateway.replay).toHaveBeenCalledWith({ source: 'PVMBG', category: 'schema_incompatible' }, expect.any(String));
     });
 
     it('rejects missing or invalid tokens with 401', async () => {

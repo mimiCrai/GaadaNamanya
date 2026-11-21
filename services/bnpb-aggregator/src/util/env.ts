@@ -100,6 +100,12 @@ const envSchema = z
         DLQ_RETRY_INTERVAL_MS: z.coerce.number().int().min(100).default(2_000),
         DLQ_RETRY_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(20),
         DLQ_CLAIM_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+        DLQ_REPLAY_MAX: z.coerce.number().int().min(1).max(100_000).default(5_000),
+
+        // P3 Tahap 4: whole-body failures hold the checkpoint up to K polls (D-34); PVMBG mapping file (D-36)
+        PVMBG_BODY_FAILURE_HOLD_POLLS: z.coerce.number().int().min(1).max(100).default(5),
+        PVMBG_MAPPING_PATH: z.string().min(1).default('config/pvmbg-mapping/mapping.json'),
+        PVMBG_MAPPING_POLL_MS: z.coerce.number().int().min(200).max(600_000).default(2_000),
 
         // Satellite feed (P4). Off by default so dev/e2e stacks never open a stream by accident (rule 2).
         SATELLITE_INGEST_ENABLED: z

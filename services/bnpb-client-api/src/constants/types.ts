@@ -8,4 +8,6 @@ export const TYPES = {
     HazardGateway: Symbol.for('HazardGateway'),
     DlqGateway: Symbol.for('DlqGateway'),
     IAdmissionControlService: Symbol.for('IAdmissionControlService'),
+    FieldReportPublisher: Symbol.for('FieldReportPublisher'),
+    FieldReportGateway: Symbol.for('FieldReportGateway'),
 };
