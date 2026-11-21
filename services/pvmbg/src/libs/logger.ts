@@ -1,4 +1,5 @@
 import pino, { DestinationStream, Logger } from 'pino';
+import { traceLogFields } from '../telemetry/context';
 
 export const SERVICE_NAME = 'pvmbg';
 
@@ -24,6 +25,7 @@ export function createLogger(options: LoggerOptions = {}): Logger {
         {
             level: options.level ?? 'info',
             base: { service: SERVICE_NAME },
+            mixin: traceLogFields,
             timestamp: pino.stdTimeFunctions.isoTime,
             formatters: {
                 level: (label) => ({ level: label }),

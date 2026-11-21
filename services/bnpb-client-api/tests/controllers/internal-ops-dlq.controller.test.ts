@@ -41,6 +41,8 @@ describe('InternalOpsDlqController (P3 #5)', () => {
             expect(dlqGateway.list).not.toHaveBeenCalled();
             expect(dlqGateway.detail).not.toHaveBeenCalled();
             expect(dlqGateway.raw).not.toHaveBeenCalled();
+            const metrics = await request(app).get('/metrics').expect(200);
+            expect(metrics.text).toContain(`status_code="403",role="${role}"`);
         });
     });
 
@@ -59,6 +61,8 @@ describe('InternalOpsDlqController (P3 #5)', () => {
             .set('Authorization', 'Bearer ops');
         expect(list.status).toBe(200);
         expect(list.body).toEqual(page);
+        const metrics = await request(app).get('/metrics').expect(200);
+        expect(metrics.text).toContain('status_code="200",role="internal"');
         expect(dlqGateway.list).toHaveBeenCalledWith(
             { source: 'PVMBG', status: 'parked', limit: '10' },
             expect.any(String)

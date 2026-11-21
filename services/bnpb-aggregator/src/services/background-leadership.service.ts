@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
 import { logger } from '../libs/logger';
+import { backgroundLeader, leadershipChangesTotal } from '../libs/metrics';
 import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 import env from '../util/env';
 
@@ -52,6 +53,8 @@ export class BackgroundLeadershipService implements IBackgroundLeadershipService
         const previous = this.token;
         this.token = next;
         if (previous?.epoch === next?.epoch && Boolean(previous) === Boolean(next)) return;
+        backgroundLeader.set(next && !this.stopped ? 1 : 0);
+        leadershipChangesTotal.inc({ role: next && !this.stopped ? 'leader' : 'follower' });
         const view = next && !this.stopped ? { ...next } : null;
         for (const listener of this.listeners) {
             try {

@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { db } from './db';
@@ -61,7 +62,7 @@ async function main() {
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();
-            process.exit(0);
+            server.close(() => void shutdownTelemetry().finally(() => process.exit(0)));
         };
 
         process.once('SIGTERM', () => void shutdown('SIGTERM'));

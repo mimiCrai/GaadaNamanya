@@ -2,6 +2,7 @@ import { LeaseLostError } from '../../src/db/schema/background-leases';
 import { IBackgroundLeaseRepository } from '../../src/repositories/background-lease.repository';
 import { MessagePublisher } from '../../src/services/message-publisher.service';
 import { Kafka } from 'kafkajs';
+import { fencingRejectionsTotal } from '../../src/libs/metrics';
 
 const mockTransaction = { send: jest.fn(), sendBatch: jest.fn(), commit: jest.fn(), abort: jest.fn() };
 const mockProducer = { connect: jest.fn(), disconnect: jest.fn(), transaction: jest.fn() };
@@ -15,6 +16,7 @@ describe('Fenced Kafka publisher', () => {
 
     beforeEach(() => {
         jest.resetAllMocks();
+        fencingRejectionsTotal.reset();
         (Kafka as jest.Mock).mockImplementation(() => ({ producer: mockCreateProducer }));
         leases.requireActive.mockResolvedValue(new Date());
         mockCreateProducer.mockReturnValue(mockProducer);
@@ -68,11 +70,16 @@ describe('Fenced Kafka publisher', () => {
     });
 
     it('recreates a producer after Kafka fences it instead of retrying a permanently fenced producer', async () => {
-        mockProducer.transaction.mockRejectedValueOnce(new Error('ProducerFenced'));
+        mockProducer.transaction.mockRejectedValueOnce(
+            Object.assign(new Error('ProducerFenced'), { type: 'PRODUCER_FENCED' })
+        );
         await expect(publisher.publish({}, { topic: 'hazard-events' }, lease)).rejects.toThrow('ProducerFenced');
         await publisher.publish({}, { topic: 'hazard-events' }, lease);
         expect(mockCreateProducer).toHaveBeenCalledTimes(2);
         expect(mockTransaction.commit).toHaveBeenCalledTimes(1);
+        expect((await fencingRejectionsTotal.get()).values).toEqual([
+            expect.objectContaining({ labels: { backend: 'kafka' }, value: 1 }),
+        ]);
     });
 
     it('drops the producer reference even if disconnect fails', async () => {

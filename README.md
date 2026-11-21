@@ -80,7 +80,42 @@ Suite load test Aggregator P2 tersedia melalui `bash scripts/run-aggregator-load
 
 Sensor Pantai M2 dijalankan dari image resmi pada `http://localhost:8083`. Aggregator membaca station/observation dengan cursor dan circuit breaker, menyimpan hazard COASTAL atau karantina data rusak, serta meneruskan event kritis ke notifikasi. Gunakan `bash scripts/test-sensor-pantai.sh` untuk pengujian otomatis; lihat [integrasi Sensor Pantai](docs/sensor-pantai.md).
 
-Impor data historis NDJSON dan prosedur penggantian volume dijelaskan di [Kubernetes dan recovery](docs/kubernetes-recovery.md). Dashboard menampilkan angka canonical, grafik harian per tipe dengan pemilih rentang UTC, tabel severity/area, serta indikator partial/degraded melalui `GET /api/hazards/analytics`. Tabel daftar kejadian tetap menggunakan projection Kafka.
+### Pengukuran end-to-end Sensor Pantai (P5)
+
+Tester Agent menjalankan gangguan dan tidak membaca data aplikasi. Pengukuran jalur Sensor Pantai → Canonical Store → inbox notifikasi dilakukan oleh skrip kelompok pada satu mesin, memakai jam monotonik. Setelah stack berjalan, jalankan skrip ini sebelum memulai skenario gangguan:
+
+```bash
+bash scripts/sensor-pantai/measure-e2e.sh --duration-seconds 300 --drain-seconds 15
+```
+
+Skrip memuat kredensial dan port dari `.env`, membaca baseline sekali, lalu melakukan warm-up pada halaman terakhir sebelum memulai pengukuran. Polling berikutnya memakai cursor dengan overlap halaman terakhir, sehingga biaya pembacaan tidak mengikuti panjang riwayat. Scan berhenti pada halaman yang lebih pendek dari limit 1000, meskipun cursor live feed tetap tersedia. Sampling inbox berjalan independen dari sumber; Audit API dan inbox hanya dibaca saat ada event kritis yang masih perlu dikonfirmasi.
+
+Di akhir, skrip memverifikasi seluruh riwayat sekali sementara sampling tetap berjalan. Event yang dilewatkan cursor atau kedatangan di luar urutan membuat hasil `inconclusive`; event tersebut tidak diabaikan. Verifikasi ini dapat memperpanjang collection; `collectionMs` melaporkan durasi aktual. Tambahan request Sensor Pantai dibatasi satu antrean bersama (default maksimal 2 request/detik), termasuk verifikasi, dan kegagalan memakai cooldown. Request ditandai `User-Agent: bnpb-p5-observer`; penghitung `requests.sensor` pada laporan adalah trafik observer yang tetap harus diperhitungkan saat membuktikan P5 kriteria 4.
+
+Override `--sensor-url`, `--aggregator-url`, dan `--notification-url` dapat digunakan untuk endpoint atau port-forward Kubernetes. Skrip hanya membaca API; tidak mengubah Tester Agent maupun aplikasi. API inbox saat ini masih mengembalikan seluruh isi; respons di atas 16 MiB membuat pengukuran `inconclusive`, bukan dianggap lengkap.
+
+- Hasil JSON: `test-results/sensor-pantai/measurement.json`. Berisi jumlah event kritis valid yang baru terlihat, jumlah diterima/belum diterima setelah drain, sampel, serta rentang p95.
+- Titik awal paling konservatif adalah awal pembacaan tail sebelumnya; batas akhir adalah saat inbox terbaca. Scan baseline tidak masuk ke waktu ukur. Cursor diasumsikan mempertahankan posisi untuk penambahan berurutan; pemeriksaan akhir mencegah event yang terlewat cursor menghasilkan kelulusan palsu. Timestamp virtual sumber dan jam node aplikasi tidak dipakai untuk menghitung latensi.
+- `pass` hanya diberikan bila semua event pada cohort teramati diterima dan batas atas p95 ≤5 detik. `fail` berarti ada event yang belum diterima setelah drain atau batas bawah p95 >5 detik. Hasil `inconclusive` mencakup tidak adanya event baru, data parsial/tidak konsisten, endpoint masih bermasalah, atau rentang sampling yang melintasi batas 5 detik. Exit code masing-masing adalah `0`, `1`, dan `2`.
+- Error budget P5: kehilangan yang diizinkan `0`; keterlambatan >5 detik diizinkan maksimal `floor(5% × jumlah event)`. Laporan menunjukkan keterlambatan pasti/mungkin, rentang sisa budget, dan status budget `within`, `exceeded`, atau `uncertain` agar ketidakpastian sampling tidak dianggap sebagai pelanggaran pasti. Tanpa event baru, status budget adalah `not_measured`.
+- Bukti berlaku untuk ID baru yang valid dan diekspos API selama collection. Pengukuran mengasumsikan pagination sumber konsisten serta history dan ID stabil. Event internal vendor yang tidak pernah diekspos tidak bisa dihitung. Source clock mundur, history menyusut, ID berubah, dan data yang tertinggal dari jam sumber ditandai sebagai masalah pengukuran. Simpan hasil bersama waktu/skenario game day; jangan menyebut hasil sampling sebagai timestamp emisi vendor yang eksak.
+
+Pengujian pengukur: `node --test scripts/sensor-pantai/measurement.test.mjs`.
+
+## Observabilitas
+
+Jalankan `bash scripts/start-observability.sh` untuk menambahkan Prometheus, Grafana, OpenTelemetry Collector, dan Tempo ke stack. Grafana tersedia di `http://localhost:3006`, dengan dashboard **BNPB → BNPB Overview** dan pencarian trace melalui **Explore → Tempo**. Port, akun Grafana, dan sampling trace tersedia pada bagian monitoring di `.env.example`; nilai default juga berlaku untuk `.env` lama.
+
+Ketujuh service menyediakan `/metrics`. Dashboard menampilkan throughput, error, dan p95 HTTP, pemrosesan consumer, DLQ/satelit, serta indikator P2/P5 berikut:
+
+- Leader Aggregator, perubahan leadership, dan penolakan fencing Mongo/Kafka.
+- Jumlah request, p95 HTTP, circuit breaker, dan source lag Sensor Pantai. Status circuit hanya ditampilkan dari leader: `0` closed, `1` open, `2` probing.
+- p95 pemrosesan lokal notifikasi kritis, dari awal handler sampai inbox berhasil commit, memakai jam monotonik `performance.now()`. Pergeseran jam node tidak mengubah durasi atau membuang sampel. Duplikat dan transaksi gagal tidak dihitung. Target end-to-end P5 ≤5 detik diukur dengan [skrip pengukur kelompok](scripts/sensor-pantai/measure-e2e.sh); histogram lokal ini tidak mengklaim mengukur target tersebut.
+- HTTP 503 pada endpoint hazard menurut role, untuk melihat penolakan saat overload. Angka ini juga mencakup 503 akibat ketidaktersediaan downstream, sehingga bukan penghitung eksklusif admission control.
+
+HTTP dan database di-trace otomatis; context polling BMKG/PVMBG/Sensor Pantai diteruskan melalui outbox dan Kafka ke consumer. Log menambahkan `traceId` dan `spanId` selama span aktif pada correlation ID yang sudah ada. Cari span `source.poll` di Tempo, lalu filter atribut `source.stream=SENSOR_PANTAI` untuk jalur sensor. Overlay tidak mengubah `NODE_ENV`, ukuran connection pool, atau format log service, sehingga konfigurasi runtime tetap sebanding dengan stack tanpa observabilitas.
+
+Gunakan `bash scripts/test-observability.sh` untuk menguji scrape seluruh service/replica, query dashboard, metrik P2/P5, trace Client API–Auth–Aggregator, dan trace polling–outbox–Kafka–kedua consumer, termasuk Sensor Pantai. Test memakai project/volume terpisah dan membersihkannya setelah selesai; ringkasan hasil disimpan di `test-results/observability/summary.json`.
 
 ## Autentikasi dan Client API
 

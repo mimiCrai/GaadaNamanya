@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 
 import express, { Request, Response, NextFunction } from 'express';
+import { installHttpMetrics, metricsRegistry } from './telemetry/metrics';
+import { annotateCorrelation } from './telemetry/context';
 import bodyParser from 'body-parser';
 import compression from 'compression';
 import * as OpenApiValidator from 'express-openapi-validator';
@@ -35,6 +37,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
 
     const app = express();
     app.disable('x-powered-by');
+    installHttpMetrics(app, metricsRegistry, false);
     app.use(compression());
     app.use(bodyParser.json({ limit: '5mb' }));
     app.use(bodyParser.urlencoded({ extended: true }));
@@ -43,6 +46,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
         const incoming = req.header('x-correlation-id');
         const correlationId = incoming !== undefined && UUID_PATTERN.test(incoming) ? incoming : randomUUID();
         res.setHeader('X-Correlation-ID', correlationId);
+        annotateCorrelation(correlationId);
         logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
     });

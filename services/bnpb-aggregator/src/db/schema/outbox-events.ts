@@ -12,6 +12,7 @@ export interface OutboxEvent {
     topic: string;
     partitionKey: string;
     payload: Record<string, unknown>;
+    traceContext?: Record<string, string>;
     createdAt: Date;
     publishedAt: Date | null;
     publishAttempts: number;
