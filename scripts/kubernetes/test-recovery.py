@@ -36,7 +36,7 @@ class Cluster:
         self.workloads = {name: workload(name, [f'node-{group}{n}' for n in range(3)])
                           for name, group in [('canonical-shard-a', 'a'), ('canonical-shard-b', 'b')]}
         self.nodes = {f'node-{group}{n}': {
-            'metadata': {'labels': {'kubernetes.io/hostname': f'node-{group}{n}'}}, 'spec': {},
+            'metadata': {'name': f'node-{group}{n}', 'labels': {'kubernetes.io/hostname': f'node-{group}{n}'}}, 'spec': {},
             'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
             for group in ('a', 'b') for n in range(3)}
         self.nodes['replacement'] = {'metadata': {'labels': {'kubernetes.io/hostname': 'replacement'}},
@@ -45,6 +45,9 @@ class Cluster:
                      'spec': {'nodeName': f'node-a{n}'},
                      'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}} for n in range(3)}
         self.claim = {'spec': {'volumeName': 'lost-pv'}}
+        self.volume = {'spec': {'nodeAffinity': {'required': {'nodeSelectorTerms': [{
+            'matchExpressions': [{'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': [f'node-a{ordinal}']}]
+        }]}}}}
         self.calls = []
         self.no_quorum = False
         self.lose_quorum_after_delete = False
@@ -56,13 +59,21 @@ class Cluster:
 
     def kubectl(self, *args):
         self.calls.append(args)
+        if args[:2] == ('get', 'nodes'):
+            hostname = args[args.index('--selector') + 1].split('=', 1)[1]
+            return json.dumps({'items': [node for node in self.nodes.values()
+                                        if node['metadata']['labels']['kubernetes.io/hostname'] == hostname]})
         if args[0] == 'get':
             kind, name = args[1:3]
             obj = {'statefulset': self.workloads, 'node': self.nodes,
-                   'pod': self.pods, 'pvc': {'data-' + self.target: self.claim}}[kind].get(name)
+                   'pod': self.pods, 'pvc': {'data-' + self.target: self.claim},
+                   'pv': {'lost-pv': self.volume}}[kind].get(name)
             if kind == 'pod' and '--ignore-not-found' in args and self.missing_pod_reads:
                 self.missing_pod_reads -= 1
                 return ''
+            if obj is None and '--ignore-not-found' in args:
+                return ''
+            assert obj is not None, f'Missing {kind}/{name}'
             return json.dumps(obj)
         if args[0] == 'exec':
             script = args[-1]
@@ -85,7 +96,9 @@ class Cluster:
             return ''
         if args[:2] == ('delete', 'pod'):
             assert args[2] == self.target
-            del self.pods[self.target]
+            if self.target not in self.pods:
+                assert '--ignore-not-found=true' in args
+            self.pods.pop(self.target, None)
             return ''
         if args[:2] == ('delete', 'pvc'):
             assert args[2] == 'data-' + self.target
@@ -144,6 +157,59 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'two healthy survivors'):
             self.run_recovery(self.recovery(cluster))
         self.assertFalse(any(c[0] in ('delete', 'patch') for c in cluster.calls))
+
+    def test_recovers_pending_or_missing_pod_using_bound_pv(self):
+        for ordinal in range(3):
+            for state in ('pending', 'missing'):
+                with self.subTest(ordinal=ordinal, state=state):
+                    cluster = Cluster(ordinal)
+                    source = f'node-a{ordinal}'
+                    cluster.nodes[source]['status']['conditions'][0]['status'] = 'Unknown'
+                    if state == 'pending':
+                        cluster.pods[cluster.target]['spec'].pop('nodeName')
+                    else:
+                        del cluster.pods[cluster.target]
+                    before = copy.deepcopy(cluster.pods)
+                    self.run_recovery(self.recovery(cluster, node_fenced=True))
+                    self.assertIn(('get', 'pv', 'lost-pv', '-o', 'json'), cluster.calls)
+                    self.assertNotIn(source, r.Recovery.hostname_groups(cluster.created)[0])
+                    for name, pod in before.items():
+                        if name != cluster.target:
+                            self.assertEqual(cluster.pods[name], pod)
+                    self.assertEqual(cluster.claim['spec']['volumeName'], 'fresh-pv')
+                    self.assertEqual(cluster.complete_checks, 2)
+
+    def test_pv_fallback_retains_fencing_and_quorum_checks(self):
+        for failure in ('fencing', 'quorum'):
+            with self.subTest(failure=failure):
+                cluster = Cluster(1)
+                cluster.pods[cluster.target]['spec'].pop('nodeName')
+                cluster.nodes['node-a1']['status']['conditions'][0]['status'] = 'Unknown'
+                cluster.no_quorum = failure == 'quorum'
+                with self.assertRaisesRegex(ValueError, 'Fence it externally|two healthy survivors'):
+                    self.run_recovery(self.recovery(cluster, node_fenced=failure == 'quorum'))
+                self.assertFalse(any(c[0] in ('delete', 'patch') for c in cluster.calls))
+
+    def test_pv_hostname_can_differ_from_node_name(self):
+        cluster = Cluster(1)
+        cluster.pods[cluster.target]['spec'].pop('nodeName')
+        node = cluster.nodes.pop('node-a1')
+        node['metadata']['name'] = 'source-node-object'
+        cluster.nodes['source-node-object'] = node
+        _, _, source = self.recovery(cluster).prepare()
+        self.assertEqual(source, 'source-node-object')
+
+    def test_refuses_missing_or_ambiguous_pv_affinity(self):
+        for affinity in ({}, {'required': {'nodeSelectorTerms': [{
+                'matchExpressions': [{'key': 'kubernetes.io/hostname', 'operator': 'In',
+                                      'values': ['node-a0', 'node-a1']}]}]}}):
+            with self.subTest(affinity=affinity):
+                cluster = Cluster(0)
+                del cluster.pods[cluster.target]
+                cluster.volume['spec']['nodeAffinity'] = affinity
+                with self.assertRaisesRegex(ValueError, 'exactly one source hostname'):
+                    self.recovery(cluster).prepare()
+                self.assertFalse(any(c[0] in ('delete', 'patch') for c in cluster.calls))
 
     def test_refuses_unfenced_unavailable_node(self):
         cluster = Cluster(1)

@@ -12,6 +12,8 @@ Kehilangan satu anggota MongoDB menyisakan dua salinan/quorum. Pemilihan primary
 
 Script menunggu Pod baru, memastikan PV berbeda dari PV lama, dan memeriksa status MongoDB melalui survivor sampai ketiga anggota PRIMARY/SECONDARY sehat. Readiness `ping` saja tidak dianggap sebagai selesainya initial sync. Jalankan hanya pada cluster uji yang volumenya sudah dipastikan hilang. Sebelum menjalankan, rekam target Pod/PVC/PV/node dan pastikan kedua survivor benar-benar menyimpan write yang diakui.
 
+Jika Pod target sudah dihapus atau penggantinya masih `Pending` tanpa `spec.nodeName`, helper membaca PVC `data-REPLICA_SET-ORDINAL` yang masih terikat, lalu mengambil hostname sumber dari node affinity PV tersebut. Hostname harus menunjuk tepat satu objek Node; affinity yang kosong/ambigu ditolak sebelum perubahan apa pun. Pemeriksaan fencing dan dua survivor tetap berlaku pada jalur ini.
+
 ```bash
 export KUBECONFIG=/path/to/demo-only.kubeconfig
 export KUBE_CONTEXT=bnpb-demo

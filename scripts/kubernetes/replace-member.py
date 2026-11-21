@@ -24,8 +24,29 @@ class Recovery:
             ['kubectl', '--context', self.context, '--request-timeout=30s',
              '-n', self.args.namespace, *args], text=True, timeout=360)
 
-    def get(self, kind, name):
-        return json.loads(self.kubectl('get', kind, name, '-o', 'json'))
+    def get(self, kind, name, missing_ok=False):
+        flags = ['--ignore-not-found'] if missing_ok else []
+        raw = self.kubectl('get', kind, name, '-o', 'json', *flags)
+        return json.loads(raw) if raw.strip() else {}
+
+    def volume_node(self, volume_name):
+        volume = self.get('pv', volume_name)
+        terms = volume['spec'].get('nodeAffinity', {}).get('required', {}).get('nodeSelectorTerms', [])
+        hosts = set()
+        for term in terms:
+            restrictions = [set(expr.get('values', [])) for expr in term.get('matchExpressions', [])
+                            if expr.get('key') == 'kubernetes.io/hostname' and expr.get('operator') == 'In']
+            if not restrictions:
+                raise ValueError('Lost PV must have explicit hostname affinity in every selector term')
+            hosts.update(set.intersection(*restrictions))
+        if len(hosts) != 1:
+            raise ValueError('Lost PV affinity must identify exactly one source hostname')
+        # A hostname label need not equal the Kubernetes Node object's name.
+        nodes = json.loads(self.kubectl('get', 'nodes', '--selector',
+                           'kubernetes.io/hostname=' + next(iter(hosts)), '-o', 'json'))['items']
+        if len(nodes) != 1:
+            raise ValueError('Cannot resolve lost PV hostname to one Node; retain the old Node object during recovery')
+        return nodes[0]['metadata']['name']
 
     def healthy(self, pod, complete=False):
         # Read replica state from a survivor: Pod Ready only tests mongod's ping.
@@ -54,10 +75,11 @@ printjson(healthy.map(m => ({name: m.name, state: m.stateStr, health: m.health})
         workload = self.get('statefulset', self.args.replica_set)
         if workload['spec'].get('replicas') != 3:
             raise ValueError('Expected exactly three replicas; restore replica count before recovery')
-        pod = self.get('pod', self.target)
-        old_node = pod['spec'].get('nodeName')
-        if not old_node:
-            raise ValueError('Target Pod has no source node; inspect its PVC/PV before proceeding')
+        claim = self.get('pvc', 'data-' + self.target)
+        if not claim['spec'].get('volumeName'):
+            raise ValueError('Expected a bound target PVC; inspect storage before proceeding')
+        pod = self.get('pod', self.target, missing_ok=True)
+        old_node = pod.get('spec', {}).get('nodeName') or self.volume_node(claim['spec']['volumeName'])
         node = self.get('node', old_node)
         ready = any(c['type'] == 'Ready' and c['status'] == 'True'
                     for c in node.get('status', {}).get('conditions', []))
@@ -65,10 +87,6 @@ printjson(healthy.map(m => ({name: m.name, state: m.stateStr, health: m.health})
             raise ValueError('Source node is unavailable. Fence it externally, then pass --node-fenced')
         if not ready and not self.args.replacement_node:
             raise ValueError('An unavailable source node requires --replacement-node')
-        claim = self.get('pvc', 'data-' + self.target)
-        if not claim['spec'].get('volumeName'):
-            raise ValueError('Expected a bound target PVC; inspect storage before proceeding')
-
         # Recreate only declarative fields; never reuse API identity or status.
         clean = {'apiVersion': workload['apiVersion'], 'kind': workload['kind'],
                  'metadata': {'name': self.args.replica_set, 'namespace': self.args.namespace,
@@ -133,7 +151,7 @@ printjson(healthy.map(m => ({name: m.name, state: m.stateStr, health: m.health})
             # Scaling down would delete ordinal 2 even when 0 or 1 is the lost disk.
             self.kubectl('delete', 'statefulset', self.args.replica_set, '--cascade=orphan', '--wait=true', '--timeout=5m')
             orphaned = True
-            delete = ['delete', 'pod', self.target, '--wait=true', '--timeout=5m']
+            delete = ['delete', 'pod', self.target, '--ignore-not-found=true', '--wait=true', '--timeout=5m']
             if self.args.node_fenced:
                 delete += ['--force', '--grace-period=0']
             self.kubectl(*delete)

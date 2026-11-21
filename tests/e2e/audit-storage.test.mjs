@@ -84,9 +84,24 @@ test(`Canonical analytics coverage: ${stage}`, { timeout: 30_000 }, async () => 
     assert.equal(analytics.status, 200);
     const expectedPartial = stage === 'outage';
     assert.equal(analytics.body.partial, expectedPartial);
-    assert.equal(Object.values(analytics.body.byType).reduce((a,b) => a+b, 0), analytics.body.total);
+    const canonicalCount = Object.entries(analytics.body.byType)
+        .filter(([type]) => type !== 'TSUNAMI')
+        .reduce((sum, [, count]) => sum + count, 0);
+    assert.equal(canonicalCount, analytics.body.total);
     assert.equal(Object.values(analytics.body.byArea).reduce((a,b) => a+b, 0), analytics.body.total);
     assert.equal(Object.values(analytics.body.bySeverity).reduce((a,b) => a+b, 0), analytics.body.total);
+    // TSUNAMI overlaps SEISMIC; validate its count and daily coverage separately.
+    const tsunamiCount = analytics.body.byType.TSUNAMI;
+    assert.ok(Number.isInteger(tsunamiCount) && tsunamiCount >= 0);
+    assert.ok(tsunamiCount <= analytics.body.byType.SEISMIC);
+    let dailyTsunamiCount = 0;
+    for (const counts of Object.values(analytics.body.byDay)) {
+        const count = counts.TSUNAMI ?? 0;
+        assert.ok(Number.isInteger(count) && count >= 0);
+        assert.ok(count <= (counts.SEISMIC ?? 0), 'Daily tsunami warnings must be a subset of seismic events');
+        dailyTsunamiCount += count;
+    }
+    assert.equal(dailyTsunamiCount, tsunamiCount, 'Daily tsunami counts must match the tsunami total');
     if (expectedPartial) {
         assert.ok(analytics.body.unavailable_units.includes('canonical-shard-b'));
         assert.equal(analytics.body.degraded, true);
