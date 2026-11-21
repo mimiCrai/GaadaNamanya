@@ -10,6 +10,22 @@ servers:
       description: Local development server
 
 paths:
+    /internal/analytics:
+        get:
+            summary: Canonical counts across shards, with UTC occurrence range and availability
+            description: >-
+                byType and byDay include TSUNAMI for SEISMIC events with an attributes.tsunami_warning
+                object. These events also remain in SEISMIC, so type-series counts overlap.
+                total, bySource, bySeverity, byArea and byMonth count each canonical event once.
+                Daily buckets use the event occurrence time in UTC and the range is [from, to).
+            parameters:
+                - { in: query, name: from, schema: { type: string, format: date-time } }
+                - { in: query, name: to, schema: { type: string, format: date-time } }
+            responses:
+                '200': { description: Counts and daily series; inspect partial and degraded }
+                '400': { description: Invalid range }
+                '401': { description: Missing internal key }
+                '403': { description: Invalid internal key }
     /internal/sensor-pantai/status:
         get:
             summary: Sensor freshness, checkpoint timestamps, and circuit breaker retry time

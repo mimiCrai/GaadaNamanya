@@ -56,6 +56,29 @@
     <body>
         <h1>BNPB Hazard Dashboard</h1>
         <p class="muted">Projection maintained by Dashboard Consumer. Refreshes every 3 seconds.</p>
+        <section aria-label="Hazard analytics">
+            <h2>Analytics</h2>
+            <p id="analytics-total" class="muted">Loading summary…</p>
+            <label
+                >UTC occurrence range
+                <select id="range">
+                    <option value="0">All time</option>
+                    <option value="7">Last 7 days</option>
+                    <option value="30">Last 30 days</option>
+                    <option value="365">Last 365 days</option>
+                </select></label
+            >
+            <p id="analytics-status" role="status"></p>
+            <svg
+                id="timeline"
+                viewBox="0 0 960 250"
+                role="img"
+                aria-label="Daily event count per hazard type"
+                style="width: 100%; border: 1px solid #ddd"
+            ></svg>
+            <p id="legend"></p>
+            <div id="analytics-breakdown"></div>
+        </section>
 
         <table>
             <thead>
@@ -81,33 +104,146 @@
                     .join('\n');
             };
 
-            async function refresh() {
-                const response = await fetch('/api/hazards');
-                const { data } = await response.json();
-                const rows = document.querySelector('#hazards');
-
-                rows.replaceChildren();
-                if (data.length === 0) {
-                    rows.innerHTML = '<tr><td colspan="7">No hazard events received yet.</td></tr>';
-                    return;
+            let refreshing = false;
+            function drawAnalytics(analytics) {
+                const status = document.querySelector('#analytics-status');
+                status.textContent = analytics.partial
+                    ? `PARTIAL — counts incomplete: ${(analytics.unavailable_units || []).join(', ')}`
+                    : analytics.degraded
+                      ? `DEGRADED — readable data complete; unavailable replicas: ${(analytics.degraded_units || []).join(', ')}`
+                      : 'Complete canonical data';
+                status.style.color = analytics.partial || analytics.degraded ? '#b42318' : '#027a48';
+                const svg = document.querySelector('#timeline');
+                svg.replaceChildren();
+                const ns = 'http://www.w3.org/2000/svg';
+                function element(tag, attrs, text) {
+                    const e = document.createElementNS(ns, tag);
+                    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+                    if (text !== undefined) e.textContent = text;
+                    svg.append(e);
                 }
+                const dates = Object.keys(analytics.byDay || {}).sort();
+                const types = Object.keys(analytics.byType || {});
+                const colors = ['#2563eb', '#dc2626', '#b45309', '#059669', '#7c3aed'];
+                const max = Math.max(1, ...Object.values(analytics.byDay || {}).flatMap((v) => Object.values(v)));
+                element('path', { d: 'M45,15 V215 H935', fill: 'none', stroke: '#999' });
+                element('text', { x: 5, y: 20, 'font-size': 12 }, String(max));
+                element('text', { x: 25, y: 218, 'font-size': 12 }, '0');
+                if (dates.length) {
+                    const first = Date.parse(dates[0]),
+                        last = Date.parse(dates[dates.length - 1]);
+                    // Fill missing UTC days with zero so gaps are not drawn as constant activity.
+                    const days = [];
+                    for (let time = first; time <= last; time += 86400000)
+                        days.push(new Date(time).toISOString().slice(0, 10));
+                    types.forEach((type, i) => {
+                        const points = days
+                            .map(
+                                (day, n) =>
+                                    `${45 + (n / Math.max(1, days.length - 1)) * 890},${215 - (((analytics.byDay[day] || {})[type] || 0) / max) * 195}`
+                            )
+                            .join(' ');
+                        element('polyline', {
+                            points,
+                            fill: 'none',
+                            stroke: colors[i % colors.length],
+                            'stroke-width': 2,
+                        });
+                        if (days.length === 1)
+                            element('circle', {
+                                cx: 45,
+                                cy: 215 - ((analytics.byDay[days[0]][type] || 0) / max) * 195,
+                                r: 3,
+                                fill: colors[i % colors.length],
+                            });
+                    });
+                    element('text', { x: 45, y: 240, 'font-size': 12 }, dates[0]);
+                    element('text', { x: 850, y: 240, 'font-size': 12 }, dates[dates.length - 1]);
+                }
+                const legend = document.querySelector('#legend');
+                legend.replaceChildren();
+                types.forEach((type, i) => {
+                    const label = document.createElement('span');
+                    label.style.color = colors[i % colors.length];
+                    label.textContent = `${type} (${analytics.byType[type]})   `;
+                    legend.append(label);
+                });
+                const breakdown = document.querySelector('#analytics-breakdown');
+                breakdown.replaceChildren();
+                for (const [label, counts] of Object.entries({
+                    Severity: analytics.bySeverity,
+                    Area: analytics.byArea,
+                })) {
+                    const title = document.createElement('h3');
+                    title.textContent = label;
+                    breakdown.append(title);
+                    const table = document.createElement('table');
+                    for (const [key, count] of Object.entries(counts || {}).sort()) {
+                        const row = table.insertRow();
+                        row.insertCell().textContent = key;
+                        row.insertCell().textContent = count;
+                    }
+                    breakdown.append(table);
+                }
+            }
+            async function refresh() {
+                if (refreshing) return;
+                refreshing = true;
+                try {
+                    const [response, analyticsResponse] = await Promise.all([
+                        fetch('/api/hazards'),
+                        fetch(
+                            '/api/hazards/analytics' +
+                                (Number(document.querySelector('#range').value)
+                                    ? '?from=' +
+                                      encodeURIComponent(
+                                          new Date(
+                                              Date.now() - Number(document.querySelector('#range').value) * 86400000
+                                          ).toISOString()
+                                      )
+                                    : '')
+                        ),
+                    ]);
+                    if (!response.ok || !analyticsResponse.ok) throw new Error('Dashboard API unavailable');
+                    const { data } = await response.json();
+                    const analytics = await analyticsResponse.json();
+                    document.querySelector('#analytics-total').textContent = `${analytics.total} hazards recorded`;
+                    drawAnalytics(analytics);
+                    const rows = document.querySelector('#hazards');
 
-                for (const hazard of data) {
-                    const row = rows.insertRow();
-                    const severity = row.insertCell();
-                    severity.className = `severity ${hazard.severity}`;
-                    severity.textContent = hazard.severity;
-                    row.insertCell().textContent = hazard.hazardType;
-                    row.insertCell().textContent = hazard.areaName;
-                    row.insertCell().textContent = hazard.source;
-                    const attributes = row.insertCell();
-                    attributes.className = 'attributes';
-                    attributes.textContent = formatAttributes(hazard.attributes);
-                    row.insertCell().textContent = format(hazard.occurredAt);
-                    row.insertCell().textContent = hazard.lastEventType;
+                    rows.replaceChildren();
+                    if (data.length === 0) {
+                        rows.innerHTML = '<tr><td colspan="7">No hazard events received yet.</td></tr>';
+                        return;
+                    }
+
+                    for (const hazard of data) {
+                        const row = rows.insertRow();
+                        const severity = row.insertCell();
+                        severity.className = `severity ${hazard.severity}`;
+                        severity.textContent = hazard.severity;
+                        row.insertCell().textContent = hazard.hazardType;
+                        row.insertCell().textContent = hazard.areaName;
+                        row.insertCell().textContent = hazard.source;
+                        const attributes = row.insertCell();
+                        attributes.className = 'attributes';
+                        attributes.textContent = formatAttributes(hazard.attributes);
+                        row.insertCell().textContent = format(hazard.occurredAt);
+                        row.insertCell().textContent = hazard.lastEventType;
+                    }
+                } catch (error) {
+                    document.querySelector('#analytics-total').textContent = 'Canonical counts unavailable';
+                    document.querySelector('#analytics-status').textContent =
+                        'PARTIAL — canonical analytics unavailable; previous values cleared';
+                    document.querySelector('#analytics-status').style.color = '#b42318';
+                    for (const id of ['timeline', 'legend', 'analytics-breakdown'])
+                        document.getElementById(id).replaceChildren();
+                } finally {
+                    refreshing = false;
                 }
             }
 
+            document.querySelector('#range').addEventListener('change', refresh);
             refresh();
             setInterval(refresh, 3000);
         </script>

@@ -33,8 +33,23 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | Dashboard Consumer | `services/dashboard-consumer` | `http://localhost:3004/` |
 | Notification Consumer | `services/notification-consumer` | `http://localhost:3005/` |
 
-## Cara Menjalankan
-Sebelum menjalankan sistem, pastikan Anda sudah memiliki Docker.
+## Deployment demo Kubernetes
+
+Demo wajib menggunakan node dengan kernel terpisah. Entry point full-stack memerlukan **enam node yang dapat menjadwalkan Pod**, dibagi menjadi dua kelompok shard yang tidak beririsan, masing-masing tiga salinan data. Contoh: satu VM K3s server sekaligus worker dan lima VM K3s agent. Setiap node hanya menyimpan satu shard sehingga salinan replika tidak membuat seluruh dataset berada pada satu node. Cluster berbasis container seperti Docker Desktop kind hanya untuk pengembangan.
+
+Setelah cluster dan kubeconfig siap, salin `k8s/full-stack.json.example` menjadi `k8s/full-stack.json` dan isi image registry; batas memori `resources.requests`/`resources.limits` sesuai Lampiran B sudah tersedia di contoh. Jalankan `python3 scripts/kubernetes/init-secrets.py` sekali untuk membuat `.env.k8s` dengan kredensial acak. Login ke image registry, kemudian jalankan **satu perintah deployment** dari root repositori:
+
+```bash
+KUBE_CONTEXT=bnpb-demo bash scripts/kubernetes/deploy-all.sh
+```
+
+Perintah ini membangun dan mengirim image, membuat Secret dan ConfigMap, menjalankan seluruh storage, Kafka, sumber data, dan layanan BNPB, lalu memverifikasi MongoDB serta isolasi akses storage dengan NetworkPolicy. Panduan persiapan VM/K3s, konfigurasi, NodePort, dan pemeriksaan hasil ada di [deployment Kubernetes](docs/kubernetes-deployment.md).
+
+Namespace aplikasi wajib `sistem-informasi-kebencanaan-bnpb`. Isi context eksplisit dan hostname keenam node di konfigurasi. Setup dari awal, topologi/host, seluruh langkah pengujian, expected result, troubleshooting, dan pengumpulan bukti tersedia di **[petunjuk.md](petunjuk.md)**. Hasil audit beserta kriteria yang masih gagal atau belum diuji ada di [matriks penerimaan](docs/audit-instructions.md). Cluster lokal Docker Desktop tidak membuktikan kepatuhan demo. Pemulihan otomatis disk/node permanen serta observabilitas menyeluruh masih perlu diselesaikan sebelum seluruh kriteria dapat dinyatakan lulus.
+
+## Pengembangan lokal dengan Docker Compose
+
+Sebelum menjalankan sistem lokal, pastikan Anda sudah memiliki Docker.
 
 1. Clone repository ini ke mesin lokal Anda.
 ```sh

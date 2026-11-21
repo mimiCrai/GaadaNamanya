@@ -19,13 +19,19 @@ function waitFor(description, operation) {
     throw new Error(`Timed out waiting for ${description}`);
 }
 
-for (const [name, hosts, configsvr] of [
-    ['canonical-config', ['canonical-config-1:27017', 'canonical-config-2:27017', 'canonical-config-3:27017'], true],
-    ['canonical-shard-a', ['canonical-shard-a-1:27017', 'canonical-shard-a-2:27017', 'canonical-shard-a-3:27017'], false],
-    ['canonical-shard-b', ['canonical-shard-b-1:27017', 'canonical-shard-b-2:27017', 'canonical-shard-b-3:27017'], false],
+function hosts(name) {
+    return process.env.MONGO_KUBERNETES === 'true'
+        ? [0, 1, 2].map((n) => `${name}-${n}.${name}:27017`)
+        : [1, 2, 3].map((n) => `${name}-${n}:27017`);
+}
+
+for (const [name, members, configsvr] of [
+    ['canonical-config', hosts('canonical-config'), true],
+    ['canonical-shard-a', hosts('canonical-shard-a'), false],
+    ['canonical-shard-b', hosts('canonical-shard-b'), false],
 ]) {
-    waitFor(`${name} members`, () => hosts.every((host) => connect(host).getDB('admin').runCommand({ ping: 1 }).ok));
-    const admin = connect(hosts[0]).getDB('admin');
+    waitFor(`${name} members`, () => members.every((host) => connect(host).getDB('admin').runCommand({ ping: 1 }).ok));
+    const admin = connect(members[0]).getDB('admin');
     try {
         admin.runCommand({ replSetGetStatus: 1 });
     } catch (error) {
@@ -34,10 +40,10 @@ for (const [name, hosts, configsvr] of [
             replSetInitiate: {
                 _id: name,
                 ...(configsvr ? { configsvr: true } : {}),
-                members: hosts.map((host, _id) => ({ _id, host })),
+                members: members.map((host, _id) => ({ _id, host })),
             },
         });
     }
-    waitFor(`${name} primary`, () => hosts.some((host) => connect(host).getDB('admin').runCommand({ hello: 1 }).isWritablePrimary));
+    waitFor(`${name} primary`, () => members.some((host) => connect(host).getDB('admin').runCommand({ hello: 1 }).isWritablePrimary));
     print(`${name} ready`);
 }

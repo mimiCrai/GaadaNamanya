@@ -1,0 +1,143 @@
+{
+  "namespace": "sistem-informasi-kebencanaan-bnpb",
+  "imageRepository": "docker.io/YOUR_USER/bnpb",
+  "imageTag": "CHANGE_ME",
+  "storageClassName": "local-path",
+  "stableNodeName": "bnpb-a",
+  "resources": {
+    "mongo-member": {
+      "requests": {
+        "memory": "512Mi"
+      },
+      "limits": {
+        "memory": "1Gi"
+      }
+    },
+    "mongo-router": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "mongo-init": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "mongo-migrate": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "postgres": {
+      "requests": {
+        "memory": "512Mi"
+      },
+      "limits": {
+        "memory": "1Gi"
+      }
+    },
+    "kafka": {
+      "requests": {
+        "memory": "512Mi"
+      },
+      "limits": {
+        "memory": "1Gi"
+      }
+    },
+    "kafka-topic-init": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "bnpb-auth": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "bnpb-client-api": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "bnpb-aggregator": {
+      "requests": {
+        "memory": "256Mi"
+      },
+      "limits": {
+        "memory": "512Mi"
+      }
+    },
+    "dashboard-consumer": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "notification-consumer": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "bmkg": {
+      "requests": {
+        "memory": "64Mi"
+      },
+      "limits": {
+        "memory": "128Mi"
+      }
+    },
+    "pvmbg": {
+      "requests": {
+        "memory": "64Mi"
+      },
+      "limits": {
+        "memory": "128Mi"
+      }
+    },
+    "sensor-pantai": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    }
+  },
+  "context": "bnpb-demo",
+  "storageNodes": {
+    "a": [
+      "bnpb-a",
+      "bnpb-b",
+      "bnpb-c"
+    ],
+    "b": [
+      "bnpb-d",
+      "bnpb-e",
+      "bnpb-f"
+    ]
+  },
+  "imagePullSecret": ""
+}

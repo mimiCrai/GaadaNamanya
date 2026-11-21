@@ -1,0 +1,24 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-migrate
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: { app: canonical-migrate, role: other }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: docker.io/mimicrai/bnpb-aggregator:k8s-e44b8ac-20261118154957
+          command: [ npm, run, db:migrate ]
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          env:
+            - { name: DATABASE_NAME, value: canonical_store }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: canonical-mongo, key: DATABASE_URL }

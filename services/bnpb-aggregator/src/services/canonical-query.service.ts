@@ -89,6 +89,7 @@ export class CanonicalQueryService implements ICanonicalQueryService {
             try {
                 const status = await this.topology.inspect();
                 result.unavailable_units.push(...status.unavailable_units);
+                result.unavailable_units.push(...(status.degraded_units ?? []));
                 locations = await this.topology.locate(hazardId, status);
             } catch {
                 result.unavailable_units.push('canonical-metadata');
