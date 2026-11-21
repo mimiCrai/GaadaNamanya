@@ -8,26 +8,44 @@ Kehilangan satu anggota MongoDB menyisakan dua salinan/quorum. Pemilihan primary
 
 ## Recovery satu volume yang sudah dikonfirmasi hilang
 
-`replace-member.sh NAMESPACE REPLICA_SET --lost-volume` hanya menangani ordinal 2. Script memeriksa dua anggota sehat, mengurangi replika menjadi dua, menghapus PVC ordinal 2, menambah replika menjadi tiga, lalu menunggu anggota baru sehat. Jalankan hanya pada cluster uji yang datanya boleh diganti dari replika lain. Sebelum menjalankan, rekam target Pod/PVC/PV/node dan pastikan kedua survivor benar-benar menyimpan write yang diakui.
+`replace-member.sh NAMESPACE REPLICA_SET ORDINAL --lost-volume` menerima ordinal **0, 1, atau 2** secara eksplisit. Script memeriksa dua survivor sehat (termasuk primary), menyimpan manifest pemulihan, melepas StatefulSet dengan `--cascade=orphan`, lalu menghapus **hanya Pod dan PVC target**. Kedua survivor tetap berjalan; tidak ada scale-down yang ikut mematikan ordinal 2. StatefulSet dibuat kembali dengan tiga replika dan strategi `OnDelete` agar adopsi/ubah affinity tidak merestart survivor. Retensi PVC disetel `Retain` sebelum controller dilepas.
+
+Script menunggu Pod baru, memastikan PV berbeda dari PV lama, dan memeriksa status MongoDB melalui survivor sampai ketiga anggota PRIMARY/SECONDARY sehat. Readiness `ping` saja tidak dianggap sebagai selesainya initial sync. Jalankan hanya pada cluster uji yang volumenya sudah dipastikan hilang. Sebelum menjalankan, rekam target Pod/PVC/PV/node dan pastikan kedua survivor benar-benar menyimpan write yang diakui.
 
 ```bash
 export KUBECONFIG=/path/to/demo-only.kubeconfig
 export KUBE_CONTEXT=bnpb-demo
 export NS=sistem-informasi-kebencanaan-bnpb
 bash scripts/kubernetes/verify-mongo.sh "$NS"
-bash scripts/kubernetes/replace-member.sh "$NS" canonical-shard-b --lost-volume
+# Contoh: disk anggota ordinal 1 hilang, node tetap sehat.
+bash scripts/kubernetes/replace-member.sh "$NS" canonical-shard-b 1 --lost-volume
 bash scripts/kubernetes/verify-mongo.sh "$NS"
 ```
 
-Operasi ini merupakan repair manual, bukan kelulusan recovery otomatis game day. Disk yang benar-benar hilang saat node mati, ordinal 0/1, dan node baru harus diuji tersendiri. Jangan menghapus PVC survivor.
+Operasi ini merupakan repair manual, bukan kelulusan recovery otomatis game day. Jangan menghapus PVC survivor atau memulai penggantian kedua sebelum seluruh replika sehat kembali. Jika script gagal, manifest di `/tmp/bnpb-member-recovery-*/statefulset.json` tetap tersedia dan path dicetak. Jika controller sudah dilepas, script mencoba membuatnya kembali sebelum keluar. Setelah interupsi keras, periksa keberadaan StatefulSet dan gunakan manifest tersebut dengan `kubectl --context "$KUBE_CONTEXT" -n "$NS" create -f PATH` hanya jika StatefulSet belum ada. Jangan melakukan redeploy bersamaan dengan repair.
 
 ## Node hilang permanen
 
-1. Konfirmasikan node lama benar-benar mati dan tidak akan kembali dengan data lama.
+1. Fence node lama melalui hypervisor/power control: proses lama harus benar-benar berhenti dan tidak boleh kembali dengan data lama. Status Kubernetes `NotReady` saja bukan bukti fencing. Pertahankan objek Node lama sampai pemetaan recovery selesai.
 2. Rekam replica status melalui anggota sehat, acknowledgement write, count/checksum baseline, Pod mapping, PVC/PV affinity dan reclaim policy.
 3. Sediakan dan join node baru dengan kernel terpisah, disk kosong dan kapasitas cukup. Ini tindakan provisioning eksternal.
-4. Perbarui `storageNodes` agar node baru menggantikan node lama dalam kelompok shard yang sama. Jangan pernah memasukkan node ke kedua kelompok.
-5. Recovery controller untuk memindahkan semua ordinal/claim otomatis **belum tersedia**. Jangan memakai `kubectl drain` sebagai bukti pemindahan disk: local PV lama tetap terikat pada node lama. Untuk ordinal 2 yang sudah dipastikan hilang, prosedur penggantian volume di atas dapat digunakan setelah affinity workload diperbarui lewat redeploy.
+4. Identifikasi **seluruh** Pod `canonical-config`, `canonical-shard-a`, atau `canonical-shard-b` pada node hilang dengan `kubectl --context "$KUBE_CONTEXT" -n "$NS" get pods -o wide`. Untuk setiap replica set, catat ordinal yang benar. Setiap set harus masih memiliki dua survivor sehat.
+5. Jalankan helper di bawah untuk setiap anggota yang hilang, satu per satu. `--replacement-node` memeriksa node Ready/schedulable, menolak node kelompok shard lawan atau node yang sudah menampung survivor, lalu mengganti hostname lama pada affinity set target. `--node-fenced` adalah konfirmasi operator atas langkah 1 dan mengizinkan force-delete **hanya Pod target** pada node mati; tidak menghapus finalizer PVC/PV. Script memverifikasi Pod baru benar-benar berjalan di node pengganti. Local PV lama tidak dipindah: PVC baru mendapat disk kosong lalu MongoDB melakukan initial sync.
 6. Tunggu initial sync; bandingkan count/checksum dataset beku, jalankan `verify-distribution.py`, dan pastikan write baru muncul pada node baru. Ulangi gangguan worker lain hanya setelah semua replika sehat kembali.
 
-`replace-node.sh --drain` adalah helper eviksi sukarela yang tunduk PDB. Ia bukan pemulihan node/disk permanen dan bisa menunggu timeout dengan local PV. `run-disk-loss-drill.sh` menggabungkan helper ordinal 2, baseline checksum, dan k6; jalur tersebut tidak menggantikan Tester Agent atau membuktikan S04–S06 otomatis.
+```bash
+# Contoh: canonical-shard-b-0 hilang bersama node lamanya yang sudah di-fence.
+bash scripts/kubernetes/replace-member.sh "$NS" canonical-shard-b 0 \
+  --lost-volume --replacement-node bnpb-f-new --node-fenced
+bash scripts/kubernetes/verify-mongo.sh "$NS"
+```
+
+Setelah seluruh anggota pada node lama pulih, perbarui `storageNodes` di `k8s/full-stack.json` agar node baru menggantikan hostname lama dalam kelompok yang sama. Node tidak boleh masuk kedua kelompok. Helper hanya mengubah affinity StatefulSet target yang sedang dipulihkan; konfigurasi deployment tetap harus diselaraskan. Strategi set tersebut tetap `OnDelete`; untuk kembali ke `RollingUpdate`, sesudah seluruh replica set sehat, jalankan `kubectl --context "$KUBE_CONTEXT" -n "$NS" patch statefulset REPLICA_SET --type=merge -p '{"spec":{"updateStrategy":{"type":"RollingUpdate"}}}'` dan pantau rollout sebelum gangguan berikutnya. Perubahan affinity dapat memicu rolling restart survivor pada tahap ini.
+
+Jika penghapusan local PVC/PV macet karena node/provisioner hilang, script berhenti dengan timeout dan mengembalikan controller; selesaikan penanganan reclaim/provisioner sesuai status aktual. Jangan menghapus finalizer secara membabi buta. Provisioning node, fencing, dan pemulihan singleton di control plane tetap tindakan eksternal, bukan recovery otomatis.
+
+`replace-node.sh --drain` adalah helper eviksi sukarela yang tunduk PDB. Ia bukan pemulihan node/disk permanen dan bisa menunggu timeout dengan local PV. `run-disk-loss-drill.sh NAMESPACE REPLICA_SET ORDINAL BASELINE_JSON [--replacement-node NODE] [--node-fenced]` menggabungkan helper anggota terpilih, baseline checksum, dan k6; jalur tersebut tidak menggantikan Tester Agent atau membuktikan S04–S06 otomatis.
+
+Regresi offline: `python3 scripts/kubernetes/test-recovery.py` menguji setiap ordinal, pemilihan node, quorum, dan pemulihan controller saat error. Bukti initial sync fisik, checksum/write baru di node pengganti, dan dua gangguan worker berurutan tetap harus direkam di cluster enam node sesuai langkah 6.
+
+Referensi: [StatefulSet orphan deletion](https://kubernetes.io/docs/tasks/run-application/delete-stateful-set/) dan [MongoDB initial sync satu anggota](https://www.mongodb.com/docs/v7.0/tutorial/resync-replica-set-member/).

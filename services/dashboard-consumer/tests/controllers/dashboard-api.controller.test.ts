@@ -104,14 +104,18 @@ describe('Canonical analytics proxy', () => {
     });
     it('accepts the browser time range through the actual OpenAPI middleware', async () => {
         env.CANONICAL_ANALYTICS_URL = 'http://owner:3000/internal/analytics';
-        global.fetch = jest
-            .fn()
-            .mockResolvedValue({ ok: true, status: 200, json: async () => ({ total: 2, partial: false }) });
+        const analytics = {
+            total: 2,
+            partial: false,
+            byType: { SEISMIC: 2, TSUNAMI: 1 },
+            byDay: { '2000-01-01': { SEISMIC: 2, TSUNAMI: 1 } },
+        };
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => analytics });
         const response = await request(await createApp())
             .get('/api/hazards/analytics')
             .query({ from: '2000-01-01T00:00:00Z' });
         expect(response.status).toBe(200);
-        expect(response.body).toEqual({ total: 2, partial: false });
+        expect(response.body).toEqual(analytics);
     });
     it('returns 503 with explicit incompleteness when the owner cannot be reached', async () => {
         env.CANONICAL_ANALYTICS_URL = 'http://owner:3000/internal/analytics';

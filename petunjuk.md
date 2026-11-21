@@ -94,7 +94,7 @@ curl --fail --max-time 10 http://localhost:3004/api/hazards/analytics
 
 Gunakan port `.env` bila berbeda. Buka `http://localhost:3004/dashboard` dan `http://localhost:3005/notifications`. Dashboard berisi line chart jumlah harian UTC per hazard type, pemilih rentang waktu, tabel severity/area serta status canonical. Daftar event pada tabel merupakan projection Kafka sehingga dapat tertinggal dari angka canonical.
 
-Pada local default, Sensor Pantai memakai image resmi; feed satelit memerlukan token asisten bila diaktifkan. Enum hazard aktual proyek adalah `SEISMIC`, `VOLCANIC`, `WILDFIRE`, `COASTAL`; informasi tsunami saat ini terintegrasi pada kejadian seismic/atribut peringatan, bukan enum `TSUNAMI` terpisah.
+Pada local default, Sensor Pantai memakai image resmi; feed satelit memerlukan token asisten bila diaktifkan. Enum hazard aktual proyek adalah `SEISMIC`, `VOLCANIC`, `WILDFIRE`, `COASTAL`; informasi tsunami terintegrasi pada kejadian seismic/atribut peringatan. Analitik `byType`/`byDay` menyediakan seri `TSUNAMI` dari event `SEISMIC` dengan objek `attributes.tsunami_warning`, memakai hari kejadian seismic dalam UTC. Event tersebut tetap dihitung di seri `SEISMIC`; kedua seri overlap, sedangkan total/breakdown lain menghitung setiap event sekali.
 
 Smoke Auth dan Client API:
 
@@ -332,14 +332,14 @@ Lakukan pada cluster uji setelah mencatat target dan baseline. Gangguan worker y
 5. Join node pengganti dengan disk kosong dan kernel terpisah. Perbarui kelompok penempatan yang sama. Buktikan initial sync, node baru menanggung data **dan write baru** saat baca/tulis berlangsung.
 6. Setelah seluruh replika sehat, bandingkan checksum terhadap write yang diakui/dataset beku dan jalankan ulang distribusi fisik. Kemudian ulangi kehilangan **worker lain** untuk membuktikan ketahanan kembali.
 
-Implementasi saat ini **belum mengotomatisasi** penggantian node/PVC untuk kehilangan disk permanen. Jangan mengubah langkah repair manual menjadi klaim S04–S06 lulus game day. Prosedur manual ordinal 2 dan batas `replace-node.sh` ada di [recovery guide](docs/kubernetes-recovery.md).
+Implementasi saat ini menyediakan repair manual untuk ordinal 0/1/2 dan node pengganti, tetapi **belum mengotomatisasi** provisioning/fencing node untuk kehilangan disk permanen. Jangan mengubah langkah repair manual menjadi klaim S04–S06 lulus game day. Prosedur anggota terpilih, konfirmasi fencing, dan batas `replace-node.sh` ada di [recovery guide](docs/kubernetes-recovery.md).
 
-Untuk drill satu volume ordinal 2 pada node yang masih dapat dijadwalkan:
+Untuk drill satu volume ordinal 1 pada node yang masih dapat dijadwalkan (pilih ordinal sesuai anggota yang benar-benar hilang):
 
 ```bash
 export BNPB_AGGREGATOR_AUDIT_TOKEN="$BNPB_AUDIT_TOKEN"
 bash scripts/kubernetes/check-recovery.sh before "$EVIDENCE/baseline.json"
-bash scripts/kubernetes/replace-member.sh "$NS" canonical-shard-b --lost-volume
+bash scripts/kubernetes/replace-member.sh "$NS" canonical-shard-b 1 --lost-volume
 bash scripts/kubernetes/verify-mongo.sh "$NS"
 bash scripts/kubernetes/check-recovery.sh after "$EVIDENCE/baseline.json"
 ```

@@ -181,6 +181,11 @@ metadata:
   namespace: sistem-informasi-kebencanaan-bnpb
   name: canonical-store
 spec:
+  # A driver's pooled connections must reach the same router for find/getMore.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   selector: { app: canonical-store }
   ports: [{ name: mongo, port: 27017, targetPort: 27017 }]
 ---

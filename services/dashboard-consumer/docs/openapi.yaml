@@ -32,6 +32,10 @@ paths:
     /api/hazards/analytics:
         get:
             summary: Canonical counts across storage shards (occurrence UTC range)
+            description: >-
+                Canonical byType and byDay include TSUNAMI, an overlapping subset of SEISMIC events
+                with a tsunami warning. total and other breakdowns count each event once.
+                TSUNAMI uses the related seismic event occurrence day in UTC.
             parameters:
                 - { in: query, name: from, schema: { type: string, format: date-time } }
                 - { in: query, name: to, schema: { type: string, format: date-time } }

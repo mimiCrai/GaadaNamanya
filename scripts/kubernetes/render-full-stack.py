@@ -250,7 +250,8 @@ def stateful(name, image, env, resources, port, mount, size, storage_class, comm
         container["readinessProbe"] = {
             "exec": {"command": ["bash", "-ec",
                 "kafka-topics --bootstrap-server localhost:29092 --list >/dev/null"]},
-            "periodSeconds": 10, "failureThreshold": 12,
+            # Starting the Kafka JVM CLI routinely exceeds the one-second default.
+            "periodSeconds": 10, "timeoutSeconds": 10, "failureThreshold": 12,
         }
     if name == "sensor-pantai":
         container["readinessProbe"] = {

@@ -56,8 +56,48 @@ describe('Canonical analytics', () => {
                 partial: false,
                 degraded: true,
                 byArea: { Aceh: 2, Riau: 1 },
-                byType: { SEISMIC: 1, VOLCANIC: 0, WILDFIRE: 1, COASTAL: 1 },
+                byType: { SEISMIC: 1, VOLCANIC: 0, WILDFIRE: 1, COASTAL: 1, TSUNAMI: 0 },
                 byDay: { '2026-01-01': { SEISMIC: 1 }, '2026-01-02': { WILDFIRE: 1, COASTAL: 1 } },
+            })
+        );
+    });
+
+    it('counts warned seismic events in an overlapping tsunami series across streamed batches', async () => {
+        const event = (hazardType: string, day: string, warning?: unknown) => ({
+            source: 'BMKG',
+            hazardType,
+            severity: 'SIAGA',
+            areaName: 'Aceh',
+            occurredAt: new Date(day),
+            attributes: { tsunami_warning: warning },
+        });
+        read.mockImplementation(async (_options, consume) => {
+            consume([
+                event('SEISMIC', '2026-01-01T23:30:00Z', { warning_id: 'w1', threat_level: 'Siaga' }),
+                event('SEISMIC', '2026-01-01T23:59:59Z'),
+            ]);
+            consume([
+                event('SEISMIC', '2026-01-02T00:00:00Z', { warning_id: 'w2', threat_level: 'Awas' }),
+                event('COASTAL', '2026-01-02T00:00:00Z', { warning_id: 'not-seismic' }),
+                event('SEISMIC', '2026-01-02T00:00:00Z', null),
+                event('SEISMIC', '2026-01-02T00:00:00Z', false),
+            ]);
+            return { partial: false, unavailable_units: [] };
+        });
+        inspect.mockResolvedValue({ unavailable_units: [] });
+        const res = response();
+        await controller().analytics({ query: {} } as Request, res);
+        expect(res.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+                total: 6,
+                bySource: { BMKG: 6 },
+                byMonth: { '2026-01': 6 },
+                byType: { SEISMIC: 5, VOLCANIC: 0, WILDFIRE: 0, COASTAL: 1, TSUNAMI: 2 },
+                byDay: {
+                    '2026-01-01': { SEISMIC: 2, TSUNAMI: 1 },
+                    '2026-01-02': { SEISMIC: 3, COASTAL: 1, TSUNAMI: 1 },
+                },
+                partial: false,
             })
         );
     });

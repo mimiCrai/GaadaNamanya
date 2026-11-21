@@ -26,7 +26,11 @@ export class AnalyticsController {
         const { from, to } = parsed.data;
         const bySource: Record<string, number> = {};
         const bySeverity: Record<string, number> = {};
-        const byType: Record<string, number> = Object.fromEntries(Object.values(HazardType).map((type) => [type, 0]));
+        // TSUNAMI is an overlapping series of warned seismic events, not a stored hazard type.
+        const byType: Record<string, number> = {
+            ...Object.fromEntries(Object.values(HazardType).map((type) => [type, 0])),
+            TSUNAMI: 0,
+        };
         const byArea: Record<string, number> = {};
         const byMonth: Record<string, number> = {};
         const byDay: Record<string, Record<string, number>> = {};
@@ -59,6 +63,16 @@ export class AnalyticsController {
                     const day = time.slice(0, 10);
                     byDay[day] ??= {};
                     increment(byDay[day], item.hazardType);
+                    const warning = item.attributes?.tsunami_warning;
+                    if (
+                        item.hazardType === HazardType.Seismic &&
+                        warning &&
+                        typeof warning === 'object' &&
+                        !Array.isArray(warning)
+                    ) {
+                        increment(byType, 'TSUNAMI');
+                        increment(byDay[day], 'TSUNAMI');
+                    }
                 }
             }
         );

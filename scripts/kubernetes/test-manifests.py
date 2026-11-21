@@ -69,6 +69,19 @@ class DeploymentTests(unittest.TestCase):
     def test_demo_accepts_six_kernel_topology(self):
         self.assertEqual(len(c.validate(self.config, self.nodes(), self.classes())), 6)
 
+    def test_kafka_probe_allows_time_for_cli_startup(self):
+        workload = r.stateful('kafka', 'confluentinc/cp-kafka:7.7.1', [], {},
+                              29092, '/var/lib/kafka/data', '10Gi', 'local-path')
+        probe = workload['spec']['template']['spec']['containers'][0]['readinessProbe']
+        self.assertGreaterEqual(probe['timeoutSeconds'], 4)
+        self.assertLessEqual(probe['timeoutSeconds'], probe['periodSeconds'])
+
+    def test_mongo_router_connections_use_client_affinity(self):
+        objects = list(yaml.safe_load_all((ROOT / 'k8s/mongo.yaml').read_text()))
+        router = next(x for x in objects if x['kind'] == 'Service' and x['metadata']['name'] == 'canonical-store')
+        self.assertEqual(router['spec']['sessionAffinity'], 'ClientIP')
+        self.assertEqual(router['spec']['sessionAffinityConfig']['clientIP']['timeoutSeconds'], 10800)
+
     def test_full_render_and_redeploy_are_deterministic(self):
         init = module('secrets', ROOT / 'scripts/kubernetes/init-secrets.py')
         with tempfile.TemporaryDirectory() as temp:
@@ -87,6 +100,8 @@ class DeploymentTests(unittest.TestCase):
                 r.main()
                 self.assertEqual(first, {p.name: p.read_text() for p in (temp / 'out').glob('*.json')})
             objects = [x for text in first.values() for x in json.loads(text)['items']]
+            router = next(x for x in objects if x['kind'] == 'Service' and x['metadata']['name'] == 'canonical-store')
+            self.assertEqual(router['spec']['sessionAffinity'], 'ClientIP')
             workloads = [x for x in objects if x['kind'] in ('Deployment', 'StatefulSet', 'Job')]
             for obj in workloads:
                 pod = obj['spec']['template']
