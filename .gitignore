@@ -8,6 +8,8 @@ dist/
 coverage/
 *.tsbuildinfo
 .eslintcache
+__pycache__/
+*.pyc
 
 # Environment files and secrets
 .env
@@ -35,3 +37,6 @@ pnpm-debug.log*
 *.swo
 .DS_Store
 Thumbs.db
+
+# Local Kubernetes deployment configuration
+k8s/full-stack.json

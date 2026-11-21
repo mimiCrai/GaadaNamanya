@@ -47,6 +47,10 @@ async function main() {
             }
             shuttingDown = true;
             logger.info({ signal }, 'Shutting down BNPB Aggregator');
+            // Stop accepting new HTTP work while existing requests still have database access.
+            const drained = new Promise<void>((resolve, reject) => {
+                server.close((error) => (error ? reject(error) : resolve()));
+            });
             poller.stop();
             outboxRelay.stop();
             unprocessedRetry.stop();
@@ -54,6 +58,7 @@ async function main() {
             await satelliteIngest.stop();
             sensorPantai.stop();
             await leadership.stop();
+            await drained;
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();

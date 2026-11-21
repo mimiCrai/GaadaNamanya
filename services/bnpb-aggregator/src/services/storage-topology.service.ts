@@ -1,5 +1,7 @@
 import { inject, injectable } from 'inversify';
-import { Long, MaxKey, MinKey, MongoClient } from 'mongodb';
+import { Long, MaxKey, MinKey, MongoClient, ReadPreference } from 'mongodb';
+import { readFileSync } from 'node:fs';
+import { get } from 'node:https';
 import { TYPES } from '../constants/types';
 import { CanonicalStore } from '../db';
 import env from '../util/env';
@@ -12,6 +14,8 @@ export interface StorageTopology {
     shards: Shard[];
     primaries: Record<string, string>;
     unavailable_units: string[];
+    degraded_units?: string[];
+    members?: Record<string, { name: string; health: number; state: number }[]>;
 }
 export interface HazardLocation {
     node: string;
@@ -53,32 +57,55 @@ export class StorageTopologyService implements IStorageTopologyService {
             unavailable.add('canonical-metadata');
         }
         const primaries: Record<string, string> = {};
+        const members: NonNullable<StorageTopology['members']> = {};
+        const degraded = new Set<string>();
         await Promise.all(
             this.cachedShards.map(async (shard) => {
                 try {
                     let client = this.peers.get(shard.host);
                     if (!client) {
                         const [replicaSet, hosts] = shard.host.split('/');
-                        client = new MongoClient(`mongodb://${hosts}/?replicaSet=${encodeURIComponent(replicaSet)}`, {
-                            serverSelectionTimeoutMS: env.STORAGE_READ_TIMEOUT_MS,
-                            connectTimeoutMS: env.STORAGE_READ_TIMEOUT_MS,
-                            maxPoolSize: 1,
-                        });
+                        const uri = new URL(env.DATABASE_URL);
+                        const credentials = uri.username ? `${uri.username}:${uri.password}@` : '';
+                        const authSource = uri.searchParams.get('authSource') ?? this.store.database.databaseName;
+                        client = new MongoClient(
+                            `mongodb://${credentials}${hosts}/?replicaSet=${encodeURIComponent(replicaSet)}&authSource=${encodeURIComponent(authSource)}`,
+                            {
+                                serverSelectionTimeoutMS: env.STORAGE_READ_TIMEOUT_MS,
+                                connectTimeoutMS: env.STORAGE_READ_TIMEOUT_MS,
+                                maxPoolSize: 1,
+                                readPreference: ReadPreference.secondaryPreferred,
+                            }
+                        );
                         this.peers.set(shard.host, client);
                     }
-                    // hello needs no database credentials and reports the current elected primary.
+                    // Application clusterMonitor access is scoped to topology inspection.
                     const hello = await client
                         .db('admin')
                         .command({ hello: 1 }, { timeoutMS: env.STORAGE_READ_TIMEOUT_MS });
-                    if (!hello.primary) throw new Error('No primary');
-                    primaries[shard._id] = hello.primary;
+                    if (!hello.primary && !hello.secondary) throw new Error('No readable member');
+                    if (hello.primary) primaries[shard._id] = hello.primary;
+                    const status = await client
+                        .db('admin')
+                        .command({ replSetGetStatus: 1 }, { timeoutMS: env.STORAGE_READ_TIMEOUT_MS });
+                    members[shard._id] = status.members;
+                    for (const member of status.members) {
+                        if (member.health !== 1 || ![1, 2].includes(member.state))
+                            degraded.add(`${shard._id}/${member.name}`);
+                    }
                 } catch {
                     unavailable.add(shard._id);
                 }
             })
         );
         if (this.cachedShards.length === 0) unavailable.add('canonical-store');
-        return { shards: this.cachedShards, primaries, unavailable_units: [...unavailable].sort() };
+        return {
+            shards: this.cachedShards,
+            primaries,
+            members,
+            degraded_units: [...degraded].sort(),
+            unavailable_units: [...unavailable].sort(),
+        };
     }
 
     async locate(hazardId: string, topology: StorageTopology): Promise<HazardLocation[]> {
@@ -111,14 +138,78 @@ export class StorageTopologyService implements IStorageTopologyService {
         if (!shard) throw new Error('Owning shard unavailable');
         const primary = topology.primaries[shard._id];
         if (!primary) throw new Error('Primary role unknown');
+        const nodeMap = await this.nodeMap();
+        if (
+            process.env.KUBERNETES_SERVICE_HOST &&
+            shard.host
+                .split('/')[1]
+                .split(',')
+                .some((host) => !nodeMap[host.split('.')[0]])
+        ) {
+            throw new Error('A MongoDB member has no actual Kubernetes node mapping');
+        }
         return shard.host
             .split('/')[1]
             .split(',')
+            .filter(
+                (host) =>
+                    !topology.members?.[shard._id] ||
+                    topology.members[shard._id].some(
+                        (member) => member.name === host && member.health === 1 && [1, 2].includes(member.state)
+                    )
+            )
             .map((host) => ({
-                node: env.MONGO_NODE_MAP[host] ?? host.split(':')[0],
+                node: nodeMap[host.split('.')[0]] ?? env.MONGO_NODE_MAP[host] ?? host.split(':')[0],
                 unit: `${shard._id}/${host}`,
                 role: host === primary ? 'primary' : 'replica',
             }));
+    }
+
+    private async nodeMap(): Promise<Record<string, string>> {
+        if (!process.env.KUBERNETES_SERVICE_HOST) return {};
+        const base = '/var/run/secrets/kubernetes.io/serviceaccount';
+        const namespace = readFileSync(`${base}/namespace`, 'utf8').trim();
+        const token = readFileSync(`${base}/token`, 'utf8').trim();
+        return new Promise((resolve, reject) => {
+            const request = get(
+                {
+                    hostname: process.env.KUBERNETES_SERVICE_HOST,
+                    port: process.env.KUBERNETES_SERVICE_PORT_HTTPS ?? '443',
+                    path: `/api/v1/namespaces/${namespace}/pods?labelSelector=role%3Dstore`,
+                    ca: readFileSync(`${base}/ca.crt`),
+                    headers: { Authorization: `Bearer ${token}` },
+                    timeout: env.STORAGE_READ_TIMEOUT_MS,
+                },
+                (response) => {
+                    let body = '';
+                    response.setEncoding('utf8');
+                    response.on('data', (chunk) => {
+                        body += chunk;
+                    });
+                    response.on('error', reject);
+                    response.on('end', () => {
+                        try {
+                            if (response.statusCode !== 200) throw new Error('Pod topology unavailable');
+                            const pods = JSON.parse(body).items as {
+                                metadata: { name: string };
+                                spec: { nodeName?: string };
+                            }[];
+                            resolve(
+                                Object.fromEntries(
+                                    pods
+                                        .filter((pod) => pod.spec.nodeName)
+                                        .map((pod) => [pod.metadata.name, pod.spec.nodeName!])
+                                )
+                            );
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+                }
+            );
+            request.on('timeout', () => request.destroy(new Error('Pod topology deadline exceeded')));
+            request.on('error', reject);
+        });
     }
 
     async close(): Promise<void> {

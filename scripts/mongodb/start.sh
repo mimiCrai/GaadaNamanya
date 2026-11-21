@@ -4,7 +4,11 @@ set -eu
 umask 077
 mkdir -p /run/canonical-mongo
 printf '%s' "$MONGO_CLUSTER_KEY" > /run/canonical-mongo/keyfile
-chown mongodb:mongodb /run/canonical-mongo /run/canonical-mongo/keyfile /data/db
+chown mongodb:mongodb /run/canonical-mongo /run/canonical-mongo/keyfile
+
+if [ "$1" = 'mongod' ]; then
+    chown mongodb:mongodb /data/db
+fi
 
 if [ "$1" = 'mongod' ] && [ ! -f /data/db/.canonical-initialized ]; then
     gosu mongodb mongod --dbpath /data/db --port 27018 --bind_ip 127.0.0.1 --fork --logpath /tmp/mongo-bootstrap.log

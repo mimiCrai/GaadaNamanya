@@ -1,0 +1,7 @@
+# Copy to /etc/rancher/k3s/config.yaml on VM B after replacing IPs.
+# Supply the join token through K3S_TOKEN during installation, not in this file.
+server: https://VM_A_IP:6443
+node-name: bnpb-b
+node-ip: VM_B_IP
+# If using NAT plus host-only networking, uncomment and set the host-only NIC:
+# flannel-iface: enp0s8
