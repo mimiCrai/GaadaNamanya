@@ -1,0 +1,11 @@
+import { z } from 'zod';
+
+const envSchema = z.object({
+    PORT: z.coerce.number().int().positive().default(3000),
+    SERVICE_NAME: z.string().default('fire-processor'),
+    NODE_ENV: z.enum(['local', 'staging', 'production', 'test']).default('local'),
+});
+
+const env = envSchema.parse(process.env);
+
+export default env;
