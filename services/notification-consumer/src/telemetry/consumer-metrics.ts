@@ -15,9 +15,9 @@ export const consumerDuration = new Histogram({
     registers: [metricsRegistry],
 });
 
-export const criticalNotificationDelivery = new Histogram({
-    name: 'bnpb_critical_notification_delivery_seconds',
-    help: 'Critical Sensor Pantai delivery from canonical ingestedAt to inbox commit; excludes source polling delay',
+export const criticalNotificationProcessing = new Histogram({
+    name: 'bnpb_critical_notification_processing_seconds',
+    help: 'Local critical notification processing duration through inbox commit, measured with a monotonic clock; not end-to-end latency',
     buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 3, 4, 5, 10, 30, 60],
     registers: [metricsRegistry],
 });

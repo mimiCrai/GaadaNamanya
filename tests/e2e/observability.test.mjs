@@ -56,7 +56,7 @@ test('observability: real HTTP, durable outbox, Kafka, metrics and provisioned d
         const credentials = Buffer.from(`${process.env.GRAFANA_ADMIN_USER ?? 'admin'}:${process.env.GRAFANA_ADMIN_PASSWORD ?? 'local-grafana-password'}`).toString('base64');
         const options = { headers: { Authorization: `Basic ${credentials}` } };
         const dashboard = await waitFor('provisioned Grafana dashboard', () => json(`${grafana}/api/dashboards/uid/bnpb-overview`, options));
-        for (const title of ['Aggregator background leader', 'Fencing rejections', 'Sensor Pantai circuit', 'Critical notification p95: canonical to inbox']) {
+        for (const title of ['Aggregator background leader', 'Fencing rejections', 'Sensor Pantai circuit', 'Critical notification processing p95 (local)', 'Client API refusals by role (503)']) {
             assert.ok(dashboard.dashboard.panels.some(panel => panel.title === title), `Missing panel: ${title}`);
         }
         const sources = await json(`${grafana}/api/datasources`, options);
@@ -120,11 +120,11 @@ test('observability: real HTTP, durable outbox, Kafka, metrics and provisioned d
         assert.equal(circuit.length, 1);
         assert.ok([0, 1, 2].includes(Number(circuit[0].value[1])));
         const deliveries = await waitFor('committed critical deliveries', async () => {
-            const rows = await query('sum(bnpb_critical_notification_delivery_seconds_count)');
+            const rows = await query('sum(bnpb_critical_notification_processing_seconds_count)');
             return Number(rows[0]?.value[1]) > 0 ? Number(rows[0].value[1]) : undefined;
         });
         evidence.criticalNotificationsMeasured = deliveries;
-        evidence.latencyScope = 'canonical ingestedAt to notification inbox commit; excludes sensor polling delay';
+        evidence.latencyScope = 'local notification processing through inbox commit, using a monotonic clock; not end-to-end latency';
     });
 
     await t.test('traces Sensor Pantai HTTP polling through outbox and both Kafka consumers', async () => {

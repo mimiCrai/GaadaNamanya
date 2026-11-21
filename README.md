@@ -73,7 +73,8 @@ Ketujuh service menyediakan `/metrics`. Dashboard menampilkan throughput, error,
 
 - Leader Aggregator, perubahan leadership, dan penolakan fencing Mongo/Kafka.
 - Jumlah request, p95 HTTP, circuit breaker, dan source lag Sensor Pantai. Status circuit hanya ditampilkan dari leader: `0` closed, `1` open, `2` probing.
-- p95 pengiriman event kritis Sensor Pantai dari `ingestedAt` kanonik sampai inbox notifikasi berhasil commit. Duplikat dan transaksi gagal tidak dihitung. Batas 5 detik ditandai pada grafik; metrik ini belum mencakup waktu sebelum ingestion, sehingga pembuktian penuh P5 tetap membutuhkan pengujian dari sisi sumber. Timestamp virtual `observed_at` tidak dibandingkan langsung dengan jam server.
+- p95 pemrosesan lokal notifikasi kritis, dari awal handler sampai inbox berhasil commit, memakai jam monotonik `performance.now()`. Pergeseran jam node tidak mengubah durasi atau membuang sampel. Duplikat dan transaksi gagal tidak dihitung. Target end-to-end P5 ≤5 detik harus diukur oleh Tester Agent dengan satu jam pengamat; dashboard tidak mengklaim mengukur target tersebut.
+- HTTP 503 pada endpoint hazard menurut role, untuk melihat penolakan saat overload. Angka ini juga mencakup 503 akibat ketidaktersediaan downstream, sehingga bukan penghitung eksklusif admission control.
 
 HTTP dan database di-trace otomatis; context polling BMKG/PVMBG/Sensor Pantai diteruskan melalui outbox dan Kafka ke consumer. Log menambahkan `traceId` dan `spanId` selama span aktif pada correlation ID yang sudah ada. Cari span `source.poll` di Tempo, lalu filter atribut `source.stream=SENSOR_PANTAI` untuk jalur sensor. Overlay tidak mengubah `NODE_ENV`, ukuran connection pool, atau format log service, sehingga konfigurasi runtime tetap sebanding dengan stack tanpa observabilitas.
 

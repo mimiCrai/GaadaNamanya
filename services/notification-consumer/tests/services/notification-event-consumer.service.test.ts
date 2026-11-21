@@ -1,8 +1,9 @@
+import { performance } from 'node:perf_hooks';
 import { HazardEventMessage } from '../../src/contracts/hazard-event-message';
 import { NotificationEventConsumer } from '../../src/services/notification-event-consumer.service';
 import { INotificationService } from '../../src/services/notification.service';
 import { IMessageSubscriber, MessageHandler, SubscribeOptions } from '../../src/services/message-subscriber.service';
-import { criticalNotificationDelivery } from '../../src/telemetry/consumer-metrics';
+import { criticalNotificationProcessing } from '../../src/telemetry/consumer-metrics';
 
 const message: HazardEventMessage = {
     eventId: '11111111-1111-4111-8111-111111111111',
@@ -39,7 +40,7 @@ describe('NotificationEventConsumer', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        criticalNotificationDelivery.reset();
+        criticalNotificationProcessing.reset();
     });
 
     it('validates and applies a hazard event to the notification inbox', async () => {
@@ -81,23 +82,34 @@ describe('NotificationEventConsumer', () => {
         expect(notificationService.apply).toHaveBeenCalledWith(coastal);
     });
 
-    it('measures committed critical delivery using ingestion time, not the sensor virtual clock', async () => {
-        (notificationService.apply as jest.Mock).mockResolvedValue('created');
-        const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(message.hazard.ingestedAt) + 2500);
-        try {
-            const consumer = new NotificationEventConsumer(subscriber, notificationService);
-            await consumer.start();
-            await handler({
-                ...message,
-                hazard: { ...message.hazard, source: 'SENSOR_PANTAI', attributes: { critical: true } },
+    it.each([45_000, -30_000])(
+        'records critical processing even when the wall clock shifts by %i ms',
+        async (offset) => {
+            const wallClock = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+            const monotonicClock = jest
+                .spyOn(performance, 'now')
+                .mockReturnValueOnce(10_000)
+                .mockReturnValueOnce(12_500);
+            (notificationService.apply as jest.Mock).mockImplementation(async () => {
+                wallClock.mockReturnValue(1_000_000 + offset);
+                return 'created';
             });
-            const values = (await criticalNotificationDelivery.get()).values;
-            expect(values.find((value) => value.metricName?.endsWith('_count'))?.value).toBe(1);
-            expect(values.find((value) => value.metricName?.endsWith('_sum'))?.value).toBe(2.5);
-        } finally {
-            now.mockRestore();
+            try {
+                const consumer = new NotificationEventConsumer(subscriber, notificationService);
+                await consumer.start();
+                await handler({
+                    ...message,
+                    hazard: { ...message.hazard, source: 'SENSOR_PANTAI', attributes: { critical: true } },
+                });
+                const values = (await criticalNotificationProcessing.get()).values;
+                expect(values.find((value) => value.metricName?.endsWith('_count'))?.value).toBe(1);
+                expect(values.find((value) => value.metricName?.endsWith('_sum'))?.value).toBe(2.5);
+            } finally {
+                monotonicClock.mockRestore();
+                wallClock.mockRestore();
+            }
         }
-    });
+    );
 
     it.each(['duplicate', 'ignored', 'failed'])('does not count %s critical deliveries', async (result) => {
         const apply = notificationService.apply as jest.Mock;
@@ -112,7 +124,7 @@ describe('NotificationEventConsumer', () => {
         if (result === 'failed') await expect(work).rejects.toThrow('store down');
         else await work;
         expect(
-            (await criticalNotificationDelivery.get()).values.find((value) => value.metricName?.endsWith('_count'))
+            (await criticalNotificationProcessing.get()).values.find((value) => value.metricName?.endsWith('_count'))
                 ?.value ?? 0
         ).toBe(0);
     });

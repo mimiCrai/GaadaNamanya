@@ -658,9 +658,9 @@
     },
     {
       "id": 18,
-      "title": "Critical notification p95: canonical to inbox",
+      "title": "Critical notification processing p95 (local)",
       "type": "timeseries",
-      "description": "Sensor Pantai critical events only, measured after successful inbox commit. Starts at canonical ingestedAt and excludes source/polling delay. Duplicates and failed writes are excluded. Full P5 source-to-receiver proof requires a source-side test clock.",
+      "description": "Local notification processing through successful inbox commit, measured with performance.now(). Immune to wall-clock adjustments. Excludes polling, outbox and Kafka waiting time. Not a measurement of the P5 end-to-end 5-second target; that needs a single-clock external observer.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -674,31 +674,51 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.95, sum by(le) (rate(bnpb_critical_notification_delivery_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(bnpb_critical_notification_processing_seconds_bucket[5m])))",
           "legendFormat": "p95"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          },
-          "custom": {
-            "thresholdsStyle": {
-              "mode": "line"
-            }
-          }
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "Client API refusals by role (503)",
+      "type": "timeseries",
+      "description": "Hazard endpoint HTTP 503s by verified role, including admission-control rejections. Other 503s (such as unavailable downstream data) are included; this is not an exclusive admission-rejection counter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(role) (rate(bnpb_http_requests_total{service=\"bnpb-client-api\",route=~\"/hazards.*\",status_code=\"503\"}[1m]))",
+          "legendFormat": "{{role}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
         },
         "overrides": []
       },
