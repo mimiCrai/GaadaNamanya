@@ -403,6 +403,8 @@ services:
     dashboard-consumer:
         build: ./services/dashboard-consumer
         environment:
+            CANONICAL_ANALYTICS_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}/internal/analytics
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
             PORT: ${DASHBOARD_CONSUMER_CONTAINER_PORT}
             SERVICE_NAME: ${DASHBOARD_CONSUMER_SERVICE_NAME}
             NODE_ENV: ${DASHBOARD_CONSUMER_NODE_ENV}

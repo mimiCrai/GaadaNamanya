@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { db } from './db';
@@ -50,6 +51,10 @@ async function main() {
             }
             shuttingDown = true;
             logger.info({ signal }, 'Shutting down BNPB Aggregator');
+            // Stop accepting new HTTP work while existing requests still have database access.
+            const drained = new Promise<void>((resolve, reject) => {
+                server.close((error) => (error ? reject(error) : resolve()));
+            });
             poller.stop();
             pvmbgMapping.stop();
             outboxRelay.stop();
@@ -58,10 +63,11 @@ async function main() {
             await satelliteIngest.stop();
             sensorPantai.stop();
             await leadership.stop();
+            await drained;
             await messagePublisher.close();
             await container.get<IStorageTopologyService>(TYPES.IStorageTopologyService).close();
             await db.close();
-            server.close(() => process.exit(0));
+            server.close(() => void shutdownTelemetry().finally(() => process.exit(0)));
         };
 
         process.once('SIGTERM', () => void shutdown('SIGTERM'));

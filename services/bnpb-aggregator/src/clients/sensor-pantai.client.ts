@@ -2,6 +2,7 @@ import { injectable } from 'inversify';
 import { performance } from 'node:perf_hooks';
 import { z } from 'zod';
 import { logger } from '../libs/logger';
+import { sensorRequestsTotal, sensorRequestSeconds } from '../libs/metrics';
 import env from '../util/env';
 import { PollRequestOptions } from './source-client.types';
 import { SensorClientError, SensorPage, SensorStation, sensorStationSchema } from './sensor-pantai.types';
@@ -137,6 +138,9 @@ export class SensorPantaiClient implements ISensorPantaiClient {
                 );
             }
         } finally {
+            const endpoint = path.split('?')[0];
+            sensorRequestsTotal.inc({ endpoint, status_code: String(statusCode ?? 'network_error') });
+            sensorRequestSeconds.observe({ endpoint }, (performance.now() - startedAt) / 1000);
             logger.info(
                 {
                     source: 'SENSOR_PANTAI',

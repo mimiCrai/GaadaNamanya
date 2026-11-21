@@ -24,6 +24,7 @@ export class HazardController {
             res.locals.correlationId
         );
         const source = HAZARD_SOURCES.find((value) => value === request.query.source);
+        res.locals.authRole = auth.role;
         return this.withAdmission(auth.role, request, res, () =>
             this.hazardGateway.list(classificationForRole(auth.role), res.locals.correlationId, source)
         );
@@ -35,6 +36,7 @@ export class HazardController {
             request.header('authorization'),
             res.locals.correlationId
         );
+        res.locals.authRole = auth.role;
         return this.withAdmission(auth.role, request, res, () =>
             this.hazardGateway.getById(hazardId, classificationForRole(auth.role), res.locals.correlationId)
         );

@@ -1,5 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { randomUUID } from 'node:crypto';
+import { markActiveSpanError, traced } from '../telemetry/context';
 import { IBmkgClient } from '../clients/bmkg.client';
 import { IPvmbgClient } from '../clients/pvmbg.client';
 import { PollRequestOptions } from '../clients/source-client.types';
@@ -90,49 +91,52 @@ export class PollingService implements IPollingService {
         const lease = this.leadership.current();
         if (!lease) return;
         const correlationId = randomUUID();
-        try {
-            const state = await this.sourceSyncStateService.getState(sourceStream);
-            const since = state?.lastSuccessfulPollAt
-                ? new Date(state.lastSuccessfulPollAt.getTime() - env.POLL_OVERLAP_MS)
-                : undefined;
-
-            const startedAt = await this.leases.requireActive(lease);
-            // startedAt is additive (D-34 skipped-window record); PERLU DIKONFIRMASI KE A/B
-            await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch, startedAt }, lease);
-            if (this.stopped) {
-                logger.info({ sourceStream, correlationId }, 'Source poll cancelled during shutdown');
-                return;
-            }
-            await this.sourceSyncStateService.recordSuccessfulPoll(sourceStream, startedAt, lease);
-            logger.info(
-                { sourceStream, since, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
-                'Source poll completed successfully'
-            );
-        } catch (error) {
-            if (error instanceof LeaseLostError) {
-                this.leadership.invalidate(lease);
-                logger.info(
-                    { sourceStream, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
-                    'Discarded work after losing background lease'
-                );
-                return;
-            }
-            if (this.stopped) {
-                logger.info({ sourceStream, correlationId }, 'Source poll ended during shutdown');
-                return;
-            }
-            logger.error({ error, sourceStream, correlationId }, 'Source poll failed');
+        return traced('source.poll', { 'source.stream': sourceStream, 'correlation.id': correlationId }, async () => {
             try {
-                const at = await this.leases.requireActive(lease);
-                await this.sourceSyncStateService.recordFailedPoll(sourceStream, error, at, lease);
-            } catch (stateError) {
-                if (stateError instanceof LeaseLostError) this.leadership.invalidate(lease);
-                logger.error(
-                    { error: stateError, sourceStream, correlationId },
-                    'Failed to record source poll failure'
+                const state = await this.sourceSyncStateService.getState(sourceStream);
+                const since = state?.lastSuccessfulPollAt
+                    ? new Date(state.lastSuccessfulPollAt.getTime() - env.POLL_OVERLAP_MS)
+                    : undefined;
+
+                const startedAt = await this.leases.requireActive(lease);
+                // startedAt is additive (D-34 skipped-window record); PERLU DIKONFIRMASI KE A/B
+                await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch, startedAt }, lease);
+                if (this.stopped) {
+                    logger.info({ sourceStream, correlationId }, 'Source poll cancelled during shutdown');
+                    return;
+                }
+                await this.sourceSyncStateService.recordSuccessfulPoll(sourceStream, startedAt, lease);
+                logger.info(
+                    { sourceStream, since, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
+                    'Source poll completed successfully'
                 );
+            } catch (error) {
+                if (error instanceof LeaseLostError) {
+                    this.leadership.invalidate(lease);
+                    logger.info(
+                        { sourceStream, correlationId, instanceId: lease.ownerId, epoch: lease.epoch },
+                        'Discarded work after losing background lease'
+                    );
+                    return;
+                }
+                if (this.stopped) {
+                    logger.info({ sourceStream, correlationId }, 'Source poll ended during shutdown');
+                    return;
+                }
+                logger.error({ error, sourceStream, correlationId }, 'Source poll failed');
+                markActiveSpanError(error);
+                try {
+                    const at = await this.leases.requireActive(lease);
+                    await this.sourceSyncStateService.recordFailedPoll(sourceStream, error, at, lease);
+                } catch (stateError) {
+                    if (stateError instanceof LeaseLostError) this.leadership.invalidate(lease);
+                    logger.error(
+                        { error: stateError, sourceStream, correlationId },
+                        'Failed to record source poll failure'
+                    );
+                }
             }
-        }
+        });
     }
 
     private async pollBmkgSeismic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {

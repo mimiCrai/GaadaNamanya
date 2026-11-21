@@ -9,11 +9,13 @@ case "$mode" in smoke|sustained|scaling|benchmark|rolling) ;; *) echo 'Usage: ba
 case "$target" in compose|kubernetes) ;; *) echo 'TARGET must be compose or kubernetes' >&2; exit 1 ;; esac
 for dependency in k6 curl; do command -v "$dependency" >/dev/null || { echo "Missing $dependency" >&2; exit 1; }; done
 
-env_value() { sed -n "s/^$1=//p" .env 2>/dev/null | tr -d '\r' | tail -n 1; }
+env_file=.env
+[[ "$target" != kubernetes ]] || env_file=.env.k8s
+env_value() { sed -n "s/^$1=//p" "$env_file" 2>/dev/null | tr -d '\r' | tail -n 1; }
 if [[ -z "${BNPB_INTERNAL_API_KEY:-}" ]]; then
     export BNPB_INTERNAL_API_KEY="$(env_value BNPB_AGGREGATOR_INTERNAL_API_KEY || true)"
 fi
-[[ -n "$BNPB_INTERNAL_API_KEY" ]] || { echo 'Set BNPB_INTERNAL_API_KEY or create root .env' >&2; exit 1; }
+[[ -n "$BNPB_INTERNAL_API_KEY" ]] || { echo "Set BNPB_INTERNAL_API_KEY or create $env_file" >&2; exit 1; }
 if [[ "$target" == kubernetes && -z "${AGGREGATOR_URL:-}" ]]; then echo 'Set AGGREGATOR_URL to the Kubernetes entry point' >&2; exit 1; fi
 export AGGREGATOR_URL="${AGGREGATOR_URL:-http://localhost:$(env_value BNPB_AGGREGATOR_HOST_PORT || true)}"
 [[ "$AGGREGATOR_URL" != 'http://localhost:' ]] || export AGGREGATOR_URL=http://localhost:3003
@@ -36,7 +38,8 @@ if [[ "$mode" == scaling || "$mode" == benchmark || "$mode" == rolling ]]; then
     else
         command -v kubectl >/dev/null || { echo 'Missing kubectl' >&2; exit 1; }
         controller=(kubectl)
-        [[ -z "${KUBE_CONTEXT:-}" ]] || controller+=(--context "$KUBE_CONTEXT")
+        : "${KUBE_CONTEXT:?Set KUBE_CONTEXT explicitly for Kubernetes tests}"
+        controller+=(--context "$KUBE_CONTEXT")
         controller+=(--namespace "${KUBE_NAMESPACE:-sistem-informasi-kebencanaan-bnpb}")
     fi
 fi

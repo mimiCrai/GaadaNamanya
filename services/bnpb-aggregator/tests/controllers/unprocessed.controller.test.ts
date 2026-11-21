@@ -126,7 +126,9 @@ describe('Unprocessed message endpoints', () => {
         parseFailuresTotal.inc({ source: 'PVMBG', reason: 'malformed_json' });
         const result = await request(app).get('/metrics');
         expect(result.status).toBe(200);
-        expect(result.text).toContain('bnpb_aggregator_parse_failures_total{source="PVMBG",reason="malformed_json"} 1');
+        expect(result.text).toContain(
+            'bnpb_aggregator_parse_failures_total{source="PVMBG",reason="malformed_json",service="bnpb-aggregator"} 1'
+        );
         expect(result.text).toContain('bnpb_aggregator_unprocessed_messages');
         expect(result.text).toContain('bnpb_aggregator_unprocessed_retry_total');
     });

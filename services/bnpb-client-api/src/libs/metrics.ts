@@ -1,10 +1,9 @@
-import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Histogram } from 'prom-client';
+import { metricsRegistry } from '../telemetry/metrics';
 
-// Same registry name as the observability branch (B) so the two merge into one /metrics.
-export const metricsRegistry = new Registry();
+// field report metrics live in B's registry (src/telemetry/metrics.ts), served by its /metrics
+export { metricsRegistry };
 const PREFIX = 'bnpb_client_api_';
-
-if (process.env.NODE_ENV !== 'test') collectDefaultMetrics({ register: metricsRegistry, prefix: PREFIX });
 
 export const fieldReportAcceptSeconds = new Histogram({
     name: `${PREFIX}field_report_accept_seconds`,

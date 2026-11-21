@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-sharding-init
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels: { app: canonical-sharding-init, role: other }
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mongosh
+          image: mongo:7.0.32
+          command: [ mongosh, --nodb, --quiet, /opt/mongodb/init-sharding.js ]
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          env:
+            - { name: MONGO_KUBERNETES, value: 'true' }
+          envFrom:
+            - secretRef: { name: canonical-mongo }
+          volumeMounts:
+            - { name: scripts, mountPath: /opt/mongodb, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: canonical-mongo-scripts }

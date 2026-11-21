@@ -1,0 +1,261 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-config
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: canonical-config }
+  ports: [{ name: mongo, port: 27017 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-a
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: canonical-shard-a }
+  ports: [{ name: mongo, port: 27017 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-b
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: canonical-shard-b }
+  ports: [{ name: mongo, port: 27017 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-config
+spec:
+  serviceName: canonical-config
+  replicas: 3
+  selector:
+    matchLabels: { app: canonical-config }
+  template:
+    metadata:
+      labels: { app: canonical-config, role: store }
+    spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: canonical-config }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: mongo
+          image: mongo:7.0.32
+          command: [ /bin/sh, /opt/mongodb/start.sh, mongod, --configsvr, --replSet, canonical-config, --port, '27017', --dbpath, /data/db, --bind_ip_all ]
+          envFrom:
+            - secretRef: { name: canonical-mongo }
+          ports: [{ containerPort: 27017, name: mongo }]
+          readinessProbe:
+            exec: { command: [ mongosh, --quiet, --eval, 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)' ] }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: scripts, mountPath: /opt/mongodb, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: canonical-mongo-scripts, defaultMode: 365 }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ ReadWriteOnce ]
+        resources:
+          requests: { storage: 10Gi }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-a
+spec:
+  serviceName: canonical-shard-a
+  replicas: 3
+  selector:
+    matchLabels: { app: canonical-shard-a }
+  template:
+    metadata:
+      labels: { app: canonical-shard-a, role: store }
+    spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: canonical-shard-a }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: mongo
+          image: mongo:7.0.32
+          command: [ /bin/sh, /opt/mongodb/start.sh, mongod, --shardsvr, --replSet, canonical-shard-a, --port, '27017', --dbpath, /data/db, --bind_ip_all ]
+          envFrom:
+            - secretRef: { name: canonical-mongo }
+          ports: [{ containerPort: 27017, name: mongo }]
+          readinessProbe:
+            exec: { command: [ mongosh, --quiet, --eval, 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)' ] }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: scripts, mountPath: /opt/mongodb, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: canonical-mongo-scripts, defaultMode: 365 }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ ReadWriteOnce ]
+        resources:
+          requests: { storage: 10Gi }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-b
+spec:
+  serviceName: canonical-shard-b
+  replicas: 3
+  selector:
+    matchLabels: { app: canonical-shard-b }
+  template:
+    metadata:
+      labels: { app: canonical-shard-b, role: store }
+    spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: canonical-shard-b }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: mongo
+          image: mongo:7.0.32
+          command: [ /bin/sh, /opt/mongodb/start.sh, mongod, --shardsvr, --replSet, canonical-shard-b, --port, '27017', --dbpath, /data/db, --bind_ip_all ]
+          envFrom:
+            - secretRef: { name: canonical-mongo }
+          ports: [{ containerPort: 27017, name: mongo }]
+          readinessProbe:
+            exec: { command: [ mongosh, --quiet, --eval, 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)' ] }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /data/db }
+            - { name: scripts, mountPath: /opt/mongodb, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: canonical-mongo-scripts, defaultMode: 365 }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ ReadWriteOnce ]
+        resources:
+          requests: { storage: 10Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-store
+spec:
+  # A driver's pooled connections must reach the same router for find/getMore.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
+  selector: { app: canonical-store }
+  ports: [{ name: mongo, port: 27017, targetPort: 27017 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-config
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: canonical-config }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-a
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: canonical-shard-a }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-shard-b
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: { app: canonical-shard-b }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: sistem-informasi-kebencanaan-bnpb
+  name: canonical-store
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: canonical-store }
+  template:
+    metadata:
+      labels: { app: canonical-store, role: other }
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: canonical-store }
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: mongos
+          image: mongo:7.0.32
+          command: [ /bin/sh, /opt/mongodb/start.sh, mongos, --configdb, 'canonical-config/canonical-config-0.canonical-config:27017,canonical-config-1.canonical-config:27017,canonical-config-2.canonical-config:27017', --port, '27017', --bind_ip_all ]
+          envFrom:
+            - secretRef: { name: canonical-mongo }
+          ports: [{ containerPort: 27017, name: mongo }]
+          readinessProbe:
+            exec: { command: [ mongosh, --quiet, --eval, 'quit(db.adminCommand({ping:1}).ok ? 0 : 1)' ] }
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests: { memory: 128Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: scripts, mountPath: /opt/mongodb, readOnly: true }
+      volumes:
+        - name: scripts
+          configMap: { name: canonical-mongo-scripts, defaultMode: 365 }

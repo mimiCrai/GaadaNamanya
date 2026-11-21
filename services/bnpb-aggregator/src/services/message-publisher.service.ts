@@ -1,10 +1,12 @@
 import { inject, injectable } from 'inversify';
 import { Kafka, Message, Producer, Transaction } from 'kafkajs';
 import { logger } from '../libs/logger';
+import { fencingRejectionsTotal } from '../libs/metrics';
 import env from '../util/env';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
 import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
+import { failSpan, producerTrace, readTraceHeaders } from '../telemetry/context';
 
 export interface PublishOptions {
     topic: string;
@@ -49,57 +51,75 @@ export class MessagePublisher implements IMessagePublisher {
 
     async publish<T>(message: T, options: PublishOptions, lease: LeaseToken): Promise<void> {
         const { topic, key, headers } = options;
-        return this.transact(
-            lease,
-            (transaction) =>
-                transaction.send({
-                    topic,
-                    acks: -1,
-                    messages: [
-                        {
-                            key,
-                            value: JSON.stringify(message),
-                            headers: { ...headers, fencing_token: String(lease.epoch) },
-                        },
-                    ],
-                }),
-            { topic, key }
-        );
+        const producer = producerTrace(topic, readTraceHeaders(headers));
+        try {
+            await this.transact(
+                lease,
+                (transaction) =>
+                    transaction.send({
+                        topic,
+                        acks: -1,
+                        messages: [
+                            {
+                                key,
+                                value: JSON.stringify(message),
+                                headers: { ...headers, ...producer.headers, fencing_token: String(lease.epoch) },
+                            },
+                        ],
+                    }),
+                { topic, key }
+            );
+        } catch (error) {
+            failSpan(producer.span, error);
+            throw error;
+        } finally {
+            producer.span.end();
+        }
     }
 
     async publishBatch(messages: { message: unknown; options: PublishOptions }[], lease: LeaseToken): Promise<void> {
         if (!messages.length) return;
-        const chunks = [new Map<string, Message[]>()];
-        let bytes = 0;
-        for (const { message, options } of messages) {
-            const value = JSON.stringify(message);
-            const size = Buffer.byteLength(value) + Buffer.byteLength(JSON.stringify(options)) + 256;
-            if (size > 512 * 1024) throw new Error('Kafka record exceeds publisher batch byte limit');
-            if (bytes + size > 512 * 1024) {
-                chunks.push(new Map());
-                bytes = 0;
-            }
-            const topics = chunks[chunks.length - 1];
-            const records = topics.get(options.topic) ?? [];
-            records.push({
-                key: options.key,
-                value,
-                headers: { ...options.headers, fencing_token: String(lease.epoch) },
-            });
-            topics.set(options.topic, records);
-            bytes += size;
-        }
-        return this.transact(
-            lease,
-            async (transaction) => {
-                for (const topics of chunks)
-                    await transaction.sendBatch({
-                        acks: -1,
-                        topicMessages: [...topics].map(([topic, records]) => ({ topic, messages: records })),
-                    });
-            },
-            { count: messages.length, chunks: chunks.length }
+        const producers = messages.map(({ options }) =>
+            producerTrace(options.topic, readTraceHeaders(options.headers))
         );
+        try {
+            const chunks = [new Map<string, Message[]>()];
+            let bytes = 0;
+            for (const [index, { message, options }] of messages.entries()) {
+                const value = JSON.stringify(message);
+                const size = Buffer.byteLength(value) + Buffer.byteLength(JSON.stringify(options)) + 256;
+                if (size > 512 * 1024) throw new Error('Kafka record exceeds publisher batch byte limit');
+                if (bytes + size > 512 * 1024) {
+                    chunks.push(new Map());
+                    bytes = 0;
+                }
+                const topics = chunks[chunks.length - 1];
+                const records = topics.get(options.topic) ?? [];
+                records.push({
+                    key: options.key,
+                    value,
+                    headers: { ...options.headers, ...producers[index].headers, fencing_token: String(lease.epoch) },
+                });
+                topics.set(options.topic, records);
+                bytes += size;
+            }
+            await this.transact(
+                lease,
+                async (transaction) => {
+                    for (const topics of chunks)
+                        await transaction.sendBatch({
+                            acks: -1,
+                            topicMessages: [...topics].map(([topic, records]) => ({ topic, messages: records })),
+                        });
+                },
+                { count: messages.length, chunks: chunks.length }
+            );
+        } catch (error) {
+            for (const producer of producers) failSpan(producer.span, error);
+            throw error;
+        } finally {
+            for (const producer of producers) producer.span.end();
+        }
     }
 
     private async transact(
@@ -130,6 +150,16 @@ export class MessagePublisher implements IMessagePublisher {
             logger.debug(context, 'Kafka message transaction committed');
         } catch (error) {
             await transaction?.abort().catch(() => undefined);
+            if (
+                error &&
+                typeof error === 'object' &&
+                'type' in error &&
+                ['PRODUCER_FENCED', 'INVALID_PRODUCER_EPOCH', 'TRANSACTION_COORDINATOR_FENCED'].includes(
+                    String(error.type)
+                )
+            ) {
+                fencingRejectionsTotal.inc({ backend: 'kafka' });
+            }
             await this.close();
             logger.error({ error, ...context }, 'Failed to publish Kafka message');
             throw error;

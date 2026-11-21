@@ -9,6 +9,7 @@ import { HazardEvent, HazardSource, HazardType, HazardSeverity, hazardEvents } f
 import { HazardEventChangeType, OutboxEvent, outboxEvents } from '../db/schema/outbox-events';
 import { LeaseToken } from '../db/schema/background-leases';
 import { IBackgroundLeaseRepository } from './background-lease.repository';
+import { captureTrace } from '../telemetry/context';
 
 export interface UpsertHazardEventInput {
     source: HazardSource;
@@ -92,6 +93,7 @@ export class HazardEventRepository implements IHazardEventRepository {
     async upsertAndEnqueue(input: UpsertHazardEventInput): Promise<HazardEventUpsertResult> {
         const hazardId = this.canonicalId(input.source, input.sourceRefId);
         const outboxEventId = randomUUID();
+        const traceContext = captureTrace();
         // Concurrent first inserts can raise E11000 instead of a retryable transaction error.
         for (let attempt = 0; ; attempt++) {
             try {
@@ -167,6 +169,7 @@ export class HazardEventRepository implements IHazardEventRepository {
                                 hazard: this.toEventPayload(hazardEvent),
                             },
                             createdAt: now,
+                            ...(Object.keys(traceContext).length ? { traceContext } : {}),
                             publishedAt: null,
                             publishAttempts: 0,
                             lastError: null,
@@ -185,6 +188,7 @@ export class HazardEventRepository implements IHazardEventRepository {
 
     async upsertBatchAndEnqueue(inputs: UpsertHazardEventInput[]): Promise<HazardEventUpsertResult[]> {
         if (!inputs.length) return [];
+        const traceContext = captureTrace();
         const lease = inputs[0].lease;
         const ids = inputs.map((input) => this.canonicalId(input.source, input.sourceRefId));
         if (
@@ -238,6 +242,7 @@ export class HazardEventRepository implements IHazardEventRepository {
                             topic: input.topic,
                             partitionKey: ids[index],
                             createdAt: now,
+                            ...(Object.keys(traceContext).length ? { traceContext } : {}),
                             publishedAt: null,
                             publishAttempts: 0,
                             lastError: null,

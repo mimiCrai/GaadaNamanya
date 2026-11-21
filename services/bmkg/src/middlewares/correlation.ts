@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { annotateCorrelation } from '../telemetry/context';
 import { NextFunction, Request, RequestHandler, Response } from 'express';
 import { Logger } from 'pino';
 import '../types/locals';
@@ -15,6 +16,7 @@ export function correlationMiddleware(logger: Logger): RequestHandler {
         res.locals.authResult = 'skipped';
         res.locals.injectedDelayMs = 0;
         res.setHeader('X-Correlation-ID', correlationId);
+        annotateCorrelation(correlationId);
         next();
     };
 }

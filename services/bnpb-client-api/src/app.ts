@@ -2,6 +2,8 @@
 import 'reflect-metadata';
 
 import express, { Request, Response, NextFunction } from 'express';
+import { installHttpMetrics } from './telemetry/metrics';
+import { annotateCorrelation } from './telemetry/context';
 import bodyParser from 'body-parser';
 import compression from 'compression';
 import * as OpenApiValidator from 'express-openapi-validator';
@@ -20,7 +22,6 @@ import './controllers/health.controller';
 import './controllers/hazard.controller';
 import './controllers/internal-ops-dlq.controller';
 import './controllers/field-report.controller';
-import './controllers/metrics.controller';
 import { ApiError } from './errors/api-error';
 import { TYPES } from './constants/types';
 import { fieldReportIntake } from './middlewares/field-report-intake';
@@ -39,6 +40,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
 
     // Disable x-powered-by header for security
     app.disable('x-powered-by');
+    installHttpMetrics(app);
 
     // Middleware (correlation id first so the field report intake can log with it)
     app.use(compression());
@@ -47,6 +49,7 @@ export async function createApp(existingContainer?: Container): Promise<express.
         const correlationId = readCorrelationId(incoming);
         res.locals.correlationId = correlationId;
         res.setHeader('X-Correlation-ID', correlationId);
+        annotateCorrelation(correlationId);
         logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
     });

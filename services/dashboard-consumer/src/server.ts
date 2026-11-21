@@ -1,3 +1,4 @@
+import { shutdownTelemetry } from './telemetry/instrumentation';
 import { createApp, createContainer } from './app';
 import { TYPES } from './constants/types';
 import { pool } from './db';
@@ -22,6 +23,7 @@ async function main() {
             await eventConsumer.stop();
             server.close(async () => {
                 await pool.end();
+                await shutdownTelemetry();
                 process.exit(0);
             });
         };

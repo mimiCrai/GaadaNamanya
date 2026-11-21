@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 
 import express from 'express';
+import { installHttpMetrics } from './telemetry/metrics';
 import compression from 'compression';
 import { Container } from 'inversify';
 import { InversifyExpressServer } from 'inversify-express-utils';
@@ -47,6 +48,7 @@ export async function createApp(config: AppConfig, db: Database, deps: AppDepend
     const app = express();
 
     app.disable('x-powered-by');
+    installHttpMetrics(app);
 
     app.use(correlationMiddleware(logger));
     app.use(requestLogMiddleware);

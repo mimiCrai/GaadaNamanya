@@ -29,6 +29,39 @@ paths:
                                         type: array
                                         items:
                                             $ref: '#/components/schemas/DashboardHazard'
+    /api/hazards/analytics:
+        get:
+            summary: Canonical counts across storage shards (occurrence UTC range)
+            description: >-
+                Canonical byType and byDay include TSUNAMI, an overlapping subset of SEISMIC events
+                with a tsunami warning. total and other breakdowns count each event once.
+                TSUNAMI uses the related seismic event occurrence day in UTC.
+            parameters:
+                - { in: query, name: from, schema: { type: string, format: date-time } }
+                - { in: query, name: to, schema: { type: string, format: date-time } }
+            responses:
+                '200':
+                    description: Counts, time series, partial coverage and replica degradation
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                required: [total, bySource, bySeverity, byType, byMonth]
+                                properties:
+                                    total: { type: integer }
+                                    bySource: { $ref: '#/components/schemas/Counts' }
+                                    bySeverity: { $ref: '#/components/schemas/Counts' }
+                                    byType: { $ref: '#/components/schemas/Counts' }
+                                    byArea: { $ref: '#/components/schemas/Counts' }
+                                    byDay:
+                                        { type: object, additionalProperties: { $ref: '#/components/schemas/Counts' } }
+                                    partial: { type: boolean }
+                                    unavailable_units: { type: array, items: { type: string } }
+                                    degraded: { type: boolean }
+                                    degraded_units: { type: array, items: { type: string } }
+                                    byMonth: { $ref: '#/components/schemas/Counts' }
+                '400': { description: Invalid UTC range }
+                '503': { description: Canonical analytics unavailable; counts are not complete }
     /health:
         get:
             summary: Health check
@@ -48,14 +81,17 @@ paths:
                 '503': { description: Service is not ready }
 components:
     schemas:
+        Counts:
+            type: object
+            additionalProperties: { type: integer }
         DashboardHazard:
             type: object
             required:
                 [hazardId, source, hazardType, severity, areaName, occurredAt, lastEventId, lastEventType, updatedAt]
             properties:
                 hazardId: { type: string, format: uuid }
-                source: { type: string, enum: [BMKG, PVMBG] }
-                hazardType: { type: string, enum: [SEISMIC, VOLCANIC] }
+                source: { type: string, enum: [BMKG, PVMBG, SATELIT, SENSOR_PANTAI] }
+                hazardType: { type: string, enum: [SEISMIC, VOLCANIC, WILDFIRE, COASTAL] }
                 severity: { type: string, enum: [NORMAL, WASPADA, SIAGA, AWAS] }
                 areaName: { type: string }
                 occurredAt: { type: string, format: date-time }

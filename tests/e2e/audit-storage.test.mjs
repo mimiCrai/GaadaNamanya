@@ -77,3 +77,41 @@ test(`Audit API / storage reads: ${stage}`, { timeout: 120_000 }, async () => {
         assert.ok(last.body.items.length > 0);
     }
 });
+
+
+test(`Canonical analytics coverage: ${stage}`, { timeout: 30_000 }, async () => {
+    const analytics = await get('/internal/analytics', { 'X-BNPB-Internal-Key': process.env.BNPB_INTERNAL_API_KEY });
+    assert.equal(analytics.status, 200);
+    const expectedPartial = stage === 'outage';
+    assert.equal(analytics.body.partial, expectedPartial);
+    const canonicalCount = Object.entries(analytics.body.byType)
+        .filter(([type]) => type !== 'TSUNAMI')
+        .reduce((sum, [, count]) => sum + count, 0);
+    assert.equal(canonicalCount, analytics.body.total);
+    assert.equal(Object.values(analytics.body.byArea).reduce((a,b) => a+b, 0), analytics.body.total);
+    assert.equal(Object.values(analytics.body.bySeverity).reduce((a,b) => a+b, 0), analytics.body.total);
+    // TSUNAMI overlaps SEISMIC; validate its count and daily coverage separately.
+    const tsunamiCount = analytics.body.byType.TSUNAMI;
+    assert.ok(Number.isInteger(tsunamiCount) && tsunamiCount >= 0);
+    assert.ok(tsunamiCount <= analytics.body.byType.SEISMIC);
+    let dailyTsunamiCount = 0;
+    for (const counts of Object.values(analytics.body.byDay)) {
+        const count = counts.TSUNAMI ?? 0;
+        assert.ok(Number.isInteger(count) && count >= 0);
+        assert.ok(count <= (counts.SEISMIC ?? 0), 'Daily tsunami warnings must be a subset of seismic events');
+        dailyTsunamiCount += count;
+    }
+    assert.equal(dailyTsunamiCount, tsunamiCount, 'Daily tsunami counts must match the tsunami total');
+    if (expectedPartial) {
+        assert.ok(analytics.body.unavailable_units.includes('canonical-shard-b'));
+        assert.equal(analytics.body.degraded, true);
+    }
+    const invalidRange = await get('/internal/analytics?' + new URLSearchParams({ from: '2026-02-01T00:00:00Z', to: '2026-01-01T00:00:00Z' }), { 'X-BNPB-Internal-Key': process.env.BNPB_INTERNAL_API_KEY });
+    assert.equal(invalidRange.status, 400);
+    if (process.env.DASHBOARD_URL) {
+        const dashboard = await fetch(`${process.env.DASHBOARD_URL}/api/hazards/analytics?${new URLSearchParams({ from: "2000-01-01T00:00:00Z" })}`, { signal: AbortSignal.timeout(12_000) });
+        const body = await dashboard.json();
+        assert.equal(dashboard.status, 200, JSON.stringify(body));
+        assert.equal(body.partial, expectedPartial);
+    }
+});

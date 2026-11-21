@@ -123,7 +123,7 @@ describe('POST /field-reports (P3 #6, D-38)', () => {
         as('lapangan');
         await post(report);
         const metrics = await request(app).get('/metrics');
-        expect(metrics.text).toMatch(/bnpb_client_api_field_report_responses_total\{status="202"\} \d+/);
+        expect(metrics.text).toMatch(/bnpb_client_api_field_report_responses_total\{[^}]*status="202"[^}]*\} \d+/);
         expect(metrics.text).toMatch(/bnpb_client_api_field_report_accept_seconds_bucket/);
     });
 

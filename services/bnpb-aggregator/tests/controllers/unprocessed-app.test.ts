@@ -3,6 +3,13 @@ import express from 'express';
 import request from 'supertest';
 import { createApp, createContainer } from '../../src/app';
 import { TYPES } from '../../src/constants/types';
+import {
+    metricsRegistry,
+    parseFailuresTotal,
+    satelliteReconnectsTotal,
+    setUnprocessedCounter,
+} from '../../src/libs/metrics';
+import { metricsRegistry as httpRegistry } from '../../src/telemetry/metrics';
 
 /** Full app: OpenAPI validator + global error handler in front of the new routes. */
 describe('Unprocessed routes through the full app', () => {
@@ -56,5 +63,24 @@ describe('Unprocessed routes through the full app', () => {
         const metrics = await request(app).get('/metrics');
         expect(metrics.status).toBe(200);
         expect(metrics.headers['content-type']).toContain('text/plain');
+    });
+
+    it('exports HTTP, DLQ and satellite metrics through the same endpoint and registry', async () => {
+        expect(metricsRegistry).toBe(httpRegistry);
+        setUnprocessedCounter(async () => [{ source: 'PVMBG', status: 'parked', count: 2 }]);
+        parseFailuresTotal.inc({ source: 'PVMBG', reason: 'schema_incompatible' });
+        satelliteReconnectsTotal.inc({ reason: 'manual' });
+        try {
+            const result = await request(app).get('/metrics').expect(200);
+            expect(result.text).toContain('bnpb_http_requests_total');
+            expect(result.text).toContain('bnpb_aggregator_parse_failures_total');
+            expect(result.text).toContain(
+                'bnpb_aggregator_unprocessed_messages{source="PVMBG",status="parked",service="bnpb-aggregator"} 2'
+            );
+            expect(result.text).toContain('bnpb_aggregator_satellite_reconnects_total');
+            expect(result.text.match(/# HELP bnpb_http_requests_total /g)).toHaveLength(1);
+        } finally {
+            setUnprocessedCounter(async () => []);
+        }
     });
 });
