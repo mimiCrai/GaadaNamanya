@@ -10,6 +10,13 @@ export default tseslint.config(
         ignores: ['dist/', 'node_modules/', 'coverage/'],
     },
     {
+        files: ['**/*.js', '**/*.cjs'],
+        languageOptions: {
+            sourceType: 'commonjs',
+            globals: { module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly' },
+        },
+    },
+    {
         rules: {
             '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
             '@typescript-eslint/explicit-function-return-type': 'off',

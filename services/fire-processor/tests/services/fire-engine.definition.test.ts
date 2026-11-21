@@ -97,6 +97,35 @@ describe('Definisi Kebakaran', () => {
         const { hazards } = run(new LogBuilder().detection(A).detection(B).retractByDetection(B));
         expect(hazards).toHaveLength(0);
     });
+
+    it('merges several components and singles through one bridging detection', () => {
+        const at = (lat: string, lon: string): Det => ({ lat, lon });
+        const log = new LogBuilder()
+            .detection(at('-2.49200', LON))
+            .detection(at('-2.48400', LON))
+            .detection(at('-2.50000', '113.80800'))
+            .detection(at('-2.50000', '113.79200'))
+            .detection(at('-2.50000', LON));
+        const { engine, hazards } = run(log);
+        expect(hazards).toHaveLength(1);
+        expect(hazards[0].attributes.detection_count).toBe(5);
+        expect(engine.stats().single_detections).toBe(0);
+        const { engine: rebuilt } = FireEngine.restore(JSON.parse(JSON.stringify(engine.snapshot())));
+        expect(rebuilt.hazards()).toEqual(hazards);
+        expect(rebuilt.stats()).toEqual(engine.stats());
+    });
+
+    it('keeps insertion into a dense cluster near-linear (1,600 detections within ~200 m)', () => {
+        const log = new LogBuilder();
+        for (let i = 0; i < 1600; i++) {
+            const lat = (-2.5 - (i % 40) * 0.00004).toFixed(5);
+            log.detection({ lat, lon: (113.8 + Math.floor(i / 40) * 0.00004).toFixed(5) });
+        }
+        const started = Date.now();
+        const { hazards } = run(log);
+        expect(hazards[0].attributes.detection_count).toBe(1600);
+        expect(Date.now() - started).toBeLessThan(30_000);
+    });
 });
 
 describe('spatial grid', () => {

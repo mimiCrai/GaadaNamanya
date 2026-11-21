@@ -14,7 +14,7 @@ export class FireGraph {
     private readonly detections = new Map<string, Detection>();
     private readonly grid = new Map<string, Set<string>>();
     private readonly componentOf = new Map<string, number>();
-    private readonly components = new Map<number, Set<string>>();
+    private readonly components = new Map<number, string[]>();
     private nextComponentId = 0;
     private singleCount = 0;
     private lowCount = 0;
@@ -44,7 +44,7 @@ export class FireGraph {
 
     componentMembers(key: string): string[] | undefined {
         const id = this.componentOf.get(key);
-        return id === undefined ? undefined : sorted(this.components.get(id)!);
+        return id === undefined ? undefined : [...this.components.get(id)!];
     }
 
     put(next: Detection): GraphChange {
@@ -88,16 +88,45 @@ export class FireGraph {
         return found.sort(compareText);
     }
 
+    // Adding a vertex can only extend or merge components, so merge into the largest neighbor instead of re-flooding.
     private activate(next: Detection): GraphChange {
         this.addToGrid(next);
-        const ids = new Set(this.activeNeighbors(next).map((key) => this.componentOf.get(key)!));
-        const before = [...ids].map((id) => sorted(this.components.get(id)!)).sort(byFirst);
-        ids.forEach((id) => this.dropComponent(id));
-        return { before, after: this.rebuild([next.key, ...before.flat()]) };
+        const ids = this.neighborComponents(next);
+        if (ids.length === 0) return { before: [], after: this.rebuild([next.key]) };
+
+        const before = ids.map((id) => this.components.get(id)!).sort(byFirst);
+        const target = ids.reduce((best, id) =>
+            this.components.get(id)!.length > this.components.get(best)!.length ? id : best
+        );
+        for (const id of ids) {
+            const members = this.components.get(id)!;
+            if (members.length === 1) this.singleCount--;
+            if (id === target) continue;
+            members.forEach((key) => this.componentOf.set(key, target));
+            this.components.delete(id);
+        }
+        const merged = [...before.flat(), next.key].sort(compareText);
+        this.componentOf.set(next.key, target);
+        this.components.set(target, merged);
+        return { before, after: [merged] };
+    }
+
+    // Skips the distance check for members of components already known to touch the detection.
+    private neighborComponents(detection: Detection): number[] {
+        const found = new Set<number>();
+        for (const cell of neighborCells(detection.lat, detection.lon)) {
+            for (const key of this.grid.get(cell) ?? []) {
+                if (key === detection.key) continue;
+                const id = this.componentOf.get(key)!;
+                if (found.has(id)) continue;
+                if (isLinked(detection, this.detections.get(key)!)) found.add(id);
+            }
+        }
+        return [...found];
     }
 
     private deactivate(next: Detection): GraphChange {
-        const members = this.componentMembers(next.key)!;
+        const members = this.components.get(this.componentOf.get(next.key)!)!;
         this.dropComponent(this.componentOf.get(next.key)!);
         this.removeFromGrid(next);
         return { before: [members], after: this.rebuild(members.filter((key) => key !== next.key)) };
@@ -109,12 +138,12 @@ export class FireGraph {
             if (this.componentOf.has(seed)) continue;
             const start = this.detections.get(seed);
             if (!start || !isActive(start)) continue;
-            result.push(sorted(this.flood(start)));
+            result.push(this.flood(start));
         }
         return result.sort(byFirst);
     }
 
-    private flood(start: Detection): Set<string> {
+    private flood(start: Detection): string[] {
         const id = this.nextComponentId++;
         const members = new Set([start.key]);
         this.componentOf.set(start.key, id);
@@ -127,14 +156,15 @@ export class FireGraph {
                 queue.push(this.detections.get(key)!);
             }
         }
-        this.components.set(id, members);
-        if (members.size === 1) this.singleCount++;
-        return members;
+        const ordered = sorted(members);
+        this.components.set(id, ordered);
+        if (ordered.length === 1) this.singleCount++;
+        return ordered;
     }
 
     private dropComponent(id: number): void {
         const members = this.components.get(id)!;
-        if (members.size === 1) this.singleCount--;
+        if (members.length === 1) this.singleCount--;
         members.forEach((key) => this.componentOf.delete(key));
         this.components.delete(id);
     }
