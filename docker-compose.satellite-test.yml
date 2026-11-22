@@ -10,6 +10,7 @@ services:
             STUB_LAST_OFFSET: ${P4_STUB_LAST_OFFSET:-1200}
             STUB_INTERVAL_MS: ${P4_STUB_INTERVAL_MS:-40}
             STUB_MALFORMED_OFFSETS: ${P4_STUB_MALFORMED_OFFSETS:-133,377}
+            STUB_SPREAD_DEG: ${P4_STUB_SPREAD_DEG:-2}
         healthcheck:
             test: ['CMD', 'node', '-e', "fetch('http://localhost:8090/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
             interval: 2s

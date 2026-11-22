@@ -74,6 +74,8 @@ services:
             FIELD_REPORT_MAX_BODY_BYTES: ${BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES:-16384}
             FIELD_REPORT_RETRY_AFTER_SECONDS: ${BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS:-2}
             DLQ_REPLAY_TIMEOUT_MS: ${BNPB_CLIENT_API_DLQ_REPLAY_TIMEOUT_MS:-30000}
+            JWT_PUBLIC_KEY_CACHE_MS: ${BNPB_CLIENT_API_JWT_PUBLIC_KEY_CACHE_MS:-60000}
+            JWT_PUBLIC_KEY_MIN_REFRESH_MS: ${BNPB_CLIENT_API_JWT_PUBLIC_KEY_MIN_REFRESH_MS:-5000}
         ports:
             - '${BNPB_CLIENT_API_HOST_PORT}:3000'
         depends_on:
@@ -372,6 +374,8 @@ services:
             PVMBG_MAPPING_POLL_MS: ${BNPB_AGGREGATOR_PVMBG_MAPPING_POLL_MS:-2000}
             PVMBG_BODY_FAILURE_HOLD_POLLS: ${BNPB_AGGREGATOR_PVMBG_BODY_FAILURE_HOLD_POLLS:-5}
             DLQ_REPLAY_MAX: ${BNPB_AGGREGATOR_DLQ_REPLAY_MAX:-5000}
+            FIRE_SNAPSHOT_MAX_BYTES: ${BNPB_AGGREGATOR_FIRE_SNAPSHOT_MAX_BYTES:-268435456}
+            HAZARD_BATCH_CONCURRENCY: ${BNPB_AGGREGATOR_HAZARD_BATCH_CONCURRENCY:-8}
         # directory mount (not a single file): editors that save by rename replace the inode (D-36)
         volumes:
             - ${BNPB_AGGREGATOR_PVMBG_MAPPING_DIR:-./services/bnpb-aggregator/config/pvmbg-mapping}:/app/config/pvmbg-mapping:ro
@@ -478,13 +482,26 @@ services:
             start_period: 15s
             retries: 12
 
-    # P4 (Tahap 3): Fire Definition engine + health only; satellite.raw consumer and Aggregator writes wait for CP 3.4/3.5
+    # P4: satellite.raw -> Fire Definition engine -> WILDFIRE HazardEvents through the Aggregator (rule 5); one active instance
     fire-processor:
         build: ./services/fire-processor
         environment:
             PORT: 3000
             SERVICE_NAME: fire-processor
             NODE_ENV: ${FIRE_PROCESSOR_NODE_ENV:-local}
+            KAFKA_BROKERS: ${FIRE_PROCESSOR_KAFKA_BROKERS:-kafka:29092}
+            KAFKA_CLIENT_ID: ${FIRE_PROCESSOR_KAFKA_CLIENT_ID:-fire-processor}
+            KAFKA_GROUP_ID: ${FIRE_PROCESSOR_KAFKA_GROUP_ID:-fire-processor-group}
+            SATELLITE_RAW_TOPIC: ${BNPB_AGGREGATOR_SATELLITE_RAW_TOPIC:-satellite.raw}
+            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
+            BNPB_GATEWAY_TIMEOUT_MS: ${FIRE_PROCESSOR_GATEWAY_TIMEOUT_MS:-15000}
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+            FIRE_ALLOWED_LATENESS_MINUTES: ${FIRE_PROCESSOR_ALLOWED_LATENESS_MINUTES:-120}
+            FIRE_FLUSH_MAX_RECORDS: ${FIRE_PROCESSOR_FLUSH_MAX_RECORDS:-1000}
+            FIRE_SNAPSHOT_EVERY_RECORDS: ${FIRE_PROCESSOR_SNAPSHOT_EVERY_RECORDS:-5000}
+            FIRE_SNAPSHOT_INTERVAL_MS: ${FIRE_PROCESSOR_SNAPSHOT_INTERVAL_MS:-30000}
+            FIRE_BACKOFF_BASE_MS: ${FIRE_PROCESSOR_BACKOFF_BASE_MS:-500}
+            FIRE_BACKOFF_CAP_MS: ${FIRE_PROCESSOR_BACKOFF_CAP_MS:-30000}
         ports:
             - '${FIRE_PROCESSOR_HOST_PORT:-3008}:3000'
         mem_limit: 1g

@@ -257,3 +257,22 @@ export const dlqReplayTotal = new Counter({
     labelNames: ['source', 'result'] as const,
     registers: [metricsRegistry],
 });
+
+export const hazardBatchOpsTotal = new Counter({
+    name: `${PREFIX}hazard_batch_ops_total`,
+    help: 'POST /internal/hazards/batch operations, by source, op (upsert, delete) and result (applied, unchanged, skipped)',
+    labelNames: ['source', 'op', 'result'] as const,
+    registers: [metricsRegistry],
+});
+
+export const fireSnapshotBytes = new Gauge({
+    name: `${PREFIX}fire_snapshot_bytes`,
+    help: 'Size of the last fire processor snapshot stored in GridFS (gzip)',
+    registers: [metricsRegistry],
+});
+
+export const lateDetectionsStoredTotal = new Counter({
+    name: `${PREFIX}late_detections_stored_total`,
+    help: 'Late satellite detections inserted into late_detections (first write per feed offset)',
+    registers: [metricsRegistry],
+});

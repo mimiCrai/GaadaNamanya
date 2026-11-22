@@ -20,6 +20,7 @@ export interface IDlqGateway {
     detail(messageId: string, correlationId: string): Promise<unknown>;
     raw(messageId: string, correlationId: string): Promise<DlqRawPayload>;
     replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown>;
+    satelliteSummary(correlationId: string): Promise<unknown>;
 }
 
 const RAW_HEADERS = ['content-type', 'content-length', 'x-payload-sha256', 'x-original-content-type'];
@@ -52,6 +53,12 @@ export class DlqGateway implements IDlqGateway {
     async replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown> {
         // a batch of CAS requeues: own, longer budget than single reads (504 seen at 5 s on a loaded host)
         const response = await this.request('/internal/dlq/replay', correlationId, {}, filter, env.DLQ_REPLAY_TIMEOUT_MS);
+        return response.json();
+    }
+
+    // P4 #2: fire processor counters (single, low, late, fires) for Internal Ops only (pattern D-01)
+    async satelliteSummary(correlationId: string): Promise<unknown> {
+        const response = await this.request('/internal/satellite/summary', correlationId);
         return response.json();
     }
 

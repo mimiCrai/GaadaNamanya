@@ -120,7 +120,7 @@ configs:
                     refresh_interval: 5s
               - job_name: applications
                 static_configs:
-                  - targets: ['bmkg:8081', 'pvmbg:8082', 'bnpb-auth:3000', 'bnpb-client-api:3000', 'dashboard-consumer:${DASHBOARD_CONSUMER_CONTAINER_PORT:-3000}', 'notification-consumer:${NOTIFICATION_CONSUMER_CONTAINER_PORT:-3000}', 'field-report-processor:3000']
+                  - targets: ['bmkg:8081', 'pvmbg:8082', 'bnpb-auth:3000', 'bnpb-client-api:3000', 'dashboard-consumer:${DASHBOARD_CONSUMER_CONTAINER_PORT:-3000}', 'notification-consumer:${NOTIFICATION_CONSUMER_CONTAINER_PORT:-3000}', 'field-report-processor:3000', 'fire-processor:3000']
               - job_name: prometheus
                 static_configs:
                   - targets: ['localhost:9090']

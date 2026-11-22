@@ -1,4 +1,4 @@
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { inject, injectable } from 'inversify';
 import { HazardEventMessage } from '../contracts/hazard-event-message';
@@ -26,6 +26,11 @@ export class DashboardProjectionRepository implements IDashboardProjectionReposi
 
             if (inserted.length === 0) {
                 return false;
+            }
+
+            if (message.eventType === 'hazard.deleted') {
+                await tx.delete(dashboardHazards).where(eq(dashboardHazards.hazardId, message.hazard.hazardId));
+                return true;
             }
 
             await tx

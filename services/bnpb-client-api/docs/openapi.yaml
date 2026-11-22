@@ -141,6 +141,17 @@ paths:
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '403': { $ref: '#/components/responses/Forbidden' }
                 '502': { $ref: '#/components/responses/UpstreamFailure' }
+    /internal-ops/satellite/summary:
+        get:
+            summary: BNPB Internal Ops only - fire processor counters (single, low confidence, late, fires) and SATELIT DLQ
+            description: Requires role internal. Proxies GET /internal/satellite/summary of the Aggregator.
+            tags: [Internal Ops]
+            security: [{ bearerAuth: [] }]
+            responses:
+                '200': { description: Summary }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+                '502': { $ref: '#/components/responses/UpstreamFailure' }
     /internal-ops/dlq/replay:
         post:
             summary: BNPB Internal Ops only - reprocess parked messages through the retry worker (P3 #4)

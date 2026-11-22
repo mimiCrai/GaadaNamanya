@@ -22,12 +22,30 @@ describe('JwtAuthenticator', () => {
         fetchMock.mockImplementation(() => Promise.resolve(new Response(publicPem, { status: 200 })));
     });
 
-    it('fetches the auth public key for every request and verifies an RS256 access token', async () => {
+    it('caches the auth public key (T4-7) and verifies an RS256 access token', async () => {
         const authenticator = new JwtAuthenticator();
         await expect(authenticator.authenticate(`Bearer ${accessToken('public')}`, correlationId)).resolves.toEqual({ sub: 'user-id', sid: 'session-id', role: 'public' });
         await authenticator.authenticate(`Bearer ${accessToken('lapangan')}`, correlationId);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][1]).toMatchObject({ headers: { 'X-Correlation-ID': correlationId } });
+    });
+
+    it('fetches once for a burst of concurrent requests', async () => {
+        const authenticator = new JwtAuthenticator();
+        await Promise.all(Array.from({ length: 20 }, () => authenticator.authenticate(`Bearer ${accessToken('lapangan')}`, correlationId)));
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('refetches once when a token fails on the cached key (key rotation)', async () => {
+        const authenticator = new JwtAuthenticator();
+        const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ format: 'pem', type: 'spki' }).toString();
+        fetchMock.mockImplementationOnce(() => Promise.resolve(new Response(other, { status: 200 })));
+        await expect(authenticator.authenticate(`Bearer ${accessToken('public')}`, correlationId)).rejects.toMatchObject({ status: 401 });
+        // first answer came from bnpb-auth itself (not the cache), so no refetch yet; the next one uses the cache
+        await expect(authenticator.authenticate(`Bearer ${accessToken('public')}`, correlationId)).resolves.toMatchObject({ role: 'public' });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        await authenticator.authenticate(`Bearer ${accessToken('internal')}`, correlationId);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('rejects an unknown role', async () => {

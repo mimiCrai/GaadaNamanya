@@ -731,6 +731,249 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 20,
+      "title": "P4: how far behind the feed (offsets)",
+      "type": "timeseries",
+      "description": "Feed latest_offset minus the offset the fire processor applied, and records still unread in satellite.raw. Rises during the 60x burst, must return to ~0 within 60 s after it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(bnpb_aggregator_satellite_latest_offset) - max(bnpb_fire_processor_last_feed_offset)",
+          "legendFormat": "processor behind feed"
+        },
+        {
+          "refId": "B",
+          "expr": "max(bnpb_fire_processor_kafka_lag_messages)",
+          "legendFormat": "unread in satellite.raw"
+        },
+        {
+          "refId": "C",
+          "expr": "max(bnpb_aggregator_satellite_lag_offsets and on(instance) (bnpb_aggregator_satellite_stream_connected == 1))",
+          "legendFormat": "ingest lag"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "title": "P4: how far behind in event time (virtual minutes)",
+      "type": "timeseries",
+      "description": "virtual_now of the newest heartbeat ingested minus the one the fire processor has applied.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 80,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(max(bnpb_aggregator_satellite_last_heartbeat_virtual_now_seconds) - max(bnpb_fire_processor_virtual_now_seconds)) / 60",
+          "legendFormat": "event-time lag"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 22,
+      "title": "P4: end-to-end latency (received -> HazardEvent stored)",
+      "type": "timeseries",
+      "description": "From received_at at the Aggregator ingest to the HazardEvent batch stored by the Aggregator API (P4 #4 p95).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 88,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(bnpb_fire_processor_end_to_end_seconds_bucket[1m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(bnpb_fire_processor_end_to_end_seconds_bucket[1m])))",
+          "legendFormat": "p50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "title": "P4: satellite records / second",
+      "type": "timeseries",
+      "description": "Records applied by the engine, by outcome (applied, duplicate, late, heartbeat, invalid, stale_offset).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 88,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(bnpb_fire_processor_records_total[1m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "title": "P4: fires, single and late detections",
+      "type": "timeseries",
+      "description": "Active and final fires, single detections (not a fire, reported) and late detections (stored in late_detections).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (counter) (bnpb_fire_processor_engine{counter=~\"fires|final_fires|single_detections|late_detections|low_excluded\"})",
+          "legendFormat": "{{counter}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 25,
+      "title": "P4: Aggregator writes from the fire processor",
+      "type": "timeseries",
+      "description": "HazardEvent ops by result; skipped = an equal or newer version (or tombstone) was already stored.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (op, result) (rate(bnpb_aggregator_hazard_batch_ops_total[1m]))",
+          "legendFormat": "{{op}} {{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ]
 }

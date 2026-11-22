@@ -136,6 +136,11 @@ class DeploymentTests(unittest.TestCase):
         processor_env = next(x for x in objects if x['kind'] == 'ConfigMap' and x['metadata']['name'] == 'field-report-processor-config')['data']
         self.assertEqual(processor_env['BNPB_GATEWAY_BASE_URL'], 'http://bnpb-aggregator:3000')
         self.assertNotIn('DATABASE_URL', processor_env)
+        fire_env = next(x for x in objects if x['kind'] == 'ConfigMap' and x['metadata']['name'] == 'fire-processor-config')['data']
+        self.assertEqual(fire_env['BNPB_GATEWAY_BASE_URL'], 'http://bnpb-aggregator:3000')
+        # P4: one engine at a time; the next pod restores the stored snapshot
+        fire = next(x for x in workloads if x['metadata']['name'] == 'fire-processor')
+        self.assertEqual(fire['spec']['strategy'], {'type': 'Recreate'})
         topic = next(x for x in workloads if x['kind'] == 'Job' and x['metadata']['name'].startswith('kafka-topic-init'))
         command = topic['spec']['template']['spec']['containers'][0]['command'][-1]
         self.assertIn('"$FIELD_REPORT_TOPIC" --partitions 3 --replication-factor 1 --config retention.ms=2592000000', command)

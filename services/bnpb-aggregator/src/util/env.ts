@@ -141,6 +141,10 @@ const envSchema = z
         SATELLITE_429_BACKOFF_BASE_MS: z.coerce.number().int().min(50).default(2_000),
         SATELLITE_429_BACKOFF_CAP_MS: z.coerce.number().int().min(100).default(30_000),
         SATELLITE_AUTH_BACKOFF_MS: z.coerce.number().int().min(1_000).default(300_000),
+
+        // P4 fire processor API (usulan 3.4): gzip snapshot size limit and write concurrency per batch
+        FIRE_SNAPSHOT_MAX_BYTES: z.coerce.number().int().min(1_024).max(1024 * 1024 * 1024).default(256 * 1024 * 1024),
+        HAZARD_BATCH_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(8),
     })
     .refine((values) => !values.SATELLITE_INGEST_ENABLED || values.SATELLITE_TOKEN.length > 0, {
         message: 'SATELLITE_TOKEN is required when SATELLITE_INGEST_ENABLED=true',

@@ -17,12 +17,38 @@ export interface IJwtAuthenticator {
 
 @injectable()
 export class JwtAuthenticator implements IJwtAuthenticator {
+    private cached: { key: string; fetchedAt: number } | null = null;
+    private inflight: Promise<string> | null = null;
+    private lastForcedRefresh = 0;
+
+    // T4-7: the public key is cached (TTL); a token that fails on a cached key forces one refetch (key rotation)
     async authenticate(authorization: string | undefined, correlationId: string): Promise<AuthContext> {
         const token = readBearerToken(authorization);
-        const publicKey = await this.fetchPublicKey(correlationId);
-        const payload = verifyAccessToken(token, publicKey);
-
+        const { key, fromCache } = await this.publicKey(correlationId, false);
+        let payload: JwtPayload;
+        try {
+            payload = verifyAccessToken(token, key);
+        } catch (error) {
+            const now = Date.now();
+            if (!fromCache || now - this.lastForcedRefresh < env.JWT_PUBLIC_KEY_MIN_REFRESH_MS) throw error;
+            this.lastForcedRefresh = now;
+            const fresh = await this.publicKey(correlationId, true);
+            if (fresh.key === key) throw error;
+            payload = verifyAccessToken(token, fresh.key);
+        }
         return { sub: payload.sub, sid: payload.sid, role: payload.role };
+    }
+
+    private async publicKey(correlationId: string, force: boolean): Promise<{ key: string; fromCache: boolean }> {
+        const ttl = env.JWT_PUBLIC_KEY_CACHE_MS;
+        if (!force && ttl > 0 && this.cached && Date.now() - this.cached.fetchedAt < ttl) {
+            return { key: this.cached.key, fromCache: true };
+        }
+        // single flight: a burst after a restart triggers one fetch, not one per request
+        this.inflight ??= this.fetchPublicKey(correlationId).finally(() => (this.inflight = null));
+        const key = await this.inflight;
+        if (ttl > 0) this.cached = { key, fetchedAt: Date.now() };
+        return { key, fromCache: false };
     }
 
     private async fetchPublicKey(correlationId: string): Promise<string> {

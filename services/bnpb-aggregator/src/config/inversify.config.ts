@@ -48,6 +48,8 @@ import { FieldReportRepository, IFieldReportRepository } from '../repositories/f
 import { ISatelliteFeedClient, SatelliteFeedClient } from '../clients/satellite.client';
 import { ISatelliteLogWriter, SatelliteLogWriter } from '../services/satellite-log-writer.service';
 import { ISatelliteIngestService, SatelliteIngestService } from '../services/satellite-ingest.service';
+import { HazardWriteRepository, IHazardWriteRepository } from '../repositories/hazard-write.repository';
+import { FireProcessorRepository, IFireProcessorRepository } from '../repositories/fire-processor.repository';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind<IPayloadStore>(TYPES.IPayloadStore).to(PayloadStore).inSingletonScope();
@@ -107,4 +109,6 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<ISatelliteFeedClient>(TYPES.ISatelliteFeedClient).to(SatelliteFeedClient).inSingletonScope();
     bind<ISatelliteLogWriter>(TYPES.ISatelliteLogWriter).to(SatelliteLogWriter).inSingletonScope();
     bind<ISatelliteIngestService>(TYPES.ISatelliteIngestService).to(SatelliteIngestService).inSingletonScope();
+    bind<IHazardWriteRepository>(TYPES.IHazardWriteRepository).to(HazardWriteRepository).inSingletonScope();
+    bind<IFireProcessorRepository>(TYPES.IFireProcessorRepository).to(FireProcessorRepository).inSingletonScope();
 });

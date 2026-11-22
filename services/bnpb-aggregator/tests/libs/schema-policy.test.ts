@@ -107,6 +107,7 @@ describe('SCHEMA_POLICY declaration table', () => {
         const { report_id: _dropped, ...missing } = v1;
         const error = failure(() => map(missing));
         expect(error.reason).toBe("schema_incompatible: field wajib 'report_id' hilang");
+        expect(error.retryable).toBe(false);
         expect(failure(() => map(missing, ADJUSTED)).reason).toBe(error.reason);
         expect(() =>
             parseMappingFile(Buffer.from(JSON.stringify({ required: ['volcano_id', 'alert_level', 'reported_at'] })))
@@ -143,6 +144,7 @@ describe('SCHEMA_POLICY declaration table', () => {
     it('SCHEMA_POLICY#reported_at_not_iso: parked validation_failed, not recoverable by config', () => {
         const error = failure(() => map({ ...v1, reported_at: '20/11/2026 10:00' }));
         expect(error.reason).toBe("validation_failed: field 'reported_at' tidak sesuai format datetime");
+        expect(error.retryable).toBe(false);
         expect(failure(() => map({ ...v1, reported_at: '20/11/2026 10:00' }, ADJUSTED)).reason).toBe(error.reason);
     });
 

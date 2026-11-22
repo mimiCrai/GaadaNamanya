@@ -44,4 +44,7 @@ export const TYPES = {
     ISatelliteFeedClient: Symbol.for('ISatelliteFeedClient'),
     ISatelliteLogWriter: Symbol.for('ISatelliteLogWriter'),
     ISatelliteIngestService: Symbol.for('ISatelliteIngestService'),
+
+    IHazardWriteRepository: Symbol.for('IHazardWriteRepository'),
+    IFireProcessorRepository: Symbol.for('IFireProcessorRepository'),
 };

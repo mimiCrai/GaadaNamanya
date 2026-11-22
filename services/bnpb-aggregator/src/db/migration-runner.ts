@@ -7,6 +7,7 @@ import { sensorPantai } from './migrations/0005-sensor-pantai';
 import { unprocessedMessagesMigration } from './migrations/0006-unprocessed-messages';
 import { orderingSequencesMigration } from './migrations/0007-ordering-sequences';
 import { fieldReportsMigration } from './migrations/0008-field-reports';
+import { fireProcessorMigration } from './migrations/0009-fire-processor';
 
 export interface Migration {
     id: string;
@@ -22,6 +23,7 @@ export const migrations: Migration[] = [
     unprocessedMessagesMigration,
     orderingSequencesMigration,
     fieldReportsMigration,
+    fireProcessorMigration,
 ];
 
 export async function runMigrations(database: Db, pending: Migration[] = migrations): Promise<string[]> {

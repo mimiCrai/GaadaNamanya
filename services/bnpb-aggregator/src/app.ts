@@ -27,6 +27,8 @@ import './controllers/satellite.controller';
 import './controllers/sensor-pantai.controller';
 import './controllers/pvmbg-mapping.controller';
 import './controllers/field-report.controller';
+import './controllers/hazard-batch.controller';
+import './controllers/fire-processor.controller';
 
 export async function createContainer(): Promise<Container> {
     const container = new Container();
@@ -58,6 +60,8 @@ export async function createApp(existingContainer?: Container): Promise<express.
             apiSpec: path.join(process.cwd(), 'docs/openapi.yaml'),
             validateRequests: true,
             validateResponses: false, // Set to true for stricter validation
+            // raw gzip stream to GridFS; the controller validates headers and the internal key still applies
+            ignorePaths: /^\/internal\/fire-processor\/snapshot$/,
         })
     );
 

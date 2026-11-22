@@ -11,6 +11,8 @@ const envSchema = z
         BNPB_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
         // POST /internal-ops/dlq/replay requeues a whole batch (D-37)
         DLQ_REPLAY_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+        JWT_PUBLIC_KEY_CACHE_MS: z.coerce.number().int().min(0).default(60_000),
+        JWT_PUBLIC_KEY_MIN_REFRESH_MS: z.coerce.number().int().min(0).default(5_000),
         // Must match BNPB_AGGREGATOR_INTERNAL_API_KEY; never expose externally.
         BNPB_INTERNAL_API_KEY: z.string().min(32),
         ADMISSION_MAX_CONCURRENT_REQUESTS: z.coerce.number().int().positive().default(100),

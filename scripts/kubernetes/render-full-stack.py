@@ -236,6 +236,9 @@ def deployment(name, image, env, resources, port, replicas=1, volume=None, comma
     if name == "bnpb-aggregator":
         result["spec"]["strategy"] = {"type": "RollingUpdate", "rollingUpdate": {
             "maxUnavailable": 0, "maxSurge": 1}}
+    if name == "fire-processor":
+        # P4: never two engines at once; the next pod restores the snapshot the old one stored
+        result["spec"]["strategy"] = {"type": "Recreate"}
     return result
 
 
@@ -419,7 +422,7 @@ def main():
     for name in APPS:
         env = services[name]["environment"].copy()
         env["NODE_ENV"] = "production"
-        if name in ("bnpb-client-api", "field-report-processor"):
+        if name in ("bnpb-client-api", "field-report-processor", "fire-processor"):
             env["BNPB_GATEWAY_BASE_URL"] = "http://bnpb-aggregator:3000"
         if name == "bnpb-aggregator":
             env["MONGO_NODE_MAP"] = "{}"

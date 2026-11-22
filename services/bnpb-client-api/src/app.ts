@@ -21,6 +21,7 @@ import './types/locals';
 import './controllers/health.controller';
 import './controllers/hazard.controller';
 import './controllers/internal-ops-dlq.controller';
+import './controllers/internal-ops-satellite.controller';
 import './controllers/field-report.controller';
 import { ApiError } from './errors/api-error';
 import { TYPES } from './constants/types';

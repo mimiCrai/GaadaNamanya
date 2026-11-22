@@ -292,6 +292,105 @@ paths:
                             schema: { type: string, format: binary }
                 '404': { description: Unknown message }
 
+    /internal/hazards/batch:
+        post:
+            summary: Idempotent batch upsert/delete of SATELIT HazardEvents (usulan 3.4), lease-free
+            description: One transaction per op addressed by _id. Applied only if version (feed offset) >= stored version and >= tombstone; a stale op is skipped. Delete removes the document, writes a tombstone and enqueues hazard.deleted.
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [ops]
+                            properties:
+                                ops:
+                                    type: array
+                                    minItems: 1
+                                    maxItems: 500
+                                    items: { type: object, description: '{op: upsert|delete, source: SATELIT, source_ref_id, version, hazard?}' }
+            responses:
+                '200': { description: '{results: [{op, source_ref_id, hazard_id, result: applied|unchanged|skipped}], applied, unchanged, skipped}' }
+                '400': { description: Invalid batch }
+                '401': { description: Missing internal API key }
+                '403': { description: Unrecognised internal API key }
+
+    /internal/fire-processor/snapshot:
+        put:
+            summary: Store the fire processor snapshot (gzip JSON) in GridFS; guarded by X-Feed-Offset >= stored
+            security: [{ BNPBInternalApiKey: [] }]
+            parameters:
+                - { name: X-Feed-Offset, in: header, required: true, schema: { type: string } }
+                - { name: X-Kafka-Offset, in: header, required: false, schema: { type: string } }
+            requestBody:
+                required: true
+                content:
+                    application/gzip:
+                        schema: { type: string, format: binary }
+            responses:
+                '200': { description: '{stored: true, feed_offset, kafka_offset, sha256, size_bytes, saved_at}' }
+                '400': { description: Invalid headers or content type }
+                '409': { description: A newer snapshot is stored }
+                '413': { description: Snapshot larger than FIRE_SNAPSHOT_MAX_BYTES }
+        get:
+            summary: Latest fire processor snapshot (gzip JSON), headers X-Feed-Offset, X-Kafka-Offset, X-Snapshot-SHA256
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200':
+                    description: Snapshot bytes
+                    content:
+                        application/gzip:
+                            schema: { type: string, format: binary }
+                '404': { description: No snapshot stored yet }
+
+    /internal/fire-processor/stats:
+        put:
+            summary: Publish fire processor counters for /internal/satellite/summary; guarded by last_offset >=
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [last_offset, stats]
+                            properties:
+                                last_offset: { type: integer }
+                                instance_id: { type: string, nullable: true }
+                                stats: { type: object }
+            responses:
+                '200': { description: '{stored: boolean}' }
+                '400': { description: Invalid stats }
+
+    /internal/satellite/late-detections:
+        post:
+            summary: Store late detections (P4 #2) in late_detections, idempotent per feed offset
+            security: [{ BNPBInternalApiKey: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            required: [items]
+                            properties:
+                                items:
+                                    type: array
+                                    minItems: 1
+                                    maxItems: 5000
+                                    items: { type: object, description: '{offset, detection_key, kind, event_time, watermark, received_at}' }
+            responses:
+                '200': { description: '{inserted, existing}' }
+                '400': { description: Invalid items }
+
+    /internal/satellite/summary:
+        get:
+            summary: Fire processor counters (single, low, late, fires...), stored late detections, SATELIT HazardEvents and DLQ
+            security: [{ BNPBInternalApiKey: [] }]
+            responses:
+                '200': { description: '{processor, late_detections_stored, hazard_events, unprocessed, partial}' }
+
     /internal/satellite/status:
         get:
             summary: Satellite feed ingest state of this instance (only the leader holds the stream)
