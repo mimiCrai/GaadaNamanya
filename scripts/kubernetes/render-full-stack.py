@@ -268,6 +268,8 @@ def stateful(name, image, env, resources, port, mount, size, storage_class, comm
     if storage_class:
         pvc_spec["storageClassName"] = storage_class
     pod_spec = {"containers": [container]}
+    if name == "kafka":
+        pod_spec["enableServiceLinks"] = False  # Confluent rejects Kubernetes' injected KAFKA_PORT.
     if node_name:
         pod_spec["nodeSelector"] = {"kubernetes.io/hostname": node_name}
     return {
@@ -531,9 +533,9 @@ def main():
         policies.append(policy(name, egress=destinations(MONGO_APPS, 27017)))
     for store, owner in STORES.items():
         policies.append(policy(store, peers([owner], 5432)))
-    kafka_users = ["bnpb-aggregator", "dashboard-consumer", "notification-consumer", "kafka-topic-init",
+    kafka_users = ["kafka", "bnpb-aggregator", "dashboard-consumer", "notification-consumer", "kafka-topic-init",
                    "bnpb-client-api", "field-report-processor", "fire-processor"]
-    policies.append(policy("kafka", peers(kafka_users, 29092)))
+    policies.append(policy("kafka", peers(kafka_users, 29092), destinations(["kafka"], 29092)))
     policies.append(policy("kafka-topic-init", egress=destinations(["kafka"], 29092)))
     policies.append(policy("sensor-pantai", peers(["bnpb-aggregator"], 8080)))
     policies.append(policy("bmkg", peers(["bnpb-aggregator"], 8081), destinations(["bmkg-store"], 5432)))
