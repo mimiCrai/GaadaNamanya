@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Render the complete BNPB deployment without placing credentials in Git."""
 
+import copy
 import json
 import hashlib
+import hmac
 import os
 import re
 import subprocess
@@ -51,7 +53,14 @@ MEMORY_LIMITS = {
     "bmkg": ("64Mi", "128Mi"), "pvmbg": ("64Mi", "128Mi"),
     "sensor-pantai": ("128Mi", "256Mi"),
     "field-report-processor": ("128Mi", "256Mi"), "fire-processor": ("512Mi", "1Gi"),
+    "prometheus": ("128Mi", "256Mi"), "grafana": ("128Mi", "256Mi"),
 }
+# Prometheus/Grafana: same images as docker-compose.observability.yml, role "other" (verify-platform.py)
+PROMETHEUS_IMAGE = "prom/prometheus:v3.16.0"
+GRAFANA_IMAGE = "grafana/grafana:13.3.1"
+GRAFANA_NODE_PORT = 30006
+OTHER_CLASS = {"requests": {"memory": "128Mi"}, "limits": {"memory": "256Mi"}}
+GRAFANA_DIR = ROOT / "scripts/observability/grafana"
 FIELD_REPORT_PARTITIONS = 3
 FIELD_REPORT_RETENTION_MS = 2592000000
 PVMBG_MAPPING_FILE = "services/bnpb-aggregator/config/pvmbg-mapping/mapping.json"
@@ -304,12 +313,130 @@ def destinations(names, port):
              "ports": [{"protocol": "TCP", "port": port}]}]
 
 
+def observability_enabled(config):
+    value = config.get("observability", True)
+    if not isinstance(value, bool):
+        raise ValueError("observability must be true or false")
+    return value
+
+
+def grafana_node_port(config):
+    port = config.get("grafanaNodePort", GRAFANA_NODE_PORT)
+    if not isinstance(port, int) or isinstance(port, bool) or not 30000 <= port <= 32767 or port in NODE_PORTS.values():
+        raise ValueError("grafanaNodePort must be a free NodePort in 30000-32767")
+    return port
+
+
+def observability_resource(config, name):
+    # deployment configs written before Prometheus/Grafana have no entry: use the "other" class
+    if name not in config["resources"]:
+        return copy.deepcopy(OTHER_CLASS)
+    return resource(config, name)
+
+
+def scraped_apps():
+    return [name for name in APPS if name != "bnpb-aggregator"]
+
+
+def observability(config, services):
+    """Prometheus (ClusterIP only) and Grafana (NodePort) mirroring docker-compose.observability.yml."""
+    scrape = {
+        "global": {"scrape_interval": "5s", "evaluation_interval": "5s"},
+        "scrape_configs": [
+            # headless Service: one A record per Aggregator pod, like Compose dns_sd
+            {"job_name": "bnpb-aggregator", "dns_sd_configs": [{
+                "names": ["bnpb-aggregator-pods"], "type": "A", "port": PORTS["bnpb-aggregator"],
+                "refresh_interval": "5s"}]},
+            {"job_name": "applications", "static_configs": [{
+                "targets": [name + ":" + str(PORTS[name]) for name in scraped_apps()]}]},
+            {"job_name": "prometheus", "static_configs": [{"targets": ["localhost:9090"]}]},
+        ],
+    }
+    datasources = {"apiVersion": 1, "datasources": [{
+        "name": "Prometheus", "uid": "prometheus", "type": "prometheus", "access": "proxy",
+        "url": "http://prometheus:9090", "isDefault": True, "editable": False}]}
+    files = {
+        "prometheus-scrape": {"prometheus.yml": json.dumps(scrape, indent=2) + "\n"},
+        "grafana-provisioning": {
+            "datasources.yml": json.dumps(datasources, indent=2) + "\n",
+            "dashboards.yml": (GRAFANA_DIR / "provisioning/dashboards/default.yml").read_text()},
+        "grafana-dashboards": {"bnpb.json": (GRAFANA_DIR / "dashboards/bnpb.json").read_text()},
+    }
+    objects = [{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": name}, "data": data}
+               for name, data in files.items()]
+    # deterministic, never committed: derived from the Aggregator internal key of this credential file
+    password = hmac.new(services["bnpb-aggregator"]["environment"]["BNPB_INTERNAL_API_KEY"].encode(),
+                        b"bnpb-grafana-admin", hashlib.sha256).hexdigest()[:32]
+    env_objs, grafana_refs = env_objects("grafana", {
+        "GF_SECURITY_ADMIN_USER": "admin", "GF_SECURITY_ADMIN_PASSWORD": password,
+        "GF_USERS_ALLOW_SIGN_UP": "false", "GF_ANALYTICS_REPORTING_ENABLED": "false",
+        "GF_ANALYTICS_CHECK_FOR_UPDATES": "false", "GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES": "false",
+        # egress is default-deny: no plugin downloads at startup
+        "GF_PLUGINS_PREINSTALL_DISABLED": "true",
+    })
+    objects += env_objs
+
+    def workload(name, image, port, ready_path, mounts, volumes, extra):
+        digest = hashlib.sha256(json.dumps(
+            [files[v["configMap"]["name"]] for v in volumes if "configMap" in v], sort_keys=True).encode()).hexdigest()
+        container = {"name": name, "image": image, "ports": [{"name": "http", "containerPort": port}],
+                     "resources": observability_resource(config, name), "volumeMounts": mounts,
+                     "readinessProbe": {"httpGet": {"path": ready_path, "port": port},
+                                        "periodSeconds": 5, "timeoutSeconds": 3, "failureThreshold": 3},
+                     **extra}
+        return {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": name},
+                "spec": {"replicas": 1, "strategy": {"type": "Recreate"},
+                         "selector": {"matchLabels": {"app": name}},
+                         "template": {"metadata": {"labels": labels(name),
+                                                   "annotations": {"bnpb/files-hash": digest}},
+                                      "spec": {"containers": [container], "volumes": volumes}}}}
+
+    items = [
+        {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "bnpb-aggregator-pods"},
+         "spec": {"clusterIP": "None", "selector": {"app": "bnpb-aggregator"},
+                  "ports": [{"name": "tcp", "port": PORTS["bnpb-aggregator"],
+                             "targetPort": PORTS["bnpb-aggregator"]}]}},
+        service("prometheus", 9090),
+        workload("prometheus", PROMETHEUS_IMAGE, 9090, "/-/ready",
+                 [{"name": "config", "mountPath": "/etc/prometheus", "readOnly": True},
+                  {"name": "data", "mountPath": "/prometheus"}],
+                 [{"name": "config", "configMap": {"name": "prometheus-scrape"}},
+                  {"name": "data", "emptyDir": {}}],
+                 {"args": ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
+                           "--storage.tsdb.retention.time=3d"]}),
+        service("grafana", 3000, node_port=grafana_node_port(config)),
+        workload("grafana", GRAFANA_IMAGE, 3000, "/api/health",
+                 [{"name": "data", "mountPath": "/var/lib/grafana"},
+                  {"name": "datasources", "mountPath": "/etc/grafana/provisioning/datasources", "readOnly": True},
+                  {"name": "providers", "mountPath": "/etc/grafana/provisioning/dashboards", "readOnly": True},
+                  {"name": "dashboards", "mountPath": "/var/lib/grafana/dashboards", "readOnly": True}],
+                 [{"name": "data", "emptyDir": {}},
+                  {"name": "datasources", "configMap": {"name": "grafana-provisioning",
+                                                        "items": [{"key": "datasources.yml", "path": "default.yml"}]}},
+                  {"name": "providers", "configMap": {"name": "grafana-provisioning",
+                                                      "items": [{"key": "dashboards.yml", "path": "default.yml"}]}},
+                  {"name": "dashboards", "configMap": {"name": "grafana-dashboards"}}],
+                 {"envFrom": grafana_refs}),
+    ]
+    by_port = {}
+    for name in ["bnpb-aggregator", *scraped_apps()]:
+        by_port.setdefault(PORTS[name], []).append(name)
+    policies = [
+        policy("prometheus", peers(["grafana"], 9090),
+               [rule for port, names in sorted(by_port.items()) for rule in destinations(names, port)]),
+        # NodePort: any source, Grafana port only
+        policy("grafana", [{"ports": [{"protocol": "TCP", "port": 3000}]}], destinations(["prometheus"], 9090)),
+    ]
+    return objects, items, policies
+
+
 def main():
     if len(sys.argv) != 4:
         raise SystemExit("Usage: render-full-stack.py CONFIG_JSON SECRETS_ENV OUTPUT_DIRECTORY")
     config_path, secret_path, output = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     config = json.loads(config_path.read_text())
     validate_config(config)
+    with_observability = observability_enabled(config)
     for name in REQUIRED_RESOURCES:
         resource(config, name)
     repository = config["imageRepository"].rstrip("/")
@@ -488,10 +615,14 @@ def main():
          "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "aggregator-topology"},
          "subjects": [{"kind": "ServiceAccount", "name": "aggregator-topology", "namespace": config["namespace"]}]},
     ]
+    observability_items, observability_policies = [], []
+    if with_observability:
+        observability_objects, observability_items, observability_policies = observability(config, services)
+        objects += observability_objects
     pull_secret = config.get("imagePullSecret")
     configs = {obj["metadata"]["name"]: obj.get("data", obj.get("stringData", {}))
                for obj in objects if obj["kind"] in ("Secret", "ConfigMap")}
-    for obj in mongo_items + infra + applications + [topic_job]:
+    for obj in mongo_items + infra + applications + [topic_job] + observability_items:
         template = obj.get("spec", {}).get("template")
         if not template:
             continue
@@ -511,6 +642,8 @@ def main():
     write(output, "config", objects)
     write(output, "infra", infra)
     write(output, "applications", applications)
+    # always written (empty when "observability": false) so deploy-all.sh can read it
+    write(output, "observability", observability_items)
     topic_job["metadata"]["name"] += "-" + hashlib.sha256(
         json.dumps(topic_job["spec"], sort_keys=True).encode()).hexdigest()[:10]
     write(output, "kafka-job", [topic_job])
@@ -541,8 +674,9 @@ def main():
     policies.append(policy("kafka", peers(kafka_users, 29092), destinations(["kafka"], 29092)))
     policies.append(policy("kafka-topic-init", egress=destinations(["kafka"], 29092)))
     policies.append(policy("sensor-pantai", peers(["bnpb-aggregator"], 8080)))
-    policies.append(policy("bmkg", peers(["bnpb-aggregator"], 8081), destinations(["bmkg-store"], 5432)))
-    policies.append(policy("pvmbg", peers(["bnpb-aggregator"], 8082), destinations(["pvmbg-store"], 5432)))
+    scraper = ["prometheus"] if with_observability else []
+    policies.append(policy("bmkg", peers(["bnpb-aggregator"] + scraper, 8081), destinations(["bmkg-store"], 5432)))
+    policies.append(policy("pvmbg", peers(["bnpb-aggregator"] + scraper, 8082), destinations(["pvmbg-store"], 5432)))
     policies.append(policy("bnpb-auth", peers(["bnpb-client-api"], 3000) + [{}],
                            destinations(["auth-store"], 5432)))
     policies.append(policy("bnpb-aggregator", peers(["bnpb-client-api"], 3000) + [{}],
@@ -562,6 +696,7 @@ def main():
         policies.append(policy(name, [{}],
                                destinations([store], 5432) + destinations(["kafka"], 29092) +
                                (destinations(["bnpb-aggregator"], 3000) if name == "dashboard-consumer" else [])))
+    policies += observability_policies
     write(output, "policies", policies)
 
 

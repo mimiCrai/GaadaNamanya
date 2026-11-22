@@ -140,8 +140,26 @@
       "limits": {
         "memory": "1Gi"
       }
+    },
+    "prometheus": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "grafana": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
     }
   },
+  "observability": true,
+  "grafanaNodePort": 30006,
   "context": "bnpb-demo",
   "storageNodes": {
     "a": [

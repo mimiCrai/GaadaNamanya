@@ -54,7 +54,7 @@ Alternatif range `(wilayah,waktu)` memudahkan query wilayah tetapi menumpuk writ
 
 ## Akses dan konsistensi
 
-NodePort: Client API `30000`, Auth `30001`, Aggregator `30003`, dashboard `30004`, notifikasi `30005`. Halaman dashboard ada di `/dashboard`.
+NodePort: Client API `30000`, Auth `30001`, Aggregator `30003`, dashboard `30004`, notifikasi `30005`, Grafana `30006` (`grafanaNodePort`). Halaman dashboard ada di `/dashboard`. Prometheus hanya ClusterIP: `kubectl port-forward svc/prometheus 19090:9090`. Password admin Grafana ada di Secret `grafana-secret` (`GF_SECURITY_ADMIN_PASSWORD`).
 
 Audit memakai Bearer audit token. Endpoint internal aplikasi/analitik memakai `X-BNPB-Internal-Key`. Dashboard memperoleh angka canonical melalui `/internal/analytics` milik Aggregator; tabel daftar tetap projection Kafka. Dashboard tidak mengakses canonical database.
 

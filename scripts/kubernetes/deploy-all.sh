@@ -79,6 +79,13 @@ kubectl -n "$namespace" apply -f "$tmp_dir/applications.json"
 for app in bnpb-auth bnpb-client-api bnpb-aggregator dashboard-consumer notification-consumer bmkg pvmbg field-report-processor fire-processor; do
   kubectl -n "$namespace" rollout status "deployment/$app" --timeout=15m
 done
+# Prometheus/Grafana (P4 dashboard); the list is empty when the deploy config sets "observability": false
+if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["items"] else 1)' "$tmp_dir/observability.json"; then
+  kubectl -n "$namespace" apply -f "$tmp_dir/observability.json"
+  for app in prometheus grafana; do
+    kubectl -n "$namespace" rollout status "deployment/$app" --timeout=10m
+  done
+fi
 bash "$root/scripts/kubernetes/verify-mongo.sh" "$namespace"
 bash "$root/scripts/kubernetes/verify-isolation.sh" "$namespace"
 python3 "$root/scripts/kubernetes/verify-platform.py" "$namespace"

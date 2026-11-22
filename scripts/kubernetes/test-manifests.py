@@ -122,6 +122,81 @@ class DeploymentTests(unittest.TestCase):
                     self.assertRegex(obj['metadata']['name'], r'-[a-f0-9]{10}$')
                     self.assertGreater(obj['spec']['activeDeadlineSeconds'], 0)
             self.assert_orang_c(objects, workloads)
+            self.assert_observability(objects, workloads)
+
+    def render(self, config):
+        init = module('secrets', ROOT / 'scripts/kubernetes/init-secrets.py')
+        with tempfile.TemporaryDirectory() as temp:
+            temp = Path(temp)
+            init.TARGET = temp / 'secret.env'
+            init.main()
+            config.update({'imageRepository': 'docker.io/test/bnpb', 'imageTag': 'test-001'})
+            path = temp / 'config.json'; path.write_text(json.dumps(config))
+            manifests = lambda filename: list(yaml.safe_load_all((ROOT / 'k8s' / filename).read_text()))
+            with patch.object(r, 'kubectl_objects', manifests), patch.object(sys, 'argv', ['render', str(path), str(init.TARGET), str(temp / 'out')]):
+                r.main()
+            return {p.name: json.loads(p.read_text())['items'] for p in (temp / 'out').glob('*.json')}
+
+    def assert_observability(self, objects, workloads):
+        def find(kind, name):
+            return next(x for x in objects if x['kind'] == kind and x['metadata']['name'] == name)
+        compose = yaml.safe_load((ROOT / 'docker-compose.observability.yml').read_text())['services']
+        for name, image in (('prometheus', r.PROMETHEUS_IMAGE), ('grafana', r.GRAFANA_IMAGE)):
+            self.assertEqual(compose[name]['image'], image)
+            template = find('Deployment', name)['spec']['template']
+            self.assertEqual(template['metadata']['labels']['role'], 'other')
+            self.assertEqual(len(template['spec']['containers']), 1)
+            container = template['spec']['containers'][0]
+            self.assertEqual(container['image'], image)
+            # verify-platform.py class "other"
+            self.assertEqual((container['resources']['requests']['memory'], container['resources']['limits']['memory']), ('128Mi', '256Mi'))
+            self.assertEqual(find('Deployment', name)['spec']['strategy'], {'type': 'Recreate'})
+        self.assertNotIn('type', find('Service', 'prometheus')['spec'])
+        self.assertEqual(find('Service', 'grafana')['spec']['ports'][0]['nodePort'], 30006)
+        headless = find('Service', 'bnpb-aggregator-pods')['spec']
+        self.assertEqual((headless['clusterIP'], headless['selector']), ('None', {'app': 'bnpb-aggregator'}))
+        scrape = yaml.safe_load(find('ConfigMap', 'prometheus-scrape')['data']['prometheus.yml'])
+        jobs = {job['job_name']: job for job in scrape['scrape_configs']}
+        self.assertEqual(jobs['bnpb-aggregator']['dns_sd_configs'][0]['names'], ['bnpb-aggregator-pods'])
+        targets = [t.split(':') for t in jobs['applications']['static_configs'][0]['targets']]
+        self.assertIn(['fire-processor', '3000'], targets)
+        policies = {x['metadata']['name']: x['spec'] for x in objects if x['kind'] == 'NetworkPolicy'}
+        # every scrape target admits Prometheus and Prometheus may reach it
+        for app, port in [('bnpb-aggregator', '3000')] + targets:
+            port = int(port)
+            self.assertTrue(any(('from' not in rule or {'podSelector': {'matchLabels': {'app': 'prometheus'}}} in rule['from'])
+                                and ('ports' not in rule or {'protocol': 'TCP', 'port': port} in rule['ports'])
+                                for rule in policies[app]['ingress']), app)
+            self.assertTrue(any({'podSelector': {'matchLabels': {'app': app}}} in rule['to'] and {'protocol': 'TCP', 'port': port} in rule['ports']
+                                for rule in policies['prometheus']['egress']), app)
+        self.assertIn({'podSelector': {'matchLabels': {'app': 'grafana'}}}, policies['prometheus']['ingress'][0]['from'])
+        dashboard = (ROOT / 'scripts/observability/grafana/dashboards/bnpb.json').read_text()
+        self.assertEqual(find('ConfigMap', 'grafana-dashboards')['data']['bnpb.json'], dashboard)
+        datasource = yaml.safe_load(find('ConfigMap', 'grafana-provisioning')['data']['datasources.yml'])['datasources'][0]
+        self.assertIn('"uid": "' + datasource['uid'] + '"', dashboard)
+        self.assertEqual(datasource['url'], 'http://prometheus:9090')
+        self.assertEqual(len(find('Secret', 'grafana-secret')['stringData']['GF_SECURITY_ADMIN_PASSWORD']), 32)
+
+    def test_observability_can_be_disabled(self):
+        self.config['observability'] = False
+        rendered = self.render(self.config)
+        self.assertEqual(rendered['observability.json'], [])
+        names = {x['metadata']['name'] for items in rendered.values() for x in items}
+        self.assertFalse(names & {'prometheus', 'grafana', 'prometheus-scrape', 'grafana-secret', 'bnpb-aggregator-pods'})
+        bmkg = next(x for x in rendered['policies.json'] if x['metadata']['name'] == 'bmkg')
+        self.assertEqual(bmkg['spec']['ingress'], r.peers(['bnpb-aggregator'], 8081))
+
+    def test_observability_config_is_validated(self):
+        self.config['observability'] = 'yes'
+        with self.assertRaisesRegex(ValueError, 'observability'): r.observability_enabled(self.config)
+        for port in (30003, 29999, '30006'):
+            self.config['grafanaNodePort'] = port
+            with self.assertRaisesRegex(ValueError, 'grafanaNodePort'): r.grafana_node_port(self.config)
+        # configs written before Prometheus/Grafana still render, with the "other" class
+        del self.config['resources']['prometheus']
+        self.assertEqual(r.observability_resource(self.config, 'prometheus'), r.OTHER_CLASS)
+        self.config['resources']['grafana']['limits']['memory'] = '1Gi'
+        with self.assertRaisesRegex(ValueError, 'Appendix B'): r.observability_resource(self.config, 'grafana')
 
     def assert_orang_c(self, objects, workloads):
         def pod(name):

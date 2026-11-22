@@ -40,7 +40,7 @@ python3 scripts/kubernetes/test-manifests.py 2>&1 | tee "$EVIDENCE/manifests.log
 node --check scripts/kubernetes/verify-audit.mjs
 ```
 
-Expected: Python/Bash/JavaScript dapat diparse; sembilan tes manifest lulus. Suite menguji namespace/context wajib, overlap kelompok shard, memory Lampiran B, node cordoned, kernel bersama, storage nonlokal, render seluruh stack, Secret, imagePullSecrets dan determinisme versi Job. Tes ini tidak membuat resource cluster atau membuka Docker daemon; ia memakai `docker compose config`, OpenSSL dan PyYAML.
+Expected: Python/Bash/JavaScript dapat diparse; 13 tes manifest lulus. Suite menguji namespace/context wajib, overlap kelompok shard, memory Lampiran B, node cordoned, kernel bersama, storage nonlokal, render seluruh stack, Secret, imagePullSecrets, determinisme versi Job, serta Prometheus/Grafana (image sama dengan Compose, kelas memori, NetworkPolicy scrape, mode `"observability": false`). Tes ini tidak membuat resource cluster atau membuka Docker daemon; ia memakai `docker compose config`, OpenSSL dan PyYAML.
 
 Untuk pemeriksaan schema Kubernetes, render ke direktori privat dengan input deployment yang valid, lalu jalankan dry-run pada context development yang sudah tersedia:
 
@@ -246,7 +246,9 @@ Seluruh aplikasi berada dalam namespace `$NS`; Tester Agent berada pada namespac
 | field-report-processor | image repo; 3000 (tanpa NodePort) | Kafka `field-reports`, Aggregator API + Secret internal key; tidak boleh ke MongoDB (aturan 5) | /health/live, /health/ready | consumer; 128Mi/256Mi |
 | fire-processor | image repo; 3000 (tanpa NodePort) | Kafka/Aggregator API (disiapkan; consumer `satellite.raw` menunggu CP 3.4/3.5) | /health/live, /health/ready | broker (pemroses stream); 512Mi/1Gi |
 | bootstrap/migration/topic Jobs | Mongo/Aggregator/Kafka image | Secret dan ConfigMap sesuai pemilik; tanpa persistent data sendiri | Job Complete | other; 128Mi/256Mi |
-| observabilitas lengkap | belum tersedia | lihat gap audit | belum tersedia | belum memenuhi instruksi |
+| Prometheus | prom/prometheus:v3.16.0; 9090 (ClusterIP, tanpa NodePort) | ConfigMap `prometheus-scrape` (scrape 5 s; Aggregator lewat headless `bnpb-aggregator-pods`), `emptyDir` retensi 3 hari; `"observability": false` mematikan | /-/ready | other; 128Mi/256Mi |
+| Grafana | grafana/grafana:13.3.1; 3000 (NodePort 30006) | ConfigMap provisioning + dashboard `bnpb.json`, Secret `grafana-secret` (password admin diturunkan dari credential file), `emptyDir` | /api/health | other; 128Mi/256Mi |
+| tracing (OTel collector, Tempo) | belum tersedia di K8s (hanya Compose) | lihat gap audit | belum tersedia | belum memenuhi instruksi |
 
 Mongos bukan salinan data dan tidak dihitung sebagai store fisik. Tidak ada sidecar aplikasi pada renderer. Semua konfigurasi nonrahasia masuk ConfigMap, password/key/token/URI masuk Secret. Private registry credential dikelola lewat imagePullSecret. CPU opsional; jika menambah sidecar, hitung ulang anggaran **seluruh Pod**.
 
