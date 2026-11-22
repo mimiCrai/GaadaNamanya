@@ -39,12 +39,13 @@ export interface HazardEventUpsertResult {
     superseded?: boolean;
 }
 
-/**
- * PERLU DIKONFIRMASI KE A/B: `version` is an internal field of hazard_events (ordering guard, review #3).
- * It is excluded from every read of this repository and never enters outbox payloads or audit items.
- */
 type StoredHazardEvent = HazardEvent & { version?: string };
 const HIDE_INTERNAL = { _id: 0, version: 0 } as const;
+
+/** hazard_id = uuidv5([source, source_ref_id]): reprocessing the same data yields the same id. */
+export function canonicalHazardId(source: HazardSource, sourceRefId: string): string {
+    return uuidv5(JSON.stringify([source, sourceRefId]), uuidv5.URL);
+}
 
 /** True when the incoming write is older than what is stored (both versioned). */
 export function isSupersededVersion(stored: string | undefined, incoming: string | undefined): boolean {
@@ -272,7 +273,7 @@ export class HazardEventRepository implements IHazardEventRepository {
     }
 
     private canonicalId(source: HazardSource, sourceRefId: string): string {
-        return uuidv5(JSON.stringify([source, sourceRefId]), uuidv5.URL);
+        return canonicalHazardId(source, sourceRefId);
     }
 
     private hasSameContent(existing: HazardEvent, input: UpsertHazardEventInput): boolean {

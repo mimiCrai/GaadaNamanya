@@ -19,6 +19,8 @@ export interface IDlqGateway {
     list(query: DlqListQuery, correlationId: string): Promise<unknown>;
     detail(messageId: string, correlationId: string): Promise<unknown>;
     raw(messageId: string, correlationId: string): Promise<DlqRawPayload>;
+    replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown>;
+    satelliteSummary(correlationId: string): Promise<unknown>;
 }
 
 const RAW_HEADERS = ['content-type', 'content-length', 'x-payload-sha256', 'x-original-content-type'];
@@ -47,7 +49,26 @@ export class DlqGateway implements IDlqGateway {
         return { body: response.body, headers };
     }
 
-    private async request(path: string, correlationId: string, query: object = {}): Promise<Response> {
+    // D-37: forwarded as-is; the Aggregator validates the filter
+    async replay(filter: Record<string, unknown>, correlationId: string): Promise<unknown> {
+        // a batch of CAS requeues: own, longer budget than single reads (504 seen at 5 s on a loaded host)
+        const response = await this.request('/internal/dlq/replay', correlationId, {}, filter, env.DLQ_REPLAY_TIMEOUT_MS);
+        return response.json();
+    }
+
+    // P4 #2: fire processor counters (single, low, late, fires) for Internal Ops only (pattern D-01)
+    async satelliteSummary(correlationId: string): Promise<unknown> {
+        const response = await this.request('/internal/satellite/summary', correlationId);
+        return response.json();
+    }
+
+    private async request(
+        path: string,
+        correlationId: string,
+        query: object = {},
+        jsonBody?: object,
+        timeoutMs: number = env.BNPB_GATEWAY_TIMEOUT_MS
+    ): Promise<Response> {
         const url = new URL(path, `${env.BNPB_GATEWAY_BASE_URL}/`);
         for (const [name, value] of Object.entries(query)) {
             if (typeof value === 'string') url.searchParams.set(name, value);
@@ -56,8 +77,14 @@ export class DlqGateway implements IDlqGateway {
         let response: Response;
         try {
             response = await fetch(url, {
-                headers: { 'X-BNPB-Internal-Key': env.BNPB_INTERNAL_API_KEY, 'X-Correlation-ID': correlationId },
-                signal: AbortSignal.timeout(env.BNPB_GATEWAY_TIMEOUT_MS),
+                method: jsonBody ? 'POST' : 'GET',
+                headers: {
+                    'X-BNPB-Internal-Key': env.BNPB_INTERNAL_API_KEY,
+                    'X-Correlation-ID': correlationId,
+                    ...(jsonBody ? { 'Content-Type': 'application/json' } : {}),
+                },
+                ...(jsonBody ? { body: JSON.stringify(jsonBody) } : {}),
+                signal: AbortSignal.timeout(timeoutMs),
             });
         } catch (error) {
             const timedOut = (error as { name?: unknown } | null)?.name === 'TimeoutError';

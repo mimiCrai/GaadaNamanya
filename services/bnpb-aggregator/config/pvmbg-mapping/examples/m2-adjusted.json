@@ -1,0 +1,9 @@
+{
+    "label": "m2-adjusted",
+    "aliases": { "alert_level": ["level"] },
+    "coercions": {
+        "alert_level": { "from": "number", "table": { "0": "Normal", "1": "Waspada", "2": "Siaga", "3": "Awas" } },
+        "eruption_count_24h": { "from": "string", "to": "integer" }
+    },
+    "required": ["report_id", "volcano_id", "alert_level", "ash_column_height_m", "reported_at"]
+}

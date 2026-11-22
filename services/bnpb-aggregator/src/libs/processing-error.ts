@@ -6,6 +6,8 @@ export const RETRYABLE_CATEGORIES = [
     'upstream_unavailable',
     'store_unavailable',
     'unexpected',
+    // D-44: a skipped PVMBG window can be re-polled once the source serves a valid body
+    'window_skipped',
 ] as const;
 
 export const PERMANENT_CATEGORIES = [
@@ -17,6 +19,7 @@ export const PERMANENT_CATEGORIES = [
     'validation_failed',
     'handler_missing',
     'retry_exhausted',
+    'conflict',
 ] as const;
 
 export type RetryableCategory = (typeof RETRYABLE_CATEGORIES)[number];

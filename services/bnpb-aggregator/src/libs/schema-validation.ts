@@ -41,7 +41,7 @@ function mapIssue(issue: ZodIssue, record: Record<string, unknown>, unknownKeys:
         }
         return {
             category: 'schema_incompatible',
-            detail: `field '${path}' berubah dari ${issue.expected} menjadi ${issue.received}`,
+            detail: `field '${path}' berubah dari ${describeExpected(issue.expected)} menjadi ${issue.received}`,
         };
     }
     if (issue.code === 'invalid_enum_value') {
@@ -68,6 +68,12 @@ function sameKind(value: unknown, expected: string): boolean {
     // zod reports a missing enum as e.g. "'Normal' | 'Waspada'": a string-valued field.
     if (expected.startsWith("'")) return typeof value === 'string';
     return describe(value) === expected;
+}
+
+// zod writes an enum as "'A' | 'B'"; the reason says "string (enum A|B)"
+function describeExpected(expected: string): string {
+    if (!expected.startsWith("'")) return expected;
+    return `string (enum ${expected.replace(/'/g, '').split(' | ').join('|')})`;
 }
 
 function describe(value: unknown): string {

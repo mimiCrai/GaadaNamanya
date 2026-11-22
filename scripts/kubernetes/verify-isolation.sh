@@ -28,3 +28,11 @@ for store in canonical-config canonical-shard-a canonical-shard-b; do
     check bnpb-auth "$ip" 27017 deny
   done
 done
+for owner in bnpb-client-api field-report-processor fire-processor; do
+  check "$owner" kafka 29092 allow
+done
+check bnpb-auth kafka 29092 deny
+for app in field-report-processor fire-processor; do
+  check "$app" bnpb-aggregator 3000 allow
+  check "$app" canonical-store 27017 deny
+done

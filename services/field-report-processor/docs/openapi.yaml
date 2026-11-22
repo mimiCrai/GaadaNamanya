@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+    title: BNPB Field Report Processor
+    description: Consumes the field-reports topic and stores every report exactly once through the Aggregator (P3 #6, D-39)
+    version: 1.0.0
+
+servers:
+    - url: http://localhost:3000
+      description: Local development server
+
+paths:
+    /health:
+        get:
+            summary: Health check
+            description: Healthy while the consumer is a member of its Kafka group (the Aggregator is not checked)
+            operationId: getHealth
+            tags:
+                - Health
+            responses:
+                '200':
+                    description: Service is healthy
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/HealthResponse'
+                '503':
+                    description: Service is unhealthy
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/HealthResponse'
+
+    /health/live:
+        get:
+            summary: Liveness probe
+            description: Returns OK if the service is running
+            operationId: getLiveness
+            tags:
+                - Health
+            responses:
+                '200':
+                    description: Service is alive
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: string
+                                        enum: [ok]
+
+    /health/ready:
+        get:
+            summary: Readiness probe
+            description: Returns OK once the consumer has joined its Kafka group
+            operationId: getReadiness
+            tags:
+                - Health
+            responses:
+                '200':
+                    description: Service is ready
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    status:
+                                        type: string
+                                        enum: [ok, error]
+                '503':
+                    description: Service is not ready
+
+    /metrics:
+        get:
+            summary: Prometheus metrics
+            description: lag_messages, processed_total, duplicate_total, dlq_total, store_errors_total, store_latency_seconds
+            operationId: getMetrics
+            tags:
+                - Observability
+            responses:
+                '200':
+                    description: Prometheus text format
+
+components:
+    schemas:
+        HealthResponse:
+            type: object
+            properties:
+                status:
+                    type: string
+                    enum: [healthy, unhealthy]
+                timestamp:
+                    type: string
+                    format: date-time
+                services:
+                    type: object
+                    properties:
+                        kafka:
+                            type: string
+                            enum: [consuming, not_consuming]

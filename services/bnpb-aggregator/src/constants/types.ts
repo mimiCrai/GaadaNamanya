@@ -36,8 +36,15 @@ export const TYPES = {
     IUnprocessedHandlerRegistry: Symbol.for('IUnprocessedHandlerRegistry'),
     IUnprocessedRetryService: Symbol.for('IUnprocessedRetryService'),
     IUnprocessedQueryService: Symbol.for('IUnprocessedQueryService'),
+    IPvmbgBodyFailureService: Symbol.for('IPvmbgBodyFailureService'),
+    IPvmbgMappingService: Symbol.for('IPvmbgMappingService'),
+    IUnprocessedReplayService: Symbol.for('IUnprocessedReplayService'),
+    IFieldReportRepository: Symbol.for('IFieldReportRepository'),
 
     ISatelliteFeedClient: Symbol.for('ISatelliteFeedClient'),
     ISatelliteLogWriter: Symbol.for('ISatelliteLogWriter'),
     ISatelliteIngestService: Symbol.for('ISatelliteIngestService'),
+
+    IHazardWriteRepository: Symbol.for('IHazardWriteRepository'),
+    IFireProcessorRepository: Symbol.for('IFireProcessorRepository'),
 };

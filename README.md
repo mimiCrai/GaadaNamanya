@@ -32,6 +32,8 @@ Berikut adalah daftar services yang dijalankan oleh sistem. Sebagai catatan, And
 | BNPB Auth | `services/bnpb-auth` | `http://localhost:3001/` |
 | Dashboard Consumer | `services/dashboard-consumer` | `http://localhost:3004/` |
 | Notification Consumer | `services/notification-consumer` | `http://localhost:3005/` |
+| Field Report Processor | `services/field-report-processor` | `http://localhost:3007/health` |
+| Fire Processor | `services/fire-processor` | `http://localhost:3008/health` |
 
 ## Deployment demo Kubernetes
 
@@ -337,6 +339,21 @@ Hasil yang diharapkan: register mengembalikan `201`, seed mencetak `Admin accoun
 
 Catatan: Anda dapat melacak satu alur berdasarkan correlation ID-nya (dikembalikan sebagai response header `X-Correlation-ID`): `docker compose logs <svc> | grep <correlation_id>`.
 
+## M2 P3 — Schema evolution, DLQ, dan laporan lapangan
+
+Kebijakan perubahan skema PVMBG dideklarasikan di [SCHEMA_POLICY](docs/SCHEMA_POLICY.md); keputusan di [DECISIONS](docs/orang-c/DECISIONS.md) (D-34 s.d. D-41) dan bukti di [EVIDENCE](docs/orang-c/EVIDENCE.md).
+
+- Mock PVMBG: `POST /admin/schema-version {"mode":"v1|v2_confidence|rename_field|type_change|missing_required"}` (body M1 `{"version":1|2}` tetap berlaku) dan `POST /admin/malformed {"kind":"truncated|deep_nesting|invalid_utf8|oversized","count":1}`.
+- Aggregator: mapping PVMBG dibaca dari direktori `BNPB_AGGREGATOR_PVMBG_MAPPING_DIR` (default `services/bnpb-aggregator/config/pvmbg-mapping`, di-mount read-only) dan dimuat ulang saat hash isinya berubah; status per replica di `GET /internal/pvmbg/mapping`. Pesan terparkir diproses ulang lewat `POST /internal-ops/dlq/replay` di Client API (role `internal`).
+- Laporan lapangan: `POST /field-reports` di Client API (role `lapangan`/`internal`) membalas `202` setelah Kafka (topic `field-reports`) meng-ack; `field-report-processor` menyimpannya lewat Aggregator. Status: `GET /field-reports/{id}`.
+
+```bash
+bash scripts/dlq/p3-malformed-window-test.sh          # P3 #3 + D-34, PASS/FAIL
+bash scripts/dlq/p3-schema-demo.sh [--no-pause]       # demo P3 #1-#5 → test-results/p3-schema/<waktu>/
+bash scripts/field-reports/p3-field-report-proof.sh   # bukti P3 #6 → test-results/p3-field-report/<waktu>/
+```
+Ketiga skrip memakai project Compose terisolasi dan `.env.example`, sehingga stack utama dan `.env` tidak disentuh. Pengguna demo dibuat oleh `scripts/seed-users.sh` (password `password`).
+
 ## Daftar Variabel Konfigurasi
 
 Berikut adalah daftar variabel konfigurasi yang digunakan pada file `.env`. Nilai default untuk setiap variabel dapat dilihat pada `.env.example`.
@@ -408,6 +425,36 @@ BNPB_AGGREGATOR_POLL_INTERVAL_MS=
 BNPB_AGGREGATOR_POLL_OVERLAP_MS=
 BNPB_AGGREGATOR_OUTBOX_RELAY_INTERVAL_MS=
 BNPB_AGGREGATOR_OUTBOX_BATCH_SIZE=
+BNPB_AGGREGATOR_DLQ_REPLAY_MAX=
+BNPB_AGGREGATOR_PVMBG_BODY_FAILURE_HOLD_POLLS=
+BNPB_AGGREGATOR_PVMBG_MAPPING_DIR=
+BNPB_AGGREGATOR_PVMBG_MAPPING_PATH=
+BNPB_AGGREGATOR_PVMBG_MAPPING_POLL_MS=
+
+# Field reports (Client API → Kafka)
+FIELD_REPORT_TOPIC=
+BNPB_CLIENT_API_KAFKA_BROKERS=
+BNPB_CLIENT_API_KAFKA_CLIENT_ID=
+BNPB_CLIENT_API_FIELD_REPORT_PUBLISH_TIMEOUT_MS=
+BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES=
+BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS=
+
+# Field Report Processor
+FIELD_REPORT_PROCESSOR_HOST_PORT=
+FIELD_REPORT_PROCESSOR_NODE_ENV=
+FIELD_REPORT_PROCESSOR_KAFKA_BROKERS=
+FIELD_REPORT_PROCESSOR_KAFKA_CLIENT_ID=
+FIELD_REPORT_PROCESSOR_KAFKA_GROUP_ID=
+FIELD_REPORT_PROCESSOR_LAG_POLL_INTERVAL_MS=
+FIELD_REPORT_PROCESSOR_GATEWAY_TIMEOUT_MS=
+FIELD_REPORT_PROCESSOR_MAX_MESSAGE_BYTES=
+FIELD_REPORT_PROCESSOR_MAX_PERMANENT_ATTEMPTS=
+FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS=
+FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS=
+
+# Fire Processor
+FIRE_PROCESSOR_HOST_PORT=
+FIRE_PROCESSOR_NODE_ENV=
 
 # Dashboard Consumer
 DASHBOARD_STORE_DB_USER=

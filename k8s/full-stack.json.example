@@ -124,6 +124,22 @@
       "limits": {
         "memory": "256Mi"
       }
+    },
+    "field-report-processor": {
+      "requests": {
+        "memory": "128Mi"
+      },
+      "limits": {
+        "memory": "256Mi"
+      }
+    },
+    "fire-processor": {
+      "requests": {
+        "memory": "512Mi"
+      },
+      "limits": {
+        "memory": "1Gi"
+      }
     }
   },
   "context": "bnpb-demo",

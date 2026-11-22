@@ -1,26 +1,28 @@
 import { Request, Response } from 'express';
 import { inject } from 'inversify';
-import { controller, httpPost, request, response } from 'inversify-express-utils';
+import { controller, httpGet, httpPost, request, response } from 'inversify-express-utils';
 import { ZodType, ZodTypeDef } from 'zod';
 import { TYPES } from '../constants/types';
 import { sendError } from '../libs/http-error';
+import { MalformedService } from '../services/malformed.service';
 import { OutageService } from '../services/outage.service';
 import { SchemaService } from '../services/schema.service';
-import { OutageBodySchema, SchemaVersionBodySchema } from '../types/contract';
+import { MalformedBodySchema, OutageBodySchema, SchemaChangeBodySchema } from '../types/contract';
 
 // operator controls, protected by the same client token as the data endpoint
 @controller('/admin', TYPES.DataAuthMiddleware)
 export class AdminController {
     constructor(
         @inject(TYPES.SchemaService) private readonly schema: SchemaService,
-        @inject(TYPES.OutageService) private readonly outage: OutageService
+        @inject(TYPES.OutageService) private readonly outage: OutageService,
+        @inject(TYPES.MalformedService) private readonly malformed: MalformedService
     ) {}
 
     @httpPost('/schema-version')
     setSchemaVersion(@request() req: Request, @response() res: Response) {
-        const body = parseBody(SchemaVersionBodySchema, req, res);
+        const body = parseBody(SchemaChangeBodySchema, req, res);
         if (!body) return;
-        return res.json(this.schema.set(body.version));
+        return res.json('version' in body ? this.schema.set(body.version) : this.schema.setMode(body.mode));
     }
 
     @httpPost('/outage')
@@ -28,6 +30,19 @@ export class AdminController {
         const body = parseBody(OutageBodySchema, req, res);
         if (!body) return;
         return res.json(this.outage.set(body.enabled, body.mode));
+    }
+
+    // M2 (P3 #3): the next n data responses are malformed
+    @httpPost('/malformed')
+    queueMalformed(@request() req: Request, @response() res: Response) {
+        const body = parseBody(MalformedBodySchema, req, res);
+        if (!body) return;
+        return res.json(this.malformed.enqueue(body.kind, body.count, body.bytes));
+    }
+
+    @httpGet('/malformed')
+    malformedState(@response() res: Response) {
+        return res.json(this.malformed.state());
     }
 }
 

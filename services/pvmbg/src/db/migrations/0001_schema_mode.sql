@@ -1,0 +1,1 @@
+ALTER TABLE "volcanic_reports" ADD COLUMN "schema_mode" varchar(32);

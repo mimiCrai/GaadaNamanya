@@ -13,6 +13,8 @@ const LAST_OFFSET = Number(process.env.STUB_LAST_OFFSET ?? 1200);
 const INTERVAL_MS = Number(process.env.STUB_INTERVAL_MS ?? 40);
 const HEARTBEAT_EVERY = Number(process.env.STUB_HEARTBEAT_EVERY ?? 17);
 const IDLE_COMMENT_MS = Number(process.env.STUB_IDLE_COMMENT_MS ?? 5_000);
+// spread of detections in degrees; small values cluster them into fires (crash-equivalence test)
+const SPREAD_DEG = Number(process.env.STUB_SPREAD_DEG ?? 2);
 const MALFORMED = new Set(
     (process.env.STUB_MALFORMED_OFFSETS ?? '133,377')
         .split(',')
@@ -73,8 +75,8 @@ function dataOf(offset) {
     const acqTime = acq.getUTCHours() * 100 + acq.getUTCMinutes();
     const satellite = ['N', 'N20', 'N21'][Math.floor(random() * 3)];
     const confidence = ['l', 'n', 'h'][Math.floor(random() * 3)];
-    const lat = (-3 + random() * 2).toFixed(5);
-    const lon = (113 + random() * 2).toFixed(5);
+    const lat = (-3 + random() * SPREAD_DEG).toFixed(5);
+    const lon = (113 + random() * SPREAD_DEG).toFixed(5);
     const frp = (random() * 40).toFixed(2);
     const ti4 = (300 + Math.floor(random() * 70)).toFixed(1);
     const detection = `{"version":"2.0NRT","scan":0.39,"acq_date":"${acqDate}","acq_time":${acqTime},"bright_ti4":${ti4},"bright_ti5":291.91,"confidence":"${confidence}","daynight":"D","frp":${frp},"instrument":"VIIRS","latitude":${lat},"longitude":${lon},"satellite":"${satellite}","track":0.37}`;

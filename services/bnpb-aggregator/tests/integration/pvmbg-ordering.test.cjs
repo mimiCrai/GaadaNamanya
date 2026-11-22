@@ -263,8 +263,10 @@ test('PVMBG ordering per source_ref_id: live poll vs DLQ replay (review #3)', { 
                     await replayDue(); // an entry that lost a write conflict is retried
                     const hazard = await hazardOf(id);
                     assert.equal(hazard.severity, 'AWAS', `${id}: newest report must win`);
-                    const severities = (await outboxOf(id)).map((e) => e.payload.hazard.severity);
-                    assert.equal(severities.at(-1), 'AWAS', `${id}: last enqueued event is the newest report`);
+                    const events = await outboxOf(id);
+                    const severities = events.map((e) => e.payload.hazard.severity);
+                    const trace = events.map((e) => `${e.eventType}:${e.payload.hazard.severity}@${e.createdAt.toISOString()}`).join(', ');
+                    assert.equal(severities.at(-1), 'AWAS', `${id}: last enqueued event is the newest report (${trace})`);
                     assert.ok(!severities.slice(severities.indexOf('AWAS')).includes('NORMAL'), `${id}: ${severities}`);
                 }
             }

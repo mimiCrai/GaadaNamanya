@@ -17,8 +17,12 @@ export interface SourceSyncState {
     sourceStream: SourceStream;
     status: SourceSyncStatus;
     lastSuccessfulPollAt: Date | null;
+    // D-44: poll cursor; moves with every success and with a skipped window, which leaves lastSuccessfulPollAt alone
+    checkpointAt?: Date | null;
     lastAttemptAt: Date | null;
     staleSince: Date | null;
     lastError: string | null;
     consecutiveFailures: number;
+    // D-34: whole-body decode failures only; reset by a successful poll (PERLU DIKONFIRMASI KE A/B)
+    consecutiveBodyFailures?: number;
 }

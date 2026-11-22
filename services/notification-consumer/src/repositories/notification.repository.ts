@@ -28,6 +28,11 @@ export class NotificationRepository implements INotificationRepository {
                 return 'duplicate';
             }
 
+            // a removed fire (P4 merge/dissolve) is not a new alert
+            if (message.eventType === 'hazard.deleted') {
+                return 'ignored';
+            }
+
             if (message.hazard.severity !== 'SIAGA' && message.hazard.severity !== 'AWAS') {
                 return 'ignored';
             }

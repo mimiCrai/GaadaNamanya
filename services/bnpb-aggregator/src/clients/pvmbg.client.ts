@@ -35,6 +35,8 @@ export class PvmbgClient implements IPvmbgClient {
         if (options.since) {
             url.searchParams.set('since', options.since.toISOString());
         }
+        if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
+        if (options.afterId !== undefined) url.searchParams.set('after_id', options.afterId);
 
         const startedAt = Date.now();
         let statusCode: number | undefined;

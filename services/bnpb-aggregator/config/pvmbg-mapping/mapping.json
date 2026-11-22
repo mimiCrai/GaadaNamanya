@@ -1,0 +1,6 @@
+{
+    "label": "m1-contract",
+    "aliases": {},
+    "coercions": {},
+    "required": ["report_id", "volcano_id", "alert_level", "eruption_count_24h", "ash_column_height_m", "reported_at"]
+}

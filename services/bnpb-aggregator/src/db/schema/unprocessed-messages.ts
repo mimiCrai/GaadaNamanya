@@ -5,6 +5,10 @@ import type { ReceiveOrder } from '../../libs/receive-order';
 export const unprocessedMessages = 'unprocessed_messages';
 export const unprocessedPayloadBucket = 'unprocessed_payloads';
 
+// DLQ sources: every HazardSource plus field reports (Tahap 4, D-39)
+export const FIELD_REPORT_SOURCE = 'FIELD_REPORT';
+export const DLQ_SOURCES = ['BMKG', 'PVMBG', 'SATELIT', 'SENSOR_PANTAI', FIELD_REPORT_SOURCE] as const;
+
 /** recovered = replay applied; superseded = replay closed because a newer version was already stored */
 export type UnprocessedStatus = 'retrying' | 'parked' | 'recovered' | 'superseded';
 

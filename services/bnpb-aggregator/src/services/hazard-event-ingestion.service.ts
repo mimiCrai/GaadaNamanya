@@ -1,15 +1,13 @@
-import { inject, injectable } from 'inversify';
+import { inject, injectable, optional } from 'inversify';
 import { PVMBG_ENDPOINT, PVMBG_RECORD_KIND, PVMBG_RESPONSE_KIND, VolcanicReportBatch } from '../clients/pvmbg.client';
-import { PVMBG_VOLCANIC_FIELDS, volcanicReportSchema } from '../clients/pvmbg.schema';
 import { SeismicEvent, TsunamiWarning, VolcanicReport } from '../clients/source-client.types';
-import { findVolcanoLocation } from '../constants/volcano-locations';
 import { TYPES } from '../constants/types';
 import { HazardSeverity, HazardSource, HazardType } from '../db/schema/hazard-events';
 import { logger } from '../libs/logger';
-import { hazardWritesSupersededTotal } from '../libs/metrics';
+import { hazardWritesSupersededTotal, pvmbgMappingAliasConflictsTotal } from '../libs/metrics';
 import { classifyError, ProcessingError } from '../libs/processing-error';
 import { decodeJson, RawRecord, toRawRecords } from '../libs/safe-decode';
-import { validateRecord } from '../libs/schema-validation';
+import { BUILTIN_MAPPING, mapVolcanicReport } from '../libs/pvmbg-mapping';
 import { HazardEventUpsertResult, IHazardEventRepository } from '../repositories/hazard-event.repository';
 import { IPendingTsunamiWarningRepository } from '../repositories/pending-tsunami-warning.repository';
 import env from '../util/env';
@@ -17,11 +15,12 @@ import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
 import { IUnprocessedRecorder } from './unprocessed-recorder.service';
 import { IOrderingSequenceRepository } from '../repositories/ordering-sequence.repository';
 import { formatReceiveOrder, LEGACY_RECEIVE_ORDER, ReceiveOrder } from '../libs/receive-order';
+import { IPvmbgMappingService } from './pvmbg-mapping.service';
 
 export interface IHazardEventIngestionService {
     ingestSeismicEvents(events: SeismicEvent[], correlationId: string, lease: LeaseToken): Promise<void>;
-    ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void>;
-    ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void>;
+    ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<VolcanicBatchResult>;
+    ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<VolcanicBatchResult>;
     ingestTsunamiWarnings(warnings: TsunamiWarning[], correlationId: string, lease: LeaseToken): Promise<void>;
 
     reprocessVolcanicRecord(
@@ -36,6 +35,11 @@ export interface IHazardEventIngestionService {
         lease: LeaseToken,
         ordering: ReceiveOrder | null | undefined
     ): Promise<void>;
+}
+
+// bodyFailure: the whole response could not be decoded (stored as one DLQ entry); D-34 decides the checkpoint
+export interface VolcanicBatchResult {
+    bodyFailure: ProcessingError | null;
 }
 
 export interface VolcanicIngestResult {
@@ -62,11 +66,18 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         @inject(TYPES.IUnprocessedRecorder)
         private readonly unprocessed: IUnprocessedRecorder,
         @inject(TYPES.IOrderingSequenceRepository)
-        private readonly sequences: IOrderingSequenceRepository
+        private readonly sequences: IOrderingSequenceRepository,
+        @inject(TYPES.IPvmbgMappingService)
+        @optional()
+        private readonly mapping?: Pick<IPvmbgMappingService, 'active'>
     ) {}
 
-    async ingestVolcanicBatch(batch: VolcanicReportBatch, correlationId: string, lease: LeaseToken): Promise<void> {
-        if (!batch.failure && batch.records.length === 0) return;
+    async ingestVolcanicBatch(
+        batch: VolcanicReportBatch,
+        correlationId: string,
+        lease: LeaseToken
+    ): Promise<VolcanicBatchResult> {
+        if (!batch.failure && batch.records.length === 0) return { bodyFailure: null };
         // Failing to get the sequence fails the poll like a DLQ write failure: the checkpoint does not move.
         const seq = await this.sequences.next(PVMBG_RECEIVE_SEQUENCE);
         if (batch.failure) {
@@ -86,11 +97,16 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         for (const [index, record] of batch.records.entries()) {
             await this.ingestIsolated(record, batch.contentType, correlationId, lease, { seq, index });
         }
+        return { bodyFailure: batch.failure?.error ?? null };
     }
 
-    async ingestVolcanicReports(reports: VolcanicReport[], correlationId: string, lease: LeaseToken): Promise<void> {
+    async ingestVolcanicReports(
+        reports: VolcanicReport[],
+        correlationId: string,
+        lease: LeaseToken
+    ): Promise<VolcanicBatchResult> {
         const records = reports.map((report) => ({ raw: Buffer.from(JSON.stringify(report)), value: report }));
-        await this.ingestVolcanicBatch({ records, contentType: 'application/json' }, correlationId, lease);
+        return this.ingestVolcanicBatch({ records, contentType: 'application/json' }, correlationId, lease);
     }
 
     async reprocessVolcanicRecord(
@@ -149,15 +165,16 @@ export class HazardEventIngestionService implements IHazardEventIngestionService
         lease: LeaseToken,
         ordering: ReceiveOrder
     ): Promise<VolcanicIngestResult> {
-        const report = validateRecord(value, volcanicReportSchema, PVMBG_VOLCANIC_FIELDS);
-        const { report_id, volcano_id, alert_level, reported_at, ...attributes } = report;
-        const location = findVolcanoLocation(volcano_id);
-        if (!location) {
-            throw new ProcessingError(
-                'validation_failed',
-                `volcano_id '${volcano_id}' tidak ada di tabel referensi BNPB`
+        // mapping active now (poll or replay from DLQ bytes), D-36
+        const mapping = this.mapping?.active() ?? BUILTIN_MAPPING;
+        const { report, attributes, location } = mapVolcanicReport(value, mapping, (field, alias) => {
+            pvmbgMappingAliasConflictsTotal.inc({ field });
+            logger.warn(
+                { field, alias, mappingHash: mapping.hash, correlationId },
+                'PVMBG record carries a field and its alias; the canonical field wins'
             );
-        }
+        });
+        const { report_id, alert_level, reported_at } = report;
         const occurredAt = new Date(reported_at);
         const result = await this.hazardEventRepository.upsertAndEnqueue({
             source: HazardSource.Pvmbg,

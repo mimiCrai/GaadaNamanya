@@ -9,6 +9,8 @@ import { HazardGateway, IHazardGateway } from '../services/hazard-gateway.servic
 import { IJwtAuthenticator, JwtAuthenticator } from '../services/jwt-authenticator.service';
 import { DlqGateway, IDlqGateway } from '../services/dlq-gateway.service';
 import { AdmissionControlService, IAdmissionControlService } from '../services/admission-control.service';
+import { FieldReportPublisher, IFieldReportPublisher } from '../services/field-report-publisher.service';
+import { FieldReportGateway, IFieldReportGateway } from '../services/field-report-gateway.service';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     // Services
@@ -17,4 +19,6 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<IHazardGateway>(TYPES.HazardGateway).to(HazardGateway).inSingletonScope();
     bind<IDlqGateway>(TYPES.DlqGateway).to(DlqGateway).inSingletonScope();
     bind<IAdmissionControlService>(TYPES.IAdmissionControlService).to(AdmissionControlService).inSingletonScope();
+    bind<IFieldReportPublisher>(TYPES.FieldReportPublisher).to(FieldReportPublisher).inSingletonScope();
+    bind<IFieldReportGateway>(TYPES.FieldReportGateway).to(FieldReportGateway).inSingletonScope();
 });

@@ -48,6 +48,24 @@ paths:
                 '503':
                     description: Service is not ready
 
+    /metrics:
+        get:
+            summary: Prometheus metrics (bnpb_fire_processor_*)
+            operationId: getMetrics
+            tags: [Observability]
+            responses:
+                '200':
+                    description: Prometheus text exposition
+
+    /status:
+        get:
+            summary: Engine counters and runtime of this instance (stored copy at Aggregator GET /internal/satellite/summary)
+            operationId: getStatus
+            tags: [Observability]
+            responses:
+                '200':
+                    description: Engine stats
+
 components:
     schemas:
         HealthResponse:

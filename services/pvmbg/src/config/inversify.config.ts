@@ -12,6 +12,7 @@ import { IReportRepository, ReportRepository } from '../repositories/report.repo
 // Services
 import { GeneratorService } from '../services/generator.service';
 import { HealthService } from '../services/health.service';
+import { MalformedService } from '../services/malformed.service';
 import { OutageService } from '../services/outage.service';
 import { SchemaService } from '../services/schema.service';
 
@@ -36,6 +37,7 @@ export function createBindings(config: AppConfig, db: Database, logger: Logger, 
         bind<GeneratorService>(TYPES.GeneratorService).to(GeneratorService).inSingletonScope();
         bind<SchemaService>(TYPES.SchemaService).to(SchemaService).inSingletonScope();
         bind<OutageService>(TYPES.OutageService).to(OutageService).inSingletonScope();
+        bind<MalformedService>(TYPES.MalformedService).to(MalformedService).inSingletonScope();
         bind<HealthService>(TYPES.HealthService).to(HealthService).inSingletonScope();
 
         // Middlewares

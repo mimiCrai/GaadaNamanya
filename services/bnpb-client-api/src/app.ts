@@ -21,7 +21,13 @@ import './types/locals';
 import './controllers/health.controller';
 import './controllers/hazard.controller';
 import './controllers/internal-ops-dlq.controller';
+import './controllers/internal-ops-satellite.controller';
+import './controllers/field-report.controller';
 import { ApiError } from './errors/api-error';
+import { TYPES } from './constants/types';
+import { fieldReportIntake } from './middlewares/field-report-intake';
+import { IFieldReportPublisher } from './services/field-report-publisher.service';
+import { IJwtAuthenticator } from './services/jwt-authenticator.service';
 
 /**
  * Create and configure the Express application
@@ -37,11 +43,8 @@ export async function createApp(existingContainer?: Container): Promise<express.
     app.disable('x-powered-by');
     installHttpMetrics(app);
 
-    // Middleware
+    // Middleware (correlation id first so the field report intake can log with it)
     app.use(compression());
-    app.use(bodyParser.json({ limit: '5mb' }));
-    app.use(bodyParser.urlencoded({ extended: true }));
-
     app.use((req: Request, res: Response, next: NextFunction) => {
         const incoming = req.header('x-correlation-id');
         const correlationId = readCorrelationId(incoming);
@@ -51,6 +54,11 @@ export async function createApp(existingContainer?: Container): Promise<express.
         logger.info({ method: req.method, path: req.path, correlationId }, 'Incoming request');
         next();
     });
+    // P3 #6: auth → 413 → parse for POST /field-reports, before the global 5 MB parser
+    app.use('/field-reports', fieldReportIntake(container.get<IJwtAuthenticator>(TYPES.JwtAuthenticator)));
+    app.use(bodyParser.json({ limit: '5mb' }));
+    app.use(bodyParser.urlencoded({ extended: true }));
+    container.get<IFieldReportPublisher>(TYPES.FieldReportPublisher).start();
 
     // OpenAPI validation
     app.use(

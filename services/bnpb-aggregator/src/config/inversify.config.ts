@@ -41,9 +41,15 @@ import { IOrderingSequenceRepository, OrderingSequenceRepository } from '../repo
 import { IUnprocessedHandlerRegistry, UnprocessedHandlerRegistry } from '../services/unprocessed-handler.registry';
 import { IUnprocessedRetryService, UnprocessedRetryService } from '../services/unprocessed-retry.service';
 import { IUnprocessedQueryService, UnprocessedQueryService } from '../services/unprocessed-query.service';
+import { IPvmbgBodyFailureService, PvmbgBodyFailureService } from '../services/pvmbg-body-failure.service';
+import { IPvmbgMappingService, PvmbgMappingService } from '../services/pvmbg-mapping.service';
+import { IUnprocessedReplayService, UnprocessedReplayService } from '../services/unprocessed-replay.service';
+import { FieldReportRepository, IFieldReportRepository } from '../repositories/field-report.repository';
 import { ISatelliteFeedClient, SatelliteFeedClient } from '../clients/satellite.client';
 import { ISatelliteLogWriter, SatelliteLogWriter } from '../services/satellite-log-writer.service';
 import { ISatelliteIngestService, SatelliteIngestService } from '../services/satellite-ingest.service';
+import { HazardWriteRepository, IHazardWriteRepository } from '../repositories/hazard-write.repository';
+import { FireProcessorRepository, IFireProcessorRepository } from '../repositories/fire-processor.repository';
 
 export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) => {
     bind<IPayloadStore>(TYPES.IPayloadStore).to(PayloadStore).inSingletonScope();
@@ -59,6 +65,10 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
         .inSingletonScope();
     bind<IUnprocessedRetryService>(TYPES.IUnprocessedRetryService).to(UnprocessedRetryService).inSingletonScope();
     bind<IUnprocessedQueryService>(TYPES.IUnprocessedQueryService).to(UnprocessedQueryService).inSingletonScope();
+    bind<IPvmbgBodyFailureService>(TYPES.IPvmbgBodyFailureService).to(PvmbgBodyFailureService).inSingletonScope();
+    bind<IPvmbgMappingService>(TYPES.IPvmbgMappingService).to(PvmbgMappingService).inSingletonScope();
+    bind<IUnprocessedReplayService>(TYPES.IUnprocessedReplayService).to(UnprocessedReplayService).inSingletonScope();
+    bind<IFieldReportRepository>(TYPES.IFieldReportRepository).to(FieldReportRepository).inSingletonScope();
 
     bind(TYPES.Database).toConstantValue(db);
     bind<IBackgroundLeaseRepository>(TYPES.IBackgroundLeaseRepository).to(BackgroundLeaseRepository).inSingletonScope();
@@ -99,4 +109,6 @@ export const bindings = new AsyncContainerModule(async (bind: interfaces.Bind) =
     bind<ISatelliteFeedClient>(TYPES.ISatelliteFeedClient).to(SatelliteFeedClient).inSingletonScope();
     bind<ISatelliteLogWriter>(TYPES.ISatelliteLogWriter).to(SatelliteLogWriter).inSingletonScope();
     bind<ISatelliteIngestService>(TYPES.ISatelliteIngestService).to(SatelliteIngestService).inSingletonScope();
+    bind<IHazardWriteRepository>(TYPES.IHazardWriteRepository).to(HazardWriteRepository).inSingletonScope();
+    bind<IFireProcessorRepository>(TYPES.IFireProcessorRepository).to(FireProcessorRepository).inSingletonScope();
 });

@@ -26,6 +26,7 @@ paths:
             parameters:
                 - $ref: '#/components/parameters/CorrelationId'
                 - $ref: '#/components/parameters/Since'
+                - $ref: '#/components/parameters/AfterId'
                 - $ref: '#/components/parameters/Limit'
             responses:
                 '200':
@@ -58,20 +59,76 @@ paths:
                 content:
                     application/json:
                         schema:
-                            type: object
-                            additionalProperties: false
-                            required: [version]
-                            properties:
-                                version: { type: integer, enum: [1, 2] }
+                            description: M1 body {version} or M2 body {mode} (P3), never both
+                            oneOf:
+                                - type: object
+                                  additionalProperties: false
+                                  required: [version]
+                                  properties:
+                                      version: { type: integer, enum: [1, 2] }
+                                - type: object
+                                  additionalProperties: false
+                                  required: [mode]
+                                  properties:
+                                      mode:
+                                          type: string
+                                          enum: [v1, v2_confidence, rename_field, type_change, missing_required]
+                                          description: >-
+                                              rename_field = alert_level → level; type_change = alert_level as 0–3;
+                                              missing_required = no eruption_count_24h. Applies to records created
+                                              from now on; earlier records keep their shape.
             responses:
                 '200':
-                    description: New state
+                    description: New state ({version} answers exactly {schema_version, changed_at}; {mode} adds mode)
                     content:
                         application/json:
                             schema: { $ref: '#/components/schemas/SchemaState' }
                 '400': { $ref: '#/components/responses/InvalidBody' }
                 '401': { $ref: '#/components/responses/Unauthorized' }
                 '403': { $ref: '#/components/responses/Forbidden' }
+
+    /admin/malformed:
+        post:
+            summary: Corrupt the next n GET /volcanic-reports responses (P3 #3)
+            operationId: queueMalformed
+            tags: [Admin]
+            security: [{ PvmbgBearer: [] }]
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            additionalProperties: false
+                            required: [kind]
+                            properties:
+                                kind: { type: string, enum: [truncated, deep_nesting, invalid_utf8, oversized] }
+                                count: { type: integer, minimum: 1, maximum: 100, default: 1 }
+                                bytes:
+                                    type: integer
+                                    minimum: 1024
+                                    maximum: 67108864
+                                    description: oversized only (default 12 MiB); the body is streamed per 64 KiB chunk
+            responses:
+                '200':
+                    description: Queue after this request
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/MalformedState' }
+                '400': { $ref: '#/components/responses/InvalidBody' }
+                '401': { $ref: '#/components/responses/Unauthorized' }
+                '403': { $ref: '#/components/responses/Forbidden' }
+        get:
+            summary: Pending malformed responses
+            operationId: getMalformed
+            tags: [Admin]
+            security: [{ PvmbgBearer: [] }]
+            responses:
+                '200':
+                    description: Queue
+                    content:
+                        application/json:
+                            schema: { $ref: '#/components/schemas/MalformedState' }
 
     /admin/outage:
         post:
@@ -147,6 +204,14 @@ components:
             required: false
             description: ISO 8601 date-time (Z or offset). Returns reports whose reported_at is >= since.
             schema: { type: string, format: date-time }
+        AfterId:
+            name: after_id
+            in: query
+            required: false
+            description: >-
+                Keyset cursor, only together with since. Returns reports strictly after (since, after_id) in
+                (reported_at, report_id) order, so a page full of one timestamp can still be paged through.
+            schema: { type: string, minLength: 1, maxLength: 64 }
         Limit:
             name: limit
             in: query
@@ -193,6 +258,18 @@ components:
                     schema: { $ref: '#/components/schemas/Error' }
 
     schemas:
+        MalformedState:
+            type: object
+            required: [pending, served]
+            properties:
+                pending:
+                    type: array
+                    items:
+                        type: object
+                        properties:
+                            kind: { type: string }
+                            bytes: { type: integer }
+                served: { type: integer, description: malformed responses sent since start }
         VolcanicReport:
             type: object
             additionalProperties: false
@@ -232,6 +309,7 @@ components:
             properties:
                 schema_version: { type: integer, enum: [1, 2] }
                 changed_at: { type: string, format: date-time, description: Last change (startup time if never changed) }
+                mode: { type: string, description: 'present only when the request used {mode}' }
         OutageState:
             type: object
             required: [enabled, mode, since, held_requests]

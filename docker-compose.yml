@@ -66,6 +66,16 @@ services:
             ADMISSION_MAX_CONCURRENT_REQUESTS: ${BNPB_CLIENT_API_ADMISSION_MAX_CONCURRENT_REQUESTS:-100}
             ADMISSION_RESERVED_LAPANGAN_REQUESTS: ${BNPB_CLIENT_API_ADMISSION_RESERVED_LAPANGAN_REQUESTS:-20}
             ADMISSION_RETRY_AFTER_SECONDS: ${BNPB_CLIENT_API_ADMISSION_RETRY_AFTER_SECONDS:-1}
+            # P3 #6 field report receiver (D-38): 202 only after the Kafka ack
+            KAFKA_BROKERS: ${BNPB_CLIENT_API_KAFKA_BROKERS:-kafka:29092}
+            KAFKA_CLIENT_ID: ${BNPB_CLIENT_API_KAFKA_CLIENT_ID:-bnpb-client-api}
+            FIELD_REPORT_TOPIC: ${FIELD_REPORT_TOPIC:-field-reports}
+            FIELD_REPORT_PUBLISH_TIMEOUT_MS: ${BNPB_CLIENT_API_FIELD_REPORT_PUBLISH_TIMEOUT_MS:-2000}
+            FIELD_REPORT_MAX_BODY_BYTES: ${BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES:-16384}
+            FIELD_REPORT_RETRY_AFTER_SECONDS: ${BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS:-2}
+            DLQ_REPLAY_TIMEOUT_MS: ${BNPB_CLIENT_API_DLQ_REPLAY_TIMEOUT_MS:-30000}
+            JWT_PUBLIC_KEY_CACHE_MS: ${BNPB_CLIENT_API_JWT_PUBLIC_KEY_CACHE_MS:-60000}
+            JWT_PUBLIC_KEY_MIN_REFRESH_MS: ${BNPB_CLIENT_API_JWT_PUBLIC_KEY_MIN_REFRESH_MS:-5000}
         ports:
             - '${BNPB_CLIENT_API_HOST_PORT}:3000'
         depends_on:
@@ -73,6 +83,8 @@ services:
                 condition: service_healthy
             bnpb-aggregator-entry:
                 condition: service_healthy
+            kafka-topic-init:
+                condition: service_completed_successfully
         healthcheck:
             test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/live').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
             interval: 5s
@@ -241,12 +253,14 @@ services:
             KAFKA_INTERNAL_BOOTSTRAP_SERVER: ${KAFKA_INTERNAL_BOOTSTRAP_SERVER}
             KAFKA_TOPIC: ${BNPB_AGGREGATOR_KAFKA_TOPIC}
             SATELLITE_RAW_TOPIC: ${BNPB_AGGREGATOR_SATELLITE_RAW_TOPIC:-satellite.raw}
+            FIELD_REPORT_TOPIC: ${FIELD_REPORT_TOPIC:-field-reports}
         # satellite.raw: 1 partition (total order = feed offset order), kept forever for replay by the fire processor.
+        # field-reports (D-38/D-40): 3 partitions keyed by report_id, RF 1, 30-day retention so consumers may be down for days.
         command:
             [
                 'bash',
                 '-ec',
-                'kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$KAFKA_TOPIC" --partitions 1 --replication-factor 1 && kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$SATELLITE_RAW_TOPIC" --partitions 1 --replication-factor 1 --config retention.ms=-1',
+                'kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$KAFKA_TOPIC" --partitions 1 --replication-factor 1 && kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$SATELLITE_RAW_TOPIC" --partitions 1 --replication-factor 1 --config retention.ms=-1 && kafka-topics --bootstrap-server "$$KAFKA_INTERNAL_BOOTSTRAP_SERVER" --create --if-not-exists --topic "$$FIELD_REPORT_TOPIC" --partitions 3 --replication-factor 1 --config retention.ms=2592000000',
             ]
         depends_on:
             kafka:
@@ -355,6 +369,16 @@ services:
             SATELLITE_429_BACKOFF_BASE_MS: ${BNPB_AGGREGATOR_SATELLITE_429_BACKOFF_BASE_MS:-2000}
             SATELLITE_429_BACKOFF_CAP_MS: ${BNPB_AGGREGATOR_SATELLITE_429_BACKOFF_CAP_MS:-30000}
             SATELLITE_AUTH_BACKOFF_MS: ${BNPB_AGGREGATOR_SATELLITE_AUTH_BACKOFF_MS:-300000}
+            # P3 Tahap 4: mapping file reloaded by hash (D-36), body-failure hold (D-34), replay cap (D-37)
+            PVMBG_MAPPING_PATH: ${BNPB_AGGREGATOR_PVMBG_MAPPING_PATH:-config/pvmbg-mapping/mapping.json}
+            PVMBG_MAPPING_POLL_MS: ${BNPB_AGGREGATOR_PVMBG_MAPPING_POLL_MS:-2000}
+            PVMBG_BODY_FAILURE_HOLD_POLLS: ${BNPB_AGGREGATOR_PVMBG_BODY_FAILURE_HOLD_POLLS:-5}
+            DLQ_REPLAY_MAX: ${BNPB_AGGREGATOR_DLQ_REPLAY_MAX:-5000}
+            FIRE_SNAPSHOT_MAX_BYTES: ${BNPB_AGGREGATOR_FIRE_SNAPSHOT_MAX_BYTES:-268435456}
+            HAZARD_BATCH_CONCURRENCY: ${BNPB_AGGREGATOR_HAZARD_BATCH_CONCURRENCY:-8}
+        # directory mount (not a single file): editors that save by rename replace the inode (D-36)
+        volumes:
+            - ${BNPB_AGGREGATOR_PVMBG_MAPPING_DIR:-./services/bnpb-aggregator/config/pvmbg-mapping}:/app/config/pvmbg-mapping:ro
         depends_on:
             canonical-store-migrate:
                 condition: service_completed_successfully
@@ -424,6 +448,72 @@ services:
                 condition: service_completed_successfully
             notification-store:
                 condition: service_healthy
+
+    # P3 #6 (D-39): consumes field-reports and stores them through the Aggregator API only (rule 5)
+    field-report-processor:
+        build: ./services/field-report-processor
+        environment:
+            PORT: 3000
+            SERVICE_NAME: field-report-processor
+            NODE_ENV: ${FIELD_REPORT_PROCESSOR_NODE_ENV:-local}
+            KAFKA_BROKERS: ${FIELD_REPORT_PROCESSOR_KAFKA_BROKERS:-kafka:29092}
+            KAFKA_CLIENT_ID: ${FIELD_REPORT_PROCESSOR_KAFKA_CLIENT_ID:-field-report-processor}
+            KAFKA_GROUP_ID: ${FIELD_REPORT_PROCESSOR_KAFKA_GROUP_ID:-field-report-processor-group}
+            KAFKA_TOPIC: ${FIELD_REPORT_TOPIC:-field-reports}
+            LAG_POLL_INTERVAL_MS: ${FIELD_REPORT_PROCESSOR_LAG_POLL_INTERVAL_MS:-5000}
+            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
+            BNPB_GATEWAY_TIMEOUT_MS: ${FIELD_REPORT_PROCESSOR_GATEWAY_TIMEOUT_MS:-2000}
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+            FIELD_REPORT_MAX_MESSAGE_BYTES: ${FIELD_REPORT_PROCESSOR_MAX_MESSAGE_BYTES:-65536}
+            FIELD_REPORT_MAX_PERMANENT_ATTEMPTS: ${FIELD_REPORT_PROCESSOR_MAX_PERMANENT_ATTEMPTS:-3}
+            FIELD_REPORT_BACKOFF_BASE_MS: ${FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS:-500}
+            FIELD_REPORT_BACKOFF_CAP_MS: ${FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS:-30000}
+        ports:
+            - '${FIELD_REPORT_PROCESSOR_HOST_PORT:-3007}:3000'
+        mem_limit: 256m
+        # not on the Aggregator: while it is down the consumer backs off without committing (D-39)
+        depends_on:
+            kafka-topic-init:
+                condition: service_completed_successfully
+        healthcheck:
+            test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+            interval: 5s
+            timeout: 5s
+            start_period: 15s
+            retries: 12
+
+    # P4: satellite.raw -> Fire Definition engine -> WILDFIRE HazardEvents through the Aggregator (rule 5); one active instance
+    fire-processor:
+        build: ./services/fire-processor
+        environment:
+            PORT: 3000
+            SERVICE_NAME: fire-processor
+            NODE_ENV: ${FIRE_PROCESSOR_NODE_ENV:-local}
+            KAFKA_BROKERS: ${FIRE_PROCESSOR_KAFKA_BROKERS:-kafka:29092}
+            KAFKA_CLIENT_ID: ${FIRE_PROCESSOR_KAFKA_CLIENT_ID:-fire-processor}
+            KAFKA_GROUP_ID: ${FIRE_PROCESSOR_KAFKA_GROUP_ID:-fire-processor-group}
+            SATELLITE_RAW_TOPIC: ${BNPB_AGGREGATOR_SATELLITE_RAW_TOPIC:-satellite.raw}
+            BNPB_GATEWAY_BASE_URL: http://bnpb-aggregator-entry:${BNPB_AGGREGATOR_CONTAINER_PORT}
+            BNPB_GATEWAY_TIMEOUT_MS: ${FIRE_PROCESSOR_GATEWAY_TIMEOUT_MS:-15000}
+            BNPB_INTERNAL_API_KEY: ${BNPB_AGGREGATOR_INTERNAL_API_KEY}
+            FIRE_ALLOWED_LATENESS_MINUTES: ${FIRE_PROCESSOR_ALLOWED_LATENESS_MINUTES:-120}
+            FIRE_FLUSH_MAX_RECORDS: ${FIRE_PROCESSOR_FLUSH_MAX_RECORDS:-1000}
+            FIRE_SNAPSHOT_EVERY_RECORDS: ${FIRE_PROCESSOR_SNAPSHOT_EVERY_RECORDS:-5000}
+            FIRE_SNAPSHOT_INTERVAL_MS: ${FIRE_PROCESSOR_SNAPSHOT_INTERVAL_MS:-30000}
+            FIRE_BACKOFF_BASE_MS: ${FIRE_PROCESSOR_BACKOFF_BASE_MS:-500}
+            FIRE_BACKOFF_CAP_MS: ${FIRE_PROCESSOR_BACKOFF_CAP_MS:-30000}
+        ports:
+            - '${FIRE_PROCESSOR_HOST_PORT:-3008}:3000'
+        mem_limit: 1g
+        depends_on:
+            kafka-topic-init:
+                condition: service_completed_successfully
+        healthcheck:
+            test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/health/ready').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+            interval: 5s
+            timeout: 5s
+            start_period: 15s
+            retries: 12
 
     bmkg-store:
         image: postgres:16-alpine
@@ -495,6 +585,8 @@ services:
             PVMBG_REPORT_INTERVAL_MS: ${PVMBG_REPORT_INTERVAL_MS:-5000}
             PVMBG_REPORT_GENERATION_PROBABILITY: ${PVMBG_REPORT_GENERATION_PROBABILITY:-0.3}
             RANDOM_SEED: ${PVMBG_RANDOM_SEED:-}
+        # Lampiran B mock limit: an OOM from a malformed body would show up as RestartCount (P3 #3)
+        mem_limit: 128m
         ports:
             - '${PVMBG_PORT:-8082}:8082'
         depends_on:

@@ -14,14 +14,17 @@ import { logger } from './libs/logger';
 
 // Import controllers (side-effect: registers routes via decorators)
 import './controllers/health.controller';
+import './controllers/metrics.controller';
+import './controllers/status.controller';
 
-/**
- * Create and configure the Express application
- */
-export async function createApp(): Promise<express.Application> {
-    // Set up Inversify container
+export async function createContainer(): Promise<Container> {
     const container = new Container();
     await container.loadAsync(bindings);
+    return container;
+}
+
+export async function createApp(existingContainer?: Container): Promise<express.Application> {
+    const container = existingContainer ?? (await createContainer());
 
     // Create base Express app
     const app = express();
