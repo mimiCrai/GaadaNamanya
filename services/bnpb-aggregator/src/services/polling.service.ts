@@ -13,9 +13,11 @@ import { ISourceSyncStateService } from './source-sync-state.service';
 import { IBackgroundLeadershipService } from './background-leadership.service';
 import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
 import { LeaseLostError, LeaseToken } from '../db/schema/background-leases';
-import { IPvmbgBodyFailureService } from './pvmbg-body-failure.service';
+import { IPvmbgBodyFailureService, SkippedWindow } from './pvmbg-body-failure.service';
+import { pollCheckpoint } from '../repositories/source-sync-state.repository';
 
-type PollWork = (options: PollRequestOptions, lease: LeaseToken) => Promise<void>;
+// a skipped window (D-44) moves the cursor without counting as a successful poll
+type PollWork = (options: PollRequestOptions, lease: LeaseToken) => Promise<SkippedWindow | void>;
 
 export interface IPollingService {
     start(): void;
@@ -93,16 +95,25 @@ export class PollingService implements IPollingService {
         const correlationId = randomUUID();
         return traced('source.poll', { 'source.stream': sourceStream, 'correlation.id': correlationId }, async () => {
             try {
-                const state = await this.sourceSyncStateService.getState(sourceStream);
-                const since = state?.lastSuccessfulPollAt
-                    ? new Date(state.lastSuccessfulPollAt.getTime() - env.POLL_OVERLAP_MS)
-                    : undefined;
+                const checkpoint = pollCheckpoint(await this.sourceSyncStateService.getState(sourceStream));
+                const since = checkpoint ? new Date(checkpoint.getTime() - env.POLL_OVERLAP_MS) : undefined;
 
                 const startedAt = await this.leases.requireActive(lease);
                 // startedAt is additive (D-34 skipped-window record); PERLU DIKONFIRMASI KE A/B
-                await work({ since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch, startedAt }, lease);
+                const skipped = await work(
+                    { since, correlationId, instanceId: lease.ownerId, fencingToken: lease.epoch, startedAt },
+                    lease
+                );
                 if (this.stopped) {
                     logger.info({ sourceStream, correlationId }, 'Source poll cancelled during shutdown');
+                    return;
+                }
+                if (skipped) {
+                    await this.sourceSyncStateService.recordSkippedWindow(sourceStream, startedAt, skipped.error, lease);
+                    logger.warn(
+                        { sourceStream, since, correlationId, messageId: skipped.messageId },
+                        'Source poll skipped a window; source stays stale until a valid body arrives'
+                    );
                     return;
                 }
                 await this.sourceSyncStateService.recordSuccessfulPoll(sourceStream, startedAt, lease);
@@ -149,12 +160,12 @@ export class PollingService implements IPollingService {
         await this.ingestionService.ingestTsunamiWarnings(warnings, options.correlationId, lease);
     }
 
-    private async pollPvmbgVolcanic(options: PollRequestOptions, lease: LeaseToken): Promise<void> {
+    private async pollPvmbgVolcanic(options: PollRequestOptions, lease: LeaseToken): Promise<SkippedWindow | void> {
         const batch = await this.pvmbgClient.getVolcanicReports(options);
         const result = await this.ingestionService.ingestVolcanicBatch(batch, options.correlationId, lease);
-        // D-34: a broken body holds the checkpoint (throws) until K consecutive body failures
+        // D-34/D-44: a broken body holds the checkpoint (throws) until K consecutive body failures, then skips the window
         if (result?.bodyFailure) {
-            await this.pvmbgBodyFailures.onBodyFailure(
+            return this.pvmbgBodyFailures.onBodyFailure(
                 result.bodyFailure,
                 { since: options.since, until: options.startedAt ?? new Date(), correlationId: options.correlationId },
                 lease

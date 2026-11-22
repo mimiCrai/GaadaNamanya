@@ -24,10 +24,9 @@ export class HealthService {
         return { status: 'ok' };
     }
 
-    // D-38: not ready until the field report producer is connected, so no 503 right after a restart
-    async readiness(): Promise<{ status: 'ok' | 'error'; field_reports?: 'connected' | 'connecting' }> {
+    // D-43: Kafka only gates POST /field-reports (503 + Retry-After there), never the read path, so it stays out of readiness
+    async readiness(): Promise<{ status: 'ok'; field_reports?: 'connected' | 'connecting' }> {
         if (!this.publisher) return { status: 'ok' };
-        const ready = this.publisher.isReady();
-        return { status: ready ? 'ok' : 'error', field_reports: ready ? 'connected' : 'connecting' };
+        return { status: 'ok', field_reports: this.publisher.isReady() ? 'connected' : 'connecting' };
     }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P3 #3 + D-34 di Compose (PASS/FAIL), project terisolasi bnpb-p3m, nilai demo .env.example.
 #   Skenario 1: 4 jenis body rusak berturut-turut (< K) → checkpoint ditahan; semua report_id di DB mock ⊆ hazard_events PVMBG.
-#   Skenario 2: K body rusak → checkpoint dipaksa maju; entri window_skipped dengan jendela [since, until) yang benar di DLQ.
+#   Skenario 2: K body rusak → cursor dipaksa maju, PVMBG tetap STALE (D-44); entri window_skipped [since, until) diisi ulang otomatis.
 # Pemakaian (Git Bash, root repo): bash scripts/dlq/p3-malformed-window-test.sh [--keep]
 set -euo pipefail
 
@@ -34,7 +34,9 @@ cleanup() {
 trap cleanup EXIT
 
 state() { mongo_eval 'JSON.stringify(db.source_sync_states.findOne({_id:"PVMBG_VOLCANIC"}))'; }
-checkpoint() { state | jget lastSuccessfulPollAt; }
+# D-44: poll cursor is checkpointAt; states written before it existed only have lastSuccessfulPollAt
+cursor_of() { local v; v=$(jget checkpointAt <<<"$1"); [[ -n $v ]] || v=$(jget lastSuccessfulPollAt <<<"$1"); echo "$v"; }
+checkpoint() { cursor_of "$(state)"; }
 body_failures() { local v; v=$(state | jget consecutiveBodyFailures); echo "${v:-0}"; }
 dlq_pvmbg() { agg1 GET '/internal/dlq?source=PVMBG&limit=1000'; }
 count_source() { mongo_eval "db.hazard_events.countDocuments({source:'$1'})"; }
@@ -72,7 +74,7 @@ while :; do
     n=$(jget consecutiveBodyFailures <<<"$s"); n=${n:-0}
     (( n > 0 )) || break
     (( n > max_held )) && max_held=$n
-    samples+=("$(jget lastSuccessfulPollAt <<<"$s")")
+    samples+=("$(cursor_of "$s")")
     sleep 1
 done
 moved=0
@@ -108,18 +110,27 @@ comm -23 "$OUT/mock-ids-1.txt" "$OUT/store-ids-1.txt" > "$OUT/missing-1.txt"
 check 'jendela yang ditahan benar-benar berisi record (uji tidak kosong)' test "$(cat "$OUT/mock-window-1.txt")" -ge 1
 check 'semua report_id di DB mock ⊆ hazard_events PVMBG' test "$missing" -eq 0
 
-bold "2. Skenario 2 — K=$K body rusak berturut-turut (checkpoint dipaksa maju, jendela dicatat)"
+bold "2. Skenario 2 — K=$K body rusak berturut-turut (cursor dipaksa maju, tetap STALE, jendela diisi ulang)"
 SKIP0=$(metric_all 'bnpb_aggregator_pvmbg_skipped_windows_total')
-show "POST /admin/malformed {\"kind\":\"truncated\",\"count\":$K}"
-mock POST /admin/malformed "{\"kind\":\"truncated\",\"count\":$K}" >/dev/null
+# extra broken bodies keep the source broken for several polls after the skip, so STALE can be observed (D-44)
+EXTRA=4
+show "POST /admin/malformed {\"kind\":\"truncated\",\"count\":$((K + EXTRA))}"
+mock POST /admin/malformed "{\"kind\":\"truncated\",\"count\":$((K + EXTRA))}" >/dev/null
 wait_until 'body rusak pertama ditahan' 60 held_seen
 S=$(checkpoint)
+# read once held: from here until a valid body, lastSuccessfulPollAt must not move
+LAST_OK0=$(state | jget lastSuccessfulPollAt)
 info "checkpoint yang ditahan (= since jendela): $S"
 window_entry() {
     dlq_pvmbg | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"{}");const e=(j.items||[]).find(i=>i.category==="window_skipped");if(!e)process.exit(1);console.log(e.message_id)})'
 }
 has_window() { window_entry >/dev/null; }
 wait_until 'entri window_skipped muncul di DLQ' 180 has_window
+# snapshot first, before the slower checks below: the first valid poll after the extra bodies ends STALE legitimately
+after() { node -e 'process.exit(Date.parse(process.argv[1])>Date.parse(process.argv[2])?0:1)' "$1" "$2"; }
+moved_past() { SNAP=$(state); local cp; cp=$(cursor_of "$SNAP"); [[ -n $cp ]] && after "$cp" "$S"; }
+wait_until 'cursor maju dari checkpoint yang ditahan' 60 moved_past
+echo "$SNAP" > "$OUT/state-after-skip.json"
 WID=$(window_entry)
 agg1 GET "/internal/dlq/$WID" > "$OUT/window-entry.json"
 agg1 GET "/internal/dlq/$WID/raw" > "$OUT/window-raw.json"
@@ -135,16 +146,28 @@ before() { node -e 'process.exit(Date.parse(process.argv[1])<=Date.parse(process
 check "since jendela = checkpoint yang ditahan − POLL_OVERLAP_MS ($W_SINCE = $S − ${OVERLAP} ms)" since_matches
 check "until jendela > since ($W_UNTIL)" bash -c "node -e 'process.exit(Date.parse(process.argv[1])>Date.parse(process.argv[2])?0:1)' '$W_UNTIL' '$W_SINCE'"
 check "consecutive_body_failures = K ($W_N)" test "$W_N" == "$K"
-check 'entri window_skipped parked, retryable=false' bash -c "grep -q '\"status\":\"parked\"' '$OUT/window-entry.json' && grep -q '\"retryable\":false' '$OUT/window-entry.json'"
-advanced() { local cp; cp=$(checkpoint); [[ -n $cp ]] && before "$W_UNTIL" "$cp" && [[ $(body_failures) == 0 ]]; }
-wait_until 'checkpoint ≥ until jendela dan counter reset' 60 advanced
-info "checkpoint setelah dipaksa maju: $(checkpoint)"
-check 'checkpoint maju melewati jendela' advanced
+check 'entri window_skipped retryable=true (diisi ulang otomatis, D-44)' grep -q '"retryable":true' "$OUT/window-entry.json"
+s=$SNAP
+info "state pertama setelah cursor maju: $(jget status <<<"$s"), cursor=$(cursor_of "$s"), lastSuccessfulPollAt=$(jget lastSuccessfulPollAt <<<"$s")"
+same_time() { node -e 'process.exit(Date.parse(process.argv[1])===Date.parse(process.argv[2])?0:1)' "$1" "$2"; }
+check "cursor = until jendela ($W_UNTIL)" same_time "$(cursor_of "$s")" "$W_UNTIL"
+check 'PVMBG tetap STALE setelah jendela dilewati (bukan HEALTHY)' test "$(jget status <<<"$s")" == STALE
+check "lastSuccessfulPollAt tidak berubah oleh jendela yang dilewati ($LAST_OK0)" test "$(jget lastSuccessfulPollAt <<<"$s")" == "$LAST_OK0"
+skip_logged() { "${compose[@]}" logs --no-color bnpb-aggregator 2>/dev/null | grep -q 'source stays stale until a valid body arrives'; }
+check 'log: poll jendela yang dilewati tidak dicatat sebagai sukses' skip_logged
 SKIP1=$(metric_all 'bnpb_aggregator_pvmbg_skipped_windows_total')
 check "metrik skipped_windows naik ($SKIP0 → $SKIP1)" test "$SKIP1" -gt "$SKIP0"
 "${compose[@]}" logs --no-color bnpb-aggregator 2>/dev/null | grep 'checkpoint forced forward' | tail -1 | cut -c1-400 | sed 's/^/   log: /' || true
-mock_sql "SELECT count(*) FROM volcanic_reports WHERE reported_at >= '$W_SINCE' AND reported_at < '$W_UNTIL'" > "$OUT/mock-window-2.txt"
-info "record mock di jendela yang dilewati: $(cat "$OUT/mock-window-2.txt") (dipulihkan manual dengan since=$W_SINCE; inilah alasan entri window_skipped)"
+window_recovered() { [[ $(agg1 GET "/internal/dlq/$WID" | jget status) == recovered ]]; }
+wait_until 'backfill jendela selesai (entri recovered)' 180 window_recovered
+healthy() { [[ $(state | jget status) == HEALTHY ]]; }
+wait_until 'PVMBG HEALTHY lagi setelah body valid' 60 healthy
+check 'entri window_skipped recovered lewat retry worker' window_recovered
+mock_sql "SELECT report_id FROM volcanic_reports WHERE reported_at >= '$W_SINCE' AND reported_at < '$W_UNTIL' ORDER BY 1" | sort > "$OUT/mock-window-2.txt"
+mongo_eval "db.hazard_events.distinct('sourceRefId',{source:'PVMBG'}).sort().join('\n')" | sort > "$OUT/store-ids-2.txt"
+missing2=$(comm -23 "$OUT/mock-window-2.txt" "$OUT/store-ids-2.txt" | wc -l | tr -d ' ')
+info "record mock di jendela yang dilewati: $(wc -l < "$OUT/mock-window-2.txt" | tr -d ' '), hilang dari store setelah backfill: $missing2"
+check 'semua record di jendela yang dilewati ada di store setelah backfill' test "$missing2" -eq 0
 
 bold '3. Tidak ada crash/restart, sumber lain tetap diproses'
 RESTARTS_AFTER=$(restart_snapshot)

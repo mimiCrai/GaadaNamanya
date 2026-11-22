@@ -17,6 +17,8 @@ export interface SourceSyncState {
     sourceStream: SourceStream;
     status: SourceSyncStatus;
     lastSuccessfulPollAt: Date | null;
+    // D-44: poll cursor; moves with every success and with a skipped window, which leaves lastSuccessfulPollAt alone
+    checkpointAt?: Date | null;
     lastAttemptAt: Date | null;
     staleSince: Date | null;
     lastError: string | null;

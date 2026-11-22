@@ -16,6 +16,7 @@ export interface ISourceSyncStateService {
     recordSuccessfulPoll(sourceStream: SourceStream, at: Date, lease: LeaseToken): Promise<void>;
     recordFailedPoll(sourceStream: SourceStream, error: unknown, at: Date, lease: LeaseToken): Promise<void>;
     recordHeldBodyFailure(sourceStream: SourceStream, lease: LeaseToken): Promise<number>;
+    recordSkippedWindow(sourceStream: SourceStream, at: Date, error: unknown, lease: LeaseToken): Promise<void>;
 }
 
 @injectable()
@@ -53,5 +54,10 @@ export class SourceSyncStateService implements ISourceSyncStateService {
 
     async recordHeldBodyFailure(sourceStream: SourceStream, lease: LeaseToken): Promise<number> {
         return this.sourceSyncStateRepository.recordHeldBodyFailure(sourceStream, lease);
+    }
+
+    async recordSkippedWindow(sourceStream: SourceStream, at: Date, error: unknown, lease: LeaseToken): Promise<void> {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await this.sourceSyncStateRepository.recordSkippedWindow(sourceStream, at, errorMessage, lease);
     }
 }

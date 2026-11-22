@@ -9,6 +9,7 @@ const mockSourceSyncStateRepository: jest.Mocked<ISourceSyncStateRepository> = {
     recordSuccessfulPoll: jest.fn(),
     recordFailedPoll: jest.fn(),
     recordHeldBodyFailure: jest.fn(),
+    recordSkippedWindow: jest.fn(),
 };
 
 describe('SourceSyncStateService', () => {

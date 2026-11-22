@@ -3,9 +3,12 @@ import { UnprocessedMessage } from '../../src/db/schema/unprocessed-messages';
 import {
     CompletionOutcome,
     IUnprocessedMessageRepository,
+    ReplayableKind,
     ReplayCandidate,
     ReplayFilter,
+    UnreplayableCount,
 } from '../../src/repositories/unprocessed-message.repository';
+import { replayOrder } from '../../src/services/unprocessed-replay.service';
 
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -97,17 +100,33 @@ export class FakeRepository implements IUnprocessedMessageRepository {
     async countByStatus() {
         return [];
     }
-    async findReplayCandidates(filter: ReplayFilter, limit: number): Promise<ReplayCandidate[]> {
+    // same selection as replayQuery + REPLAY_SORT: handler, claim and order are applied before the limit
+    private replayMatches(filter: ReplayFilter, e: UnprocessedMessage) {
+        return (
+            e.status === filter.status &&
+            (!filter.source || e.source === filter.source) &&
+            (!filter.category || e.category === filter.category) &&
+            (!filter.reasonPrefix || e.reason.startsWith(filter.reasonPrefix))
+        );
+    }
+    private handled(replayable: ReplayableKind[], e: UnprocessedMessage) {
+        return replayable.some((k) => k.source === e.source && k.kind === e.context.kind);
+    }
+    async findReplayCandidates(
+        filter: ReplayFilter,
+        replayable: ReplayableKind[],
+        limit: number
+    ): Promise<ReplayCandidate[]> {
         await tick();
+        const now = this.now();
         return [...this.entries.values()]
             .filter(
                 (e) =>
-                    e.status === filter.status &&
-                    (!filter.source || e.source === filter.source) &&
-                    (!filter.category || e.category === filter.category) &&
-                    (!filter.reasonPrefix || e.reason.startsWith(filter.reasonPrefix))
+                    this.replayMatches(filter, e) &&
+                    this.handled(replayable, e) &&
+                    (filter.status !== 'retrying' ||
+                        (e.attempts > 0 && (!e.claimedUntil || e.claimedUntil.getTime() <= now)))
             )
-            .slice(0, limit)
             .map((e) => ({
                 messageId: e.messageId,
                 source: e.source,
@@ -117,7 +136,26 @@ export class FakeRepository implements IUnprocessedMessageRepository {
                 ordering: e.ordering ?? null,
                 receivedAt: e.receivedAt,
                 claimedUntil: e.claimedUntil,
-            }));
+            }))
+            .sort(replayOrder)
+            .slice(0, limit);
+    }
+    async countUnreplayable(
+        filter: ReplayFilter,
+        replayable: ReplayableKind[],
+        sampleSize: number
+    ): Promise<UnreplayableCount[]> {
+        await tick();
+        const bySource = new Map<string, string[]>();
+        for (const e of this.entries.values()) {
+            if (!this.replayMatches(filter, e) || this.handled(replayable, e)) continue;
+            bySource.set(e.source, [...(bySource.get(e.source) ?? []), e.messageId]);
+        }
+        return [...bySource.entries()].map(([source, ids]) => ({
+            source,
+            count: ids.length,
+            messageIds: ids.sort().slice(0, sampleSize),
+        }));
     }
     async requeue(id: string, expected: ReplayFilter['status'], delayMs: number, note: string) {
         await tick();

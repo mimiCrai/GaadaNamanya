@@ -18,6 +18,7 @@ const mockSourceSyncStateService: jest.Mocked<ISourceSyncStateService> = {
     recordSuccessfulPoll: jest.fn(),
     recordFailedPoll: jest.fn(),
     recordHeldBodyFailure: jest.fn(),
+    recordSkippedWindow: jest.fn(),
 };
 
 describe('HazardEventService', () => {

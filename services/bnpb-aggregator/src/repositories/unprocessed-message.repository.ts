@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { inject, injectable } from 'inversify';
-import { Binary, ClientSession, ObjectId, UpdateFilter } from 'mongodb';
+import { Binary, ClientSession, Filter, ObjectId, Sort, UpdateFilter } from 'mongodb';
 import { TYPES } from '../constants/types';
 import { CanonicalStore } from '../db';
 import { LeaseToken } from '../db/schema/background-leases';
@@ -63,6 +63,17 @@ export interface ReplayCandidate {
     claimedUntil: Date | null;
 }
 
+export interface ReplayableKind {
+    source: string;
+    kind: string;
+}
+
+export interface UnreplayableCount {
+    source: string;
+    count: number;
+    messageIds: string[];
+}
+
 export interface UnprocessedCount {
     source: string;
     status: UnprocessedStatus;
@@ -77,7 +88,8 @@ export interface IUnprocessedMessageRepository {
     findById(messageId: string): Promise<UnprocessedMessage | null>;
     readPayload(entry: UnprocessedMessage, maxBytes: number): Promise<Buffer>;
     countByStatus(): Promise<UnprocessedCount[]>;
-    findReplayCandidates(filter: ReplayFilter, limit: number): Promise<ReplayCandidate[]>;
+    findReplayCandidates(filter: ReplayFilter, replayable: ReplayableKind[], limit: number): Promise<ReplayCandidate[]>;
+    countUnreplayable(filter: ReplayFilter, replayable: ReplayableKind[], sampleSize: number): Promise<UnreplayableCount[]>;
     requeue(messageId: string, expected: ReplayFilter['status'], delayMs: number, note: string): Promise<boolean>;
 }
 
@@ -87,6 +99,31 @@ export function computeMessageId(source: string, kind: string, payloadSha256: st
 }
 
 const HISTORY_LIMIT = 20;
+
+const UNCLAIMED = { $or: [{ $eq: [{ $ifNull: ['$claimedUntil', null] }, null] }, { $lte: ['$claimedUntil', '$$NOW'] }] };
+
+type ReplayQuery = Filter<UnprocessedMessage & { _id: string }>;
+
+// D-45: per source_ref_id in receive order, applied before the limit (nulls first, as Mongo sorts them; see replayOrder)
+export const REPLAY_SORT: Sort = { sourceRefId: 1, 'ordering.seq': 1, 'ordering.index': 1, receivedAt: 1, _id: 1 };
+
+/** D-45: the user filter narrowed to entries a replay can act on: a handler exists, unclaimed, not already requeued. */
+export function replayQuery(filter: ReplayFilter, replayable: ReplayableKind[], handled: boolean): ReplayQuery {
+    const kinds = replayable.map(({ source, kind }) => ({ source, 'context.kind': kind }));
+    const base: ReplayQuery = {
+        status: filter.status,
+        ...(filter.source ? { source: filter.source } : {}),
+        ...(filter.category ? { category: filter.category } : {}),
+        ...(filter.reasonPrefix ? { reason: { $regex: `^${escapeRegex(filter.reasonPrefix)}` } } : {}),
+    };
+    if (!handled) return kinds.length ? { ...base, $nor: kinds } : base;
+    return {
+        ...base,
+        ...(kinds.length ? { $or: kinds } : { _id: { $in: [] } }),
+        // retrying: a live claim is being processed now; attempts 0 = requeued and not yet attempted
+        ...(filter.status === 'retrying' ? { attempts: { $gt: 0 }, $expr: UNCLAIMED } : {}),
+    };
+}
 
 @injectable()
 export class UnprocessedMessageRepository implements IUnprocessedMessageRepository {
@@ -318,29 +355,22 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
         return rows.map((row) => ({ source: row._id.source, status: row._id.status, count: row.count }));
     }
 
-    async findReplayCandidates(filter: ReplayFilter, limit: number): Promise<ReplayCandidate[]> {
+    async findReplayCandidates(filter: ReplayFilter, replayable: ReplayableKind[], limit: number): Promise<ReplayCandidate[]> {
         const docs = await this.collection()
-            .find(
-                {
-                    status: filter.status,
-                    ...(filter.source ? { source: filter.source } : {}),
-                    ...(filter.category ? { category: filter.category } : {}),
-                    ...(filter.reasonPrefix ? { reason: { $regex: `^${escapeRegex(filter.reasonPrefix)}` } } : {}),
+            .find(replayQuery(filter, replayable, true), {
+                projection: {
+                    _id: 1,
+                    source: 1,
+                    'context.kind': 1,
+                    status: 1,
+                    sourceRefId: 1,
+                    ordering: 1,
+                    receivedAt: 1,
+                    claimedUntil: 1,
                 },
-                {
-                    projection: {
-                        _id: 1,
-                        source: 1,
-                        'context.kind': 1,
-                        status: 1,
-                        sourceRefId: 1,
-                        ordering: 1,
-                        receivedAt: 1,
-                        claimedUntil: 1,
-                    },
-                    timeoutMS: env.STORAGE_READ_TIMEOUT_MS,
-                }
-            )
+                timeoutMS: env.STORAGE_READ_TIMEOUT_MS,
+            })
+            .sort(REPLAY_SORT)
             .limit(limit)
             .toArray();
         return docs.map((doc) => ({
@@ -355,11 +385,26 @@ export class UnprocessedMessageRepository implements IUnprocessedMessageReposito
         }));
     }
 
+    // entries the filter matches but no handler can replay, reported instead of taking candidate slots (D-45)
+    async countUnreplayable(filter: ReplayFilter, replayable: ReplayableKind[], sampleSize: number): Promise<UnreplayableCount[]> {
+        const rows = await this.collection()
+            .aggregate<{ _id: string; count: number; messageIds: string[] }>(
+                [
+                    { $match: replayQuery(filter, replayable, false) },
+                    { $sort: { _id: 1 } },
+                    { $group: { _id: '$source', count: { $sum: 1 }, messageIds: { $firstN: { input: '$_id', n: sampleSize } } } },
+                    { $sort: { _id: 1 } },
+                ],
+                { maxTimeMS: env.STORAGE_READ_TIMEOUT_MS }
+            )
+            .toArray();
+        return rows.map((row) => ({ source: row._id, count: row.count, messageIds: row.messageIds }));
+    }
+
     /** Replay (D-37): CAS per _id (shard key) back to retrying with a fresh attempt budget; the worker does the rest. */
     async requeue(messageId: string, expected: ReplayFilter['status'], delayMs: number, note: string): Promise<boolean> {
-        const unclaimed = { $or: [{ $eq: [{ $ifNull: ['$claimedUntil', null] }, null] }, { $lte: ['$claimedUntil', '$$NOW'] }] };
         const result = await this.collection().updateOne(
-            { _id: messageId, status: expected, ...(expected === 'retrying' ? { $expr: unclaimed } : {}) },
+            { _id: messageId, status: expected, ...(expected === 'retrying' ? { $expr: UNCLAIMED } : {}) },
             [
                 {
                     $set: {

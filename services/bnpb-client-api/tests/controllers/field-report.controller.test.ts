@@ -147,11 +147,19 @@ describe('POST /field-reports (P3 #6, D-38)', () => {
         });
     });
 
-    it('readiness fails while the producer is not connected', async () => {
+    it('D-43: Kafka down keeps the pod ready for reads; only POST /field-reports answers 503 + Retry-After', async () => {
         publisher.isReady.mockReturnValue(false);
-        const response = await request(app).get('/health/ready');
-        expect(response.status).toBe(503);
-        expect(response.body.field_reports).toBe('connecting');
+        publisher.publish.mockRejectedValue(new PublishUnavailableError('not_connected'));
+
+        const ready = await request(app).get('/health/ready');
+        expect(ready.status).toBe(200);
+        expect(ready.body).toEqual({ status: 'ok', field_reports: 'connecting' });
+
+        as('lapangan');
+        const write = await post(report);
+        expect(write.status).toBe(503);
+        expect(write.headers['retry-after']).toBeDefined();
+        expect(write.body.error.code).toBe('service_unavailable');
     });
 });
 

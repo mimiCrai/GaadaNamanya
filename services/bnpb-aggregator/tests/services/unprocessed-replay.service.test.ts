@@ -5,6 +5,7 @@ import { IBackgroundLeadershipService } from '../../src/services/background-lead
 import { UnprocessedHandlerRegistry } from '../../src/services/unprocessed-handler.registry';
 import { UnprocessedReplayService } from '../../src/services/unprocessed-replay.service';
 import { UnprocessedRetryService } from '../../src/services/unprocessed-retry.service';
+import env from '../../src/util/env';
 import { FakeRepository } from '../helpers/fake-unprocessed-repository';
 
 const lease: LeaseToken = { ownerId: 'leader', epoch: 4 };
@@ -79,6 +80,8 @@ describe('UnprocessedReplayService (D-37): replay = requeue for the Tahap 1 retr
         };
 
         await replay();
+        // requeue spaces entries 1 ms apart: run the worker once all of them are due
+        repo.now = () => Date.now() + 1_000;
         await worker().runOnce();
 
         expect(repo.entries.get('msg-ok')).toEqual(expect.objectContaining({ status: 'recovered', recoveredHazardId: 'hz-msg-ok' }));
@@ -108,14 +111,15 @@ describe('UnprocessedReplayService (D-37): replay = requeue for the Tahap 1 retr
         expect(repo.entries.get('msg-bmkg')!.status).toBe('parked');
     });
 
-    it('status=retrying only when asked, and skips entries whose claim is still active', async () => {
+    it('status=retrying only when asked; entries being processed (claimed) or already requeued are not selected', async () => {
         repo.add('msg-free');
         repo.add('msg-claimed', { claimedBy: 'other', claimEpoch: 3, claimedUntil: new Date(Date.now() + 60_000) });
         expect((await replay()).matched).toBe(0);
         const result = await replay({ status: 'retrying' });
-        expect(result.requeued).toBe(1);
-        expect(result.skipped).toEqual([{ reason: 'claimed', count: 1, message_ids: ['msg-claimed'] }]);
+        expect(result).toEqual(expect.objectContaining({ matched: 1, requeued: 1, skipped: [] }));
         expect(repo.entries.get('msg-claimed')!.claimedBy).toBe('other');
+        // msg-free now waits for the worker with attempts 0: a repeated call moves past it instead of requeueing it again
+        expect((await replay({ status: 'retrying' })).matched).toBe(0);
     });
 
     it('spaces nextAttemptAt in chronological order per source_ref_id (seq, index, receivedAt)', async () => {
@@ -127,6 +131,55 @@ describe('UnprocessedReplayService (D-37): replay = requeue for the Tahap 1 retr
         const order = [...repo.entries.values()]
             .sort((a, b) => a.nextAttemptAt!.getTime() - b.nextAttemptAt!.getTime() || 0)
             .map((e) => e.messageId);
-        expect(order).toEqual(['msg-r1-early', 'msg-r1-late', 'msg-r2-late', 'msg-body']);
+        // whole-body entries have no source_ref_id and sort first, as Mongo sorts null
+        expect(order).toEqual(['msg-body', 'msg-r1-early', 'msg-r1-late', 'msg-r2-late']);
+    });
+
+    describe('D-45: selection and order are applied before the limit (review P2)', () => {
+        const max = env.DLQ_REPLAY_MAX;
+        afterEach(() => {
+            env.DLQ_REPLAY_MAX = max;
+        });
+
+        it('entries without a handler never take the slots of a replayable entry', async () => {
+            env.DLQ_REPLAY_MAX = 2;
+            parked(repo, 'msg-sat-1', { source: 'SATELIT', context: { kind: 'stream.event', endpoint: null, topic: null } });
+            parked(repo, 'msg-sat-2', { source: 'SATELIT', context: { kind: 'stream.event', endpoint: null, topic: null } });
+            parked(repo, 'msg-valid');
+
+            for (let i = 0; i < 2; i++) {
+                const result = await replay();
+                expect(result.skipped).toEqual([{ reason: 'handler_missing', count: 2, message_ids: ['msg-sat-1', 'msg-sat-2'] }]);
+                if (i === 0) expect(result).toEqual(expect.objectContaining({ requeued: 1, truncated: false }));
+            }
+            expect(repo.entries.get('msg-valid')!.status).toBe('retrying');
+        });
+
+        it('three versions of one source_ref_id: the oldest are queued first even when the newest is stored first', async () => {
+            env.DLQ_REPLAY_MAX = 2;
+            parked(repo, 'msg-v3', { sourceRefId: 'VR-1', ordering: { seq: 30, index: 0 } });
+            parked(repo, 'msg-v2', { sourceRefId: 'VR-1', ordering: { seq: 20, index: 0 } });
+            parked(repo, 'msg-v1', { sourceRefId: 'VR-1', ordering: { seq: 10, index: 0 } });
+
+            const first = await replay();
+            expect(first).toEqual(expect.objectContaining({ requeued: 2, truncated: true }));
+            expect(repo.entries.get('msg-v3')!.status).toBe('parked');
+            expect(repo.entries.get('msg-v1')!.nextAttemptAt!.getTime()).toBeLessThan(repo.entries.get('msg-v2')!.nextAttemptAt!.getTime());
+
+            expect((await replay()).requeued).toBe(1);
+            expect(repo.entries.get('msg-v3')!.status).toBe('retrying');
+        });
+
+        it('a truncated batch stops at a source_ref_id boundary instead of splitting the group', async () => {
+            env.DLQ_REPLAY_MAX = 2;
+            parked(repo, 'msg-a', { sourceRefId: 'VR-A', ordering: { seq: 1, index: 0 } });
+            parked(repo, 'msg-b1', { sourceRefId: 'VR-B', ordering: { seq: 2, index: 0 } });
+            parked(repo, 'msg-b2', { sourceRefId: 'VR-B', ordering: { seq: 3, index: 0 } });
+
+            const first = await replay();
+            expect(first).toEqual(expect.objectContaining({ matched: 1, requeued: 1, truncated: true }));
+            expect(repo.entries.get('msg-b1')!.status).toBe('parked');
+            expect((await replay()).requeued).toBe(2);
+        });
     });
 });

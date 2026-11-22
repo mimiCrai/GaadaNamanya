@@ -202,7 +202,7 @@ describe('SCHEMA_POLICY declaration table', () => {
         expect(error.retryable).toBe(false);
     });
 
-    it('SCHEMA_POLICY#body_failure_window_skipped: K consecutive broken bodies advance and park the window', async () => {
+    it('SCHEMA_POLICY#body_failure_window_skipped: K consecutive broken bodies advance and queue the window for backfill', async () => {
         const recorded: { reason: string; retryable: boolean }[] = [];
         const service = new PvmbgBodyFailureService(
             {
@@ -224,8 +224,8 @@ describe('SCHEMA_POLICY declaration table', () => {
         });
         expect(recorded).toEqual([
             {
-                reason: `window_skipped: jendela poll [2026-11-20T10:00:00.000Z, 2026-11-20T10:00:15.000Z) dilewati setelah ${env.PVMBG_BODY_FAILURE_HOLD_POLLS} body rusak berturut-turut; isi ulang manual dengan since=2026-11-20T10:00:00.000Z`,
-                retryable: false,
+                reason: `window_skipped: jendela poll [2026-11-20T10:00:00.000Z, 2026-11-20T10:00:15.000Z) dilewati setelah ${env.PVMBG_BODY_FAILURE_HOLD_POLLS} body rusak berturut-turut; diisi ulang retry worker dengan since=2026-11-20T10:00:00.000Z`,
+                retryable: true,
             },
         ]);
     });

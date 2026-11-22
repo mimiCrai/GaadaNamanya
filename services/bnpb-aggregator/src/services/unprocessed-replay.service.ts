@@ -15,20 +15,35 @@ export interface ReplayResult {
     skipped: { reason: ReplaySkipReason; count: number; message_ids: string[] }[];
 }
 
+const SKIPPED_SAMPLE = 20;
+
 export interface IUnprocessedReplayService {
     replay(filter: ReplayFilter, correlationId: string): Promise<ReplayResult>;
 }
 
-// chronological proxy per source_ref_id: receive order (seq, index), then receivedAt; correctness comes from the version guard
+// Same order as REPLAY_SORT in Mongo (nulls first, binary string compare); correctness comes from the version guard
 export function replayOrder(a: ReplayCandidate, b: ReplayCandidate): number {
-    const key = (c: ReplayCandidate) => c.sourceRefId ?? '￿';
     return (
-        key(a).localeCompare(key(b)) ||
-        (a.ordering?.seq ?? 0) - (b.ordering?.seq ?? 0) ||
-        (a.ordering?.index ?? -1) - (b.ordering?.index ?? -1) ||
+        compareNullable(a.sourceRefId, b.sourceRefId) ||
+        compareNullable(a.ordering?.seq, b.ordering?.seq) ||
+        compareNullable(a.ordering?.index, b.ordering?.index) ||
         a.receivedAt.getTime() - b.receivedAt.getTime() ||
-        a.messageId.localeCompare(b.messageId)
+        compareNullable(a.messageId, b.messageId)
     );
+}
+
+// a truncated batch never splits one source_ref_id, so a later replay cannot queue its newer versions ahead of older ones
+export function withinGroupBoundary(sorted: ReplayCandidate[], max: number): ReplayCandidate[] {
+    const head = sorted.slice(0, max);
+    const cut = sorted[max]?.sourceRefId;
+    if (cut == null) return head;
+    const kept = head.filter((candidate) => candidate.sourceRefId !== cut);
+    return kept.length ? kept : head;
+}
+
+function compareNullable<T extends string | number>(a: T | null | undefined, b: T | null | undefined): number {
+    if (a == null || b == null) return a == null ? (b == null ? 0 : -1) : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** Replay = requeue parked entries for the Tahap 1 retry worker (rule 9c); no second processing path. */
@@ -40,46 +55,46 @@ export class UnprocessedReplayService implements IUnprocessedReplayService {
     ) {}
 
     async replay(filter: ReplayFilter, correlationId: string): Promise<ReplayResult> {
-        const found = await this.repository.findReplayCandidates(filter, env.DLQ_REPLAY_MAX + 1);
+        // D-45: handler selection, claim check and ordering happen in the query, before the limit
+        const replayable = this.registry.replayable();
+        const [found, unreplayable] = await Promise.all([
+            this.repository.findReplayCandidates(filter, replayable, env.DLQ_REPLAY_MAX + 1),
+            this.repository.countUnreplayable(filter, replayable, SKIPPED_SAMPLE),
+        ]);
         const truncated = found.length > env.DLQ_REPLAY_MAX;
-        const candidates = found.slice(0, env.DLQ_REPLAY_MAX).sort(replayOrder);
-        const skipped = new Map<ReplaySkipReason, string[]>();
-        const skip = (reason: ReplaySkipReason, candidate: ReplayCandidate) => {
-            skipped.set(reason, [...(skipped.get(reason) ?? []), candidate.messageId]);
-            dlqReplayTotal.inc({ source: candidate.source, result: reason });
+        const candidates = withinGroupBoundary(found.sort(replayOrder), env.DLQ_REPLAY_MAX);
+        const skipped = new Map<ReplaySkipReason, { count: number; ids: string[] }>();
+        const skip = (reason: ReplaySkipReason, source: string, ids: string[], count = ids.length) => {
+            const current = skipped.get(reason) ?? { count: 0, ids: [] };
+            skipped.set(reason, { count: current.count + count, ids: [...current.ids, ...ids] });
+            dlqReplayTotal.inc({ source, result: reason }, count);
         };
+        // e.g. SATELIT:stream.event (D-21): requeueing would only end in handler_missing
+        for (const row of unreplayable) skip('handler_missing', row.source, row.messageIds, row.count);
         const note = `requeued: replay manual (status=${filter.status}${filter.source ? `, source=${filter.source}` : ''}${
             filter.category ? `, category=${filter.category}` : ''
         }${filter.reasonPrefix ? `, reason^=${filter.reasonPrefix}` : ''}; correlationId=${correlationId})`;
 
         let requeued = 0;
         for (const [rank, candidate] of candidates.entries()) {
-            // e.g. SATELIT:stream.event (D-21) or PVMBG:poll.window-skipped: requeueing would only end in handler_missing
-            if (!this.registry.get(candidate.source, candidate.kind)) {
-                skip('handler_missing', candidate);
-                continue;
-            }
-            if (candidate.status === 'retrying' && candidate.claimedUntil && candidate.claimedUntil.getTime() > Date.now()) {
-                skip('claimed', candidate);
-                continue;
-            }
             if (await this.repository.requeue(candidate.messageId, filter.status, rank, note)) {
                 requeued++;
                 dlqReplayTotal.inc({ source: candidate.source, result: 'requeued' });
             } else {
                 // claimed meanwhile (retrying) or no longer in the expected status
-                skip(filter.status === 'retrying' ? 'claimed' : 'status_changed', candidate);
+                skip(filter.status === 'retrying' ? 'claimed' : 'status_changed', candidate.source, [candidate.messageId]);
             }
         }
 
+        const unreplayableCount = unreplayable.reduce((sum, row) => sum + row.count, 0);
         const result: ReplayResult = {
-            matched: candidates.length,
+            matched: candidates.length + unreplayableCount,
             requeued,
             truncated,
-            skipped: [...skipped.entries()].map(([reason, ids]) => ({
+            skipped: [...skipped.entries()].map(([reason, { count, ids }]) => ({
                 reason,
-                count: ids.length,
-                message_ids: ids.slice(0, 20),
+                count,
+                message_ids: ids.slice(0, SKIPPED_SAMPLE),
             })),
         };
         logger.info({ filter, ...result, skipped: result.skipped.map(({ reason, count }) => ({ reason, count })), correlationId }, 'DLQ replay requested');
