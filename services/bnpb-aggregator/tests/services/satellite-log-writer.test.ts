@@ -12,6 +12,7 @@ import {
     isRetriableKafkaError,
     withKafkaRetry,
     SatelliteRawRecord,
+    TRACE_HEADERS_ESTIMATE,
 } from '../../src/services/satellite-log-writer.service';
 
 const lease = { ownerId: 'host:1:abc', epoch: 7 };
@@ -41,6 +42,14 @@ describe('encodeRawRecord', () => {
         });
         expect(JSON.parse(value.data_raw).frp).toBe(367);
         expect(String(message.value)).toContain('367.0');
+    });
+
+    it('carries the producer trace headers so the fire processor joins the same trace', () => {
+        const traceparent = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+        const message = encodeRawRecord(record(17), lease, { traceparent });
+        expect(message.headers).toMatchObject({ feed_offset: '17', traceparent });
+        // the size check made before the span exists budgets the same bytes
+        expect(encodedMessageBytes(encodeRawRecord(record(17), lease, TRACE_HEADERS_ESTIMATE))).toBe(encodedMessageBytes(message));
     });
 
     it('encodes heartbeat and unprocessed control records', () => {

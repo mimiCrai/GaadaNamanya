@@ -42,6 +42,8 @@ const windowS = Math.max(1, Math.round((end - start) / 1000));
 const series = Object.fromEntries(await Promise.all(Object.entries(QUERIES).map(async ([name, q]) => [name, await range(q)])));
 const p95 = await instant(`histogram_quantile(0.95, sum by (le) (increase(bnpb_fire_processor_end_to_end_seconds_bucket[${windowS}s])))`, end);
 const p50 = await instant(`histogram_quantile(0.5, sum by (le) (increase(bnpb_fire_processor_end_to_end_seconds_bucket[${windowS}s])))`, end);
+// processing only: from the record whose change was applied, without the wait as a single detection
+const processingP95 = await instant(`histogram_quantile(0.95, sum by (le) (increase(bnpb_fire_processor_processing_seconds_bucket[${windowS}s])))`, end);
 const processed = await instant(`sum(increase(bnpb_fire_processor_records_total[${windowS}s]))`, end);
 
 const peak = (values) => values.reduce((max, [, v]) => (Number.isFinite(v) && v > max ? v : max), 0);
@@ -65,6 +67,7 @@ const report = [
     `records processed ${processed}`,
     `end-to-end p50    ${p50.toFixed(3)} s`,
     `end-to-end p95    ${p95.toFixed(3)} s`,
+    `processing p95    ${processingP95.toFixed(3)} s`,
     `peak behind feed  ${peak(series.behind)} offsets`,
     `peak unread       ${peak(series.unread)} records in satellite.raw`,
     `peak ingest lag   ${peak(series.ingest)} offsets`,

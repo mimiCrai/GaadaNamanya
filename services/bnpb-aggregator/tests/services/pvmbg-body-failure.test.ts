@@ -191,6 +191,62 @@ describe('D-44 backfill of a skipped PVMBG window', () => {
         expect(pvmbg.getVolcanicReports).not.toHaveBeenCalled();
     });
 
+    describe('draining a window larger than one page', () => {
+        // same rules as the mock: reported_at >= since, ordered by reported_at then report_id, at most `limit`
+        const source = (count: number, stepMs = 10) =>
+            Array.from({ length: count }, (_, index) => ({
+                report_id: `r-${String(index).padStart(4, '0')}`,
+                reported_at: new Date(since.getTime() + index * stepMs).toISOString(),
+            }));
+        const serve = (reports: { report_id: string; reported_at: string }[]) =>
+            jest.fn(async (options: { since?: Date; limit?: number }) => ({
+                contentType: 'application/json',
+                records: reports
+                    .filter((report) => !options.since || Date.parse(report.reported_at) >= options.since.getTime())
+                    .slice(0, options.limit ?? 500)
+                    .map((value) => ({ raw: Buffer.from(JSON.stringify(value)), value })),
+            }));
+        const ingested = () =>
+            new Set(
+                ingestion.ingestVolcanicBatch.mock.calls.flatMap(([page]) =>
+                    (page as typeof batch).records.map((record) => (record.value as { report_id: string }).report_id)
+                )
+            );
+        const wide = windowBytes({ since: since.toISOString(), until: new Date(since.getTime() + 60_000).toISOString() });
+
+        it('pages until a short page: 501 records with a 500 page are all ingested', async () => {
+            pvmbg.getVolcanicReports = serve(source(501));
+            await backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion, 500);
+            expect(ingested().size).toBe(501);
+            expect(pvmbg.getVolcanicReports).toHaveBeenCalledTimes(2);
+            expect(pvmbg.getVolcanicReports.mock.calls[1][0]).toMatchObject({ limit: 500, since: new Date(since.getTime() + 499 * 10) });
+        });
+
+        it('stops once a page reaches until (later records belong to the normal poll)', async () => {
+            pvmbg.getVolcanicReports = serve(source(50, 1_000));
+            const narrow = windowBytes({ since: since.toISOString(), until: new Date(since.getTime() + 15_000).toISOString() });
+            await backfillSkippedWindow(narrow, entry, lease, pvmbg as never, ingestion, 10);
+            expect(pvmbg.getVolcanicReports).toHaveBeenCalledTimes(2);
+            expect([...ingested()]).toEqual(expect.arrayContaining(source(16, 1_000).map((report) => report.report_id)));
+        });
+
+        it('a full page that cannot move the cursor keeps the entry retrying instead of closing it', async () => {
+            pvmbg.getVolcanicReports = serve(source(6, 0));
+            await expect(backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion, 3)).rejects.toMatchObject({
+                category: 'window_skipped',
+                retryable: true,
+            });
+        });
+
+        it('a broken body on a later page keeps the entry retrying', async () => {
+            pvmbg.getVolcanicReports = serve(source(5));
+            ingestion.ingestVolcanicBatch.mockResolvedValueOnce({ bodyFailure: null }).mockResolvedValueOnce({ bodyFailure: truncated });
+            await expect(backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion, 3)).rejects.toMatchObject({
+                category: 'window_skipped',
+            });
+        });
+    });
+
     it('the registry wires PVMBG:poll.window-skipped to the backfill when the PVMBG client is bound', () => {
         expect(new UnprocessedHandlerRegistry(ingestion as never).get('PVMBG', PVMBG_WINDOW_SKIPPED_KIND)).toBeUndefined();
         const registry = new UnprocessedHandlerRegistry(ingestion as never, undefined, pvmbg as never);

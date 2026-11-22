@@ -9,6 +9,7 @@ import {
     TransientAggregatorError,
     UnprocessedItem,
 } from '../../src/clients/aggregator.client';
+import { endToEndSeconds, processingSeconds } from '../../src/libs/metrics';
 import { chunkOps, FirePipeline, PipelineOptions, PipelineStoppedError } from '../../src/services/fire-pipeline.service';
 import { RawLogRecord } from '../../src/types/fire';
 import { Det, LogBuilder } from '../helpers/fire-log';
@@ -252,6 +253,75 @@ describe('FirePipeline (CP 3.4/3.5)', () => {
         await pipeline.restore('c');
         pipeline.ingest(messages(scenario())[0]);
         await expect(pipeline.flush('c')).rejects.toBeInstanceOf(PipelineStoppedError);
+    });
+
+    it('P4.4: heartbeats after every successful Aggregator call, not only during backoff', async () => {
+        const client = new FakeAggregator();
+        const pipeline = new FirePipeline(client, options({ snapshotEveryRecords: 1 }));
+        await pipeline.restore('c');
+        for (const message of messages(scenario()).slice(0, 4)) pipeline.ingest(message);
+        const heartbeat = jest.fn(async () => undefined);
+        await pipeline.maybeSnapshot('c', heartbeat);
+        const calls = client.calls.filter((call) => call !== 'snapshot_get');
+        expect(calls).toEqual(expect.arrayContaining(['hazards', 'stats', 'snapshot_put']));
+        expect(heartbeat).toHaveBeenCalledTimes(calls.length);
+    });
+
+    describe('P4.4 latency metrics count only persisted HazardEvent changes', () => {
+        let clock = 0;
+        const t0 = Date.parse('2026-11-15T12:00:00.000Z');
+        const count = async (histogram: typeof endToEndSeconds) => (await histogram.get()).values.find((v) => v.metricName?.endsWith('_count'))?.value ?? 0;
+        const sum = async (histogram: typeof endToEndSeconds) => (await histogram.get()).values.find((v) => v.metricName?.endsWith('_sum'))?.value ?? 0;
+        const receivedAt = (records: RawLogRecord[], ms: number[]) =>
+            records.map((record, index) => ({ ...record, received_at: new Date(ms[index]).toISOString() }));
+
+        beforeEach(() => {
+            endToEndSeconds.reset();
+            processingSeconds.reset();
+        });
+
+        it('a single detection observes nothing until a second detection turns it into a fire; the wait is included', async () => {
+            const client = new FakeAggregator();
+            const pipeline = new FirePipeline(client, options({ now: () => clock }));
+            await pipeline.restore('c');
+            const log = new LogBuilder()
+                .heartbeat('2026-11-15T06:00:00Z')
+                .detection(at('-2.50000', 500))
+                .detection(at('-2.50000', 500))
+                .detection(at('-2.50800', 510));
+            const [heartbeat, single, duplicate, second] = messages(receivedAt(log.records, [t0, t0, t0 + 1_000, t0 + 60_000]));
+
+            clock = t0 + 2_000;
+            for (const message of [heartbeat, single, duplicate]) pipeline.ingest(message);
+            await pipeline.flush('c');
+            expect(client.hazards.size).toBe(0);
+            expect(await count(endToEndSeconds)).toBe(0);
+            expect(await count(processingSeconds)).toBe(0);
+
+            clock = t0 + 61_000;
+            pipeline.ingest(second);
+            await pipeline.flush('c');
+            expect(client.hazards.size).toBe(1);
+            // both members: 61 s for the waiting single, 1 s for the detection that formed the fire
+            expect(await count(endToEndSeconds)).toBe(2);
+            expect(await sum(endToEndSeconds)).toBeCloseTo(62);
+            expect(await count(processingSeconds)).toBe(1);
+            expect(await sum(processingSeconds)).toBeCloseTo(1);
+        });
+
+        it('a replayed write the Aggregator reports unchanged observes nothing', async () => {
+            const client = new FakeAggregator();
+            await runAll(client, scenario());
+            endToEndSeconds.reset();
+            processingSeconds.reset();
+            const replay = new FirePipeline(client, options());
+            client.snapshot = null;
+            await replay.restore('c');
+            for (const message of messages(scenario())) replay.ingest(message);
+            await replay.flush('c');
+            expect(await count(endToEndSeconds)).toBe(0);
+            expect(await count(processingSeconds)).toBe(0);
+        });
     });
 
     it('chunks hazard ops by count and by JSON size', () => {

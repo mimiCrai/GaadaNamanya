@@ -1,6 +1,6 @@
 import { inject, injectable } from 'inversify';
 import { z } from 'zod';
-import { IPvmbgClient, PVMBG_ENDPOINT } from '../clients/pvmbg.client';
+import { IPvmbgClient, PVMBG_ENDPOINT, VolcanicReportBatch } from '../clients/pvmbg.client';
 import { TYPES } from '../constants/types';
 import { LeaseToken } from '../db/schema/background-leases';
 import { HazardSource } from '../db/schema/hazard-events';
@@ -104,33 +104,68 @@ const skippedWindowSchema = z.object({
     until: z.string().datetime(),
 });
 
-/** D-44 backfill: re-poll the skipped window through the normal ingest path; the version guard makes overlap a no-op. */
+// largest page GET /volcanic-reports accepts (limit 1..1000)
+export const PVMBG_BACKFILL_PAGE_LIMIT = 1000;
+
+// the source returns pages ordered by reported_at asc; the last parseable one is the next cursor
+function lastReportedAt(records: VolcanicReportBatch['records']): Date | null {
+    for (let index = records.length - 1; index >= 0; index--) {
+        const value = records[index].value as { reported_at?: unknown } | null;
+        const ms = typeof value?.reported_at === 'string' ? Date.parse(value.reported_at) : NaN;
+        if (Number.isFinite(ms)) return new Date(ms);
+    }
+    return null;
+}
+
+/** D-44 backfill: page through the whole skipped window via the normal ingest path; the version guard makes overlap a no-op. */
 export async function backfillSkippedWindow(
     raw: Buffer,
     entry: Pick<UnprocessedMessage, 'messageId' | 'correlationId'>,
     lease: LeaseToken,
     pvmbg: IPvmbgClient,
-    ingestion: Pick<IHazardEventIngestionService, 'ingestVolcanicBatch'>
+    ingestion: Pick<IHazardEventIngestionService, 'ingestVolcanicBatch'>,
+    pageLimit = PVMBG_BACKFILL_PAGE_LIMIT
 ): Promise<{ hazardId: null }> {
     const parsed = skippedWindowSchema.safeParse(decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH }));
     if (!parsed.success) throw new ProcessingError('validation_failed', 'entri window_skipped tidak memuat since/until yang valid');
-    const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
-    const batch = await pvmbg.getVolcanicReports({
-        since,
-        correlationId: entry.correlationId,
-        instanceId: lease.ownerId,
-        fencingToken: lease.epoch,
-    });
-    const result = await ingestion.ingestVolcanicBatch(batch, entry.correlationId, lease);
-    if (result.bodyFailure) {
-        throw new ProcessingError('window_skipped', `body PVMBG masih rusak saat isi ulang jendela (${result.bodyFailure.reason})`);
+    const until = new Date(parsed.data.until);
+    let cursor = parsed.data.since ? new Date(parsed.data.since) : undefined;
+    let pages = 0;
+    let records = 0;
+    // the entry closes only once a short page or a page reaching `until` proves the window is drained
+    for (;;) {
+        const batch = await pvmbg.getVolcanicReports({
+            since: cursor,
+            limit: pageLimit,
+            correlationId: entry.correlationId,
+            instanceId: lease.ownerId,
+            fencingToken: lease.epoch,
+        });
+        const result = await ingestion.ingestVolcanicBatch(batch, entry.correlationId, lease);
+        if (result.bodyFailure) {
+            throw new ProcessingError('window_skipped', `body PVMBG masih rusak saat isi ulang jendela (${result.bodyFailure.reason})`);
+        }
+        pages++;
+        records += batch.records.length;
+        if (batch.records.length < pageLimit) break;
+        const last = lastReportedAt(batch.records);
+        if (last && last.getTime() >= until.getTime()) break;
+        // since is inclusive: a full page that does not move past the cursor would repeat forever
+        if (!last || (cursor && last.getTime() <= cursor.getTime())) {
+            throw new ProcessingError(
+                'window_skipped',
+                `isi ulang jendela macet: ${pageLimit} laporan dengan reported_at ${last?.toISOString() ?? 'tidak terbaca'} memenuhi satu halaman`
+            );
+        }
+        cursor = last;
     }
     logger.info(
         {
             messageId: entry.messageId,
             since: parsed.data.since,
             until: parsed.data.until,
-            records: batch.records.length,
+            pages,
+            records,
             correlationId: entry.correlationId,
         },
         'PVMBG skipped window backfilled'

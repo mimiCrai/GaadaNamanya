@@ -3,6 +3,7 @@ import { resourceFromAttributes } from '@opentelemetry/resources';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { ExpressInstrumentation, ExpressLayerType } from '@opentelemetry/instrumentation-express';
+import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 
 let telemetry: NodeSDK | undefined;
 
@@ -26,6 +27,8 @@ if (process.env.OTEL_SDK_DISABLED === 'false') {
                     /^\/(?:health|healthz|metrics)(?:\/|$|\?)/.test(request.url ?? ''),
             }),
             new ExpressInstrumentation({ ignoreLayersType: [ExpressLayerType.MIDDLEWARE] }),
+            // fetch to the Aggregator: child spans plus traceparent so its handler joins the same trace
+            new UndiciInstrumentation(),
         ],
     });
     telemetry.start();

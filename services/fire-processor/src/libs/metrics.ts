@@ -48,10 +48,19 @@ export const latenessMismatch = new Gauge({
     registers: [metricsRegistry],
 });
 
+const LATENCY_BUCKETS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 1800, 3600];
+
 export const endToEndSeconds = new Histogram({
     name: `${PREFIX}end_to_end_seconds`,
-    help: 'From received_at at the Aggregator ingest to the HazardEvent batch stored (P4 #4 p95)',
-    buckets: [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600],
+    help: 'P4 #4 p95: received_at of a new detection to the first applied HazardEvent write containing it (includes waiting as a single)',
+    buckets: LATENCY_BUCKETS,
+    registers: [metricsRegistry],
+});
+
+export const processingSeconds = new Histogram({
+    name: `${PREFIX}processing_seconds`,
+    help: 'Processing only: received_at of a record whose change was actually applied to its HazardEvent write',
+    buckets: LATENCY_BUCKETS,
     registers: [metricsRegistry],
 });
 

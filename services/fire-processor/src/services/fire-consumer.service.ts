@@ -1,11 +1,14 @@
+import { SpanKind, trace } from '@opentelemetry/api';
 import { inject, injectable } from 'inversify';
 import { Consumer, EachBatchPayload, Kafka, logLevel } from 'kafkajs';
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import { IAggregatorClient, StaleSnapshotError } from '../clients/aggregator.client';
 import { TYPES } from '../constants/types';
+import { HEARTBEAT_TICK_MS, keepAlive } from '../libs/keep-alive';
 import { logger } from '../libs/logger';
 import { kafkaLagMessages } from '../libs/metrics';
+import { batchTrace, readTraceHeaders, traced } from '../telemetry/context';
 import env from '../util/env';
 import { FirePipeline, PipelineStoppedError } from './fire-pipeline.service';
 
@@ -106,11 +109,37 @@ export class FireConsumer implements IFireConsumer {
         return { ...this.pipeline.stats(), runtime: this.status() };
     }
 
-    private async onBatch({ batch, resolveOffset, heartbeat, isRunning, isStale }: EachBatchPayload): Promise<void> {
+    // CONSUMER span continuing the Aggregator producer trace; flush/snapshot and their Aggregator calls are children
+    private async onBatch(payload: EachBatchPayload): Promise<void> {
+        const { batch } = payload;
+        const { parent, links } = batchTrace(batch.messages.map((message) => readTraceHeaders(message.headers)));
+        const attributes = {
+            'messaging.system': 'kafka',
+            'messaging.destination.name': batch.topic,
+            'messaging.batch.message_count': batch.messages.length,
+            'messaging.kafka.first_offset': batch.firstOffset() ?? '',
+            'messaging.kafka.last_offset': batch.lastOffset(),
+        };
+        const stopKeepAlive = keepAlive(payload.heartbeat);
+        try {
+            await traced('satellite.raw process', attributes, () => this.processBatch(payload), parent ?? {}, SpanKind.CONSUMER, links);
+        } finally {
+            stopKeepAlive();
+        }
+    }
+
+    private async processBatch({ batch, resolveOffset, heartbeat, isRunning, isStale }: EachBatchPayload): Promise<void> {
         const correlationId = randomUUID();
+        trace.getActiveSpan()?.setAttribute('correlation.id', correlationId);
+        let beatAt = Date.now();
         try {
             for (const message of batch.messages) {
                 if (!isRunning() || isStale() || this.stopping) break;
+                // ingest is synchronous, so the keep-alive timer cannot fire inside a long run of records
+                if (Date.now() - beatAt >= HEARTBEAT_TICK_MS) {
+                    await heartbeat().catch(() => undefined);
+                    beatAt = Date.now();
+                }
                 this.pipeline.ingest({ offset: message.offset, value: message.value });
                 resolveOffset(message.offset);
                 this.lag = Math.max(0, Number(BigInt(batch.highWatermark) - BigInt(message.offset) - 1n));
@@ -132,11 +161,13 @@ export class FireConsumer implements IFireConsumer {
 
     // flush, snapshot when due, and commit the Kafka offset only once the snapshot covering it is stored
     private async cycle(topic: string, correlationId: string, heartbeat: () => Promise<void>): Promise<void> {
-        await this.pipeline.flush(correlationId, heartbeat);
-        const covered = await this.pipeline.maybeSnapshot(correlationId, heartbeat);
+        const records = this.pipeline.unflushedRecords;
+        await traced('fire.flush', { 'fire.records': records }, () => this.pipeline.flush(correlationId, heartbeat));
+        const covered = await traced('fire.snapshot', {}, () => this.pipeline.maybeSnapshot(correlationId, heartbeat));
         if (covered !== null && this.consumer) {
             await this.consumer.commitOffsets([{ topic, partition: PARTITION, offset: (BigInt(covered) + 1n).toString() }]);
         }
+        await heartbeat().catch(() => undefined);
     }
 
     private async restart(): Promise<void> {

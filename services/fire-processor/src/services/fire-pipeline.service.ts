@@ -1,6 +1,7 @@
 import { gunzipSync, gzipSync } from 'node:zlib';
 import {
     HazardBatchOp,
+    HazardBatchResult,
     IAggregatorClient,
     LateDetectionItem,
     StaleSnapshotError,
@@ -15,18 +16,21 @@ import {
     hazardWritesTotal,
     lastFeedOffset,
     latenessMismatch,
+    processingSeconds,
     recordsTotal,
     snapshotBytes,
     snapshotsTotal,
     virtualNowSeconds,
     watermarkSeconds,
 } from '../libs/metrics';
-import { EngineSnapshot, FireChange, LateDetection, RawLogRecord, WildfireHazard } from '../types/fire';
+import { EngineSnapshot, FireChange, LateDetection, ProcessResult, RawLogRecord, WildfireHazard } from '../types/fire';
 import { FireEngine } from './fire-engine.service';
 
 export const UNPROCESSED_KIND = 'kafka.satellite-raw';
 const FEED_CHANGE_KINDS = new Set(['detection', 'update', 'retract']);
 const LATE_CHUNK = 5_000;
+// detections still waiting for their first HazardEvent (singles); oldest evicted beyond this
+const WAITING_MAX = 200_000;
 
 export interface PipelineOptions {
     allowedLatenessMs: number;
@@ -104,7 +108,10 @@ export class FirePipeline {
     private readonly pending = new Map<string, FireChange>();
     private late: LateDetection[] = [];
     private unprocessed: Omit<UnprocessedItem, 'correlationId'>[] = [];
-    private receivedAtMs: number[] = [];
+    // records whose changes are pending, observed once one of their fires is actually written
+    private triggers: { receivedAtMs: number; fireIds: string[]; observed: boolean }[] = [];
+    // new detection key -> received_at, until a persisted HazardEvent first contains it
+    private readonly waiting = new Map<string, number>();
     private unflushed = 0;
     private sinceSnapshot = 0;
     private lastSnapshotAt: number;
@@ -139,7 +146,8 @@ export class FirePipeline {
         this.pending.clear();
         this.late = [];
         this.unprocessed = [];
-        this.receivedAtMs = [];
+        this.triggers = [];
+        this.waiting.clear();
         this.unflushed = 0;
         this.sinceSnapshot = 0;
         this.lastSnapshotAt = this.now();
@@ -198,10 +206,7 @@ export class FirePipeline {
         }
         if (result.late) this.late.push(result.late);
         for (const change of result.changes) this.pending.set(change.id, change);
-        if (result.outcome !== 'stale_offset' && FEED_CHANGE_KINDS.has(String(record.kind))) {
-            const receivedAt = typeof record.received_at === 'string' ? Date.parse(record.received_at) : NaN;
-            if (Number.isFinite(receivedAt)) this.receivedAtMs.push(receivedAt);
-        }
+        if (result.outcome === 'applied' && FEED_CHANGE_KINDS.has(String(record.kind))) this.track(record, result);
         this.unflushed++;
         if (result.outcome !== 'stale_offset') this.sinceSnapshot++;
     }
@@ -222,9 +227,8 @@ export class FirePipeline {
         for (const chunk of chunkOps(ops, this.options.batchMaxOps, this.options.batchMaxBytes)) {
             const results = await this.retry('hazards', heartbeat, () => this.client.applyHazards(chunk, correlationId));
             for (const result of results) hazardWritesTotal.inc({ op: result.op, result: result.result });
+            this.observeLatency(chunk, results);
         }
-        const storedAt = this.now();
-        for (const receivedAt of this.receivedAtMs) endToEndSeconds.observe(Math.max(0, storedAt - receivedAt) / 1000);
         await this.retry('stats', heartbeat, () =>
             this.client.putStats(this.engine.processedOffset, this.stats(), this.options.instanceId, correlationId)
         );
@@ -242,7 +246,7 @@ export class FirePipeline {
         this.pending.clear();
         this.late = [];
         this.unprocessed = [];
-        this.receivedAtMs = [];
+        this.triggers = [];
         this.unflushed = 0;
         this.updateGauges();
         flushSeconds.observe((this.now() - startedAt) / 1000);
@@ -289,6 +293,42 @@ export class FirePipeline {
         };
     }
 
+    private track(record: RawLogRecord, result: ProcessResult): void {
+        const receivedAt = typeof record.received_at === 'string' ? Date.parse(record.received_at) : NaN;
+        if (!Number.isFinite(receivedAt)) return;
+        if (result.changes.length) {
+            this.triggers.push({ receivedAtMs: receivedAt, fireIds: result.changes.map((change) => change.id), observed: false });
+        }
+        const key = result.detectionKey;
+        if (!key) return;
+        if (record.kind === 'retract') this.waiting.delete(key);
+        else if (record.kind === 'detection' && !this.waiting.has(key)) {
+            if (this.waiting.size >= WAITING_MAX) this.waiting.delete(this.waiting.keys().next().value!);
+            this.waiting.set(key, receivedAt);
+        }
+    }
+
+    // only writes the Aggregator actually applied count: unchanged/skipped replays and singles never observe
+    private observeLatency(chunk: HazardBatchOp[], results: HazardBatchResult[]): void {
+        const applied = new Set(results.filter((result) => result.result === 'applied').map((result) => result.source_ref_id));
+        if (!applied.size) return;
+        const storedAt = this.now();
+        for (const trigger of this.triggers) {
+            if (trigger.observed || !trigger.fireIds.some((id) => applied.has(id))) continue;
+            trigger.observed = true;
+            processingSeconds.observe(Math.max(0, storedAt - trigger.receivedAtMs) / 1000);
+        }
+        for (const op of chunk) {
+            if (op.op !== 'upsert' || !applied.has(op.source_ref_id)) continue;
+            for (const key of (op.hazard?.attributes.detection_keys ?? []) as string[]) {
+                const receivedAt = this.waiting.get(key);
+                if (receivedAt === undefined) continue;
+                this.waiting.delete(key);
+                endToEndSeconds.observe(Math.max(0, storedAt - receivedAt) / 1000);
+            }
+        }
+    }
+
     private updateGauges(): void {
         const stats = this.engine.stats();
         lastFeedOffset.set(this.engine.processedOffset);
@@ -304,7 +344,10 @@ export class FirePipeline {
         for (let attempt = 1; ; attempt++) {
             if (this.stopping) throw new PipelineStoppedError();
             try {
-                return await work();
+                const value = await work();
+                // successful calls heartbeat too, not only the backoff sleeps
+                await heartbeat().catch(() => undefined);
+                return value;
             } catch (error) {
                 if (error instanceof StaleSnapshotError) throw error;
                 logger.warn({ error, operation, attempt }, 'Aggregator call failed; backing off');

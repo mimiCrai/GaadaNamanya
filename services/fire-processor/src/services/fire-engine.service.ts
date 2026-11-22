@@ -253,7 +253,7 @@ export class FireEngine {
 
     private applyPut(offset: number, next: Detection): ProcessResult {
         const change = this.graph.put(next);
-        return result(offset, 'applied', this.fires.apply(change, offset));
+        return { ...result(offset, 'applied', this.fires.apply(change, offset)), detectionKey: next.key };
     }
 }
 
