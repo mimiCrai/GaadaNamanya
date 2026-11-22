@@ -148,26 +148,49 @@ export class FireProcessorRepository implements IFireProcessorRepository {
             sizeBytes: size,
             savedAt: new Date(),
         };
+        const state = this.db.collection<FireSnapshotPointer>(fireProcessorState);
         try {
-            const previous = await this.db.collection<FireSnapshotPointer>(fireProcessorState).findOneAndUpdate(
+            await state.updateOne(
                 {
                     _id: FIRE_SNAPSHOT_STATE_ID,
                     $or: [{ feedOffset: { $lte: meta.feedOffset } }, { feedOffset: { $exists: false } }],
                 },
                 { $set: pointer },
-                { upsert: true, returnDocument: 'before', timeoutMS: env.LEASE_OPERATION_TIMEOUT_MS }
+                { upsert: true, timeoutMS: env.LEASE_OPERATION_TIMEOUT_MS }
             );
-            if (previous?.fileId && previous.fileId !== pointer.fileId) {
-                await bucket.delete(new ObjectId(previous.fileId)).catch(() => undefined);
-            }
-            return { stored: true, pointer };
         } catch (error) {
-            await bucket.delete(id).catch(() => undefined);
-            if (!isDuplicateKey(error)) throw error;
-            const current = await this.db
-                .collection<FireSnapshotPointer>(fireProcessorState)
-                .findOne({ _id: FIRE_SNAPSHOT_STATE_ID });
-            return { stored: false, current: current?.feedOffset ?? null };
+            // duplicate key = the guard rejected the swap for sure; anything else may have committed with the reply lost
+            const current = await state
+                .findOne({ _id: FIRE_SNAPSHOT_STATE_ID }, { timeoutMS: env.STORAGE_READ_TIMEOUT_MS })
+                .catch(() => undefined);
+            if (current?.fileId === pointer.fileId) {
+                await this.collectSnapshotGarbage(bucket, pointer);
+                return { stored: true, pointer };
+            }
+            // a pointer past our offset can never be swapped back to this blob, so it is safe to drop
+            if (isDuplicateKey(error) || (current && current.feedOffset > meta.feedOffset)) {
+                await bucket.delete(id).catch(() => undefined);
+                return { stored: false, current: current?.feedOffset ?? null };
+            }
+            // state unknown: keep the blob (a later snapshot collects it) so the pointer never references a deleted file
+            throw error;
+        }
+        await this.collectSnapshotGarbage(bucket, pointer);
+        return { stored: true, pointer };
+    }
+
+    // only blobs below the stored offset: the >= guard means the pointer can never move back to them
+    private async collectSnapshotGarbage(bucket: GridFSBucket, pointer: FireSnapshotPointer): Promise<void> {
+        try {
+            const stale = await bucket
+                .find(
+                    { 'metadata.feedOffset': { $lt: pointer.feedOffset }, _id: { $ne: new ObjectId(pointer.fileId) } },
+                    { projection: { _id: 1 }, timeoutMS: env.STORAGE_READ_TIMEOUT_MS }
+                )
+                .toArray();
+            for (const file of stale) await bucket.delete(file._id).catch(() => undefined);
+        } catch {
+            // best effort: the next stored snapshot retries the collection
         }
     }
 

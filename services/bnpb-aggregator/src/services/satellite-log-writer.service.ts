@@ -12,6 +12,7 @@ import {
 } from '../libs/metrics';
 import type { SatelliteEventKind } from '../libs/satellite-envelope';
 import { IBackgroundLeaseRepository } from '../repositories/background-lease.repository';
+import { failSpan, producerTrace, TraceCarrier } from '../telemetry/context';
 import env from '../util/env';
 
 export type SatelliteRecordKind = SatelliteEventKind | 'unprocessed';
@@ -38,7 +39,10 @@ export interface ISatelliteLogWriter {
 
 export const SATELLITE_RECORD_VERSION = 1;
 
-export function encodeRawRecord(record: SatelliteRawRecord, lease: LeaseToken): Message {
+// worst-case trace headers for size checks made before the producer span exists
+export const TRACE_HEADERS_ESTIMATE: TraceCarrier = { traceparent: `00-${'0'.repeat(32)}-${'0'.repeat(16)}-01` };
+
+export function encodeRawRecord(record: SatelliteRawRecord, lease: LeaseToken, trace: TraceCarrier = {}): Message {
     const value: Record<string, unknown> = {
         v: SATELLITE_RECORD_VERSION,
         offset: record.offset,
@@ -58,6 +62,7 @@ export function encodeRawRecord(record: SatelliteRawRecord, lease: LeaseToken): 
             fencing_token: String(lease.epoch),
             instance_id: lease.ownerId,
             correlation_id: record.correlationId,
+            ...trace,
         },
     };
 }
@@ -295,7 +300,28 @@ export class SatelliteLogWriter implements ISatelliteLogWriter {
         assertConsecutive(records);
         if (this.epoch !== lease.epoch || !this.producer) throw new LeaseLostError();
         assertContinuesCheckpoint(records, this.nextOffset);
-        const messages = records.map((record) => encodeRawRecord(record, lease));
+        // traceparent per record: the fire processor continues this trace (satellite -> fire processor -> Aggregator)
+        const trace = producerTrace(
+            env.SATELLITE_RAW_TOPIC,
+            {},
+            {
+                'messaging.batch.message_count': records.length,
+                'satellite.first_offset': records[0].offset,
+                'satellite.last_offset': records[records.length - 1].offset,
+            }
+        );
+        try {
+            await this.appendTraced(records, lease, trace.headers);
+        } catch (error) {
+            failSpan(trace.span, error);
+            throw error;
+        } finally {
+            trace.span.end();
+        }
+    }
+
+    private async appendTraced(records: SatelliteRawRecord[], lease: LeaseToken, trace: TraceCarrier): Promise<void> {
+        const messages = records.map((record) => encodeRawRecord(record, lease, trace));
         let totalBytes = 0;
         messages.forEach((message, index) => {
             const bytes = encodedMessageBytes(message);
@@ -308,6 +334,7 @@ export class SatelliteLogWriter implements ISatelliteLogWriter {
         // One send = one record batch per partition, and max.message.bytes applies per batch (review #4).
         const chunks = chunkByBytes(messages, this.recordLimit);
         const producer = this.producer;
+        if (!producer) throw new LeaseLostError();
         const stop = satelliteBatchCommitSeconds.startTimer();
         await this.leases.requireActive(lease);
         const transaction = await producer.transaction();

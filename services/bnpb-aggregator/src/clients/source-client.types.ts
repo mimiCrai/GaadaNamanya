@@ -1,5 +1,7 @@
 export interface PollRequestOptions {
     since?: Date;
+    // page size; omitted = the source default (PVMBG: 500)
+    limit?: number;
     correlationId: string;
     instanceId?: string;
     fencingToken?: number;

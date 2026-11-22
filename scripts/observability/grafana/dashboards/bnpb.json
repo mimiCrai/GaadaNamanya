@@ -822,7 +822,7 @@
       "id": 22,
       "title": "P4: end-to-end latency (received -> HazardEvent stored)",
       "type": "timeseries",
-      "description": "From received_at at the Aggregator ingest to the HazardEvent batch stored by the Aggregator API (P4 #4 p95).",
+      "description": "P4 #4 p95: received_at of a new detection to the first applied HazardEvent write containing it, including the wait as a single detection. Processing p95: received_at of a record whose change was applied to its HazardEvent write. Writes that were unchanged/skipped and detections that never form a fire are not counted.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -843,6 +843,11 @@
           "refId": "B",
           "expr": "histogram_quantile(0.5, sum by (le) (rate(bnpb_fire_processor_end_to_end_seconds_bucket[1m])))",
           "legendFormat": "p50"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(bnpb_fire_processor_processing_seconds_bucket[1m])))",
+          "legendFormat": "processing p95"
         }
       ],
       "fieldConfig": {

@@ -31,6 +31,7 @@ import { IBackgroundLeadershipService } from './background-leadership.service';
 import {
     encodedMessageBytes,
     encodeRawRecord,
+    TRACE_HEADERS_ESTIMATE,
     ISatelliteLogWriter,
     SatelliteRawRecord,
 } from './satellite-log-writer.service';
@@ -632,7 +633,7 @@ export class SatelliteIngestService implements ISatelliteIngestService {
         for (const entry of batch) {
             const record = entry.record;
             if (!record || record.kind === 'unprocessed') continue;
-            const bytes = encodedMessageBytes(encodeRawRecord(record, session.lease));
+            const bytes = encodedMessageBytes(encodeRawRecord(record, session.lease, TRACE_HEADERS_ESTIMATE));
             if (bytes <= limit) continue;
             const error = payloadTooLarge(bytes, limit);
             entry.dlq = {

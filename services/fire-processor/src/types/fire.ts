@@ -127,6 +127,8 @@ export interface ProcessResult {
     changes: FireChange[];
     late: LateDetection | null;
     invalidReason: string | null;
+    // key of the detection an applied record put or retracted (latency bookkeeping)
+    detectionKey?: string;
 }
 
 export interface EngineCounters {

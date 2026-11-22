@@ -51,6 +51,16 @@ describe('PvmbgClient safe decoding', () => {
         ]);
     });
 
+    it('sends limit only when a page size is asked for (backfill paging)', async () => {
+        fetchMock.mockImplementation(async () => new Response('{"data":[]}', { status: 200 }));
+        await client.getVolcanicReports(options);
+        await client.getVolcanicReports({ ...options, since: new Date('2026-11-20T10:00:00Z'), limit: 1000 });
+        const urls = fetchMock.mock.calls.map(([url]) => new URL(String(url)));
+        expect(urls[0].searchParams.has('limit')).toBe(false);
+        expect(urls[1].searchParams.get('limit')).toBe('1000');
+        expect(urls[1].searchParams.get('since')).toBe('2026-11-20T10:00:00.000Z');
+    });
+
     it.each([
         ['truncated JSON', Buffer.from('{"data":[{"report_id":"a"'), 'malformed_json'],
         ['invalid UTF-8', Buffer.from([0x7b, 0x22, 0xff, 0x22, 0x3a, 0x31, 0x7d]), 'invalid_utf8'],
