@@ -73,7 +73,7 @@ Router, Job bootstrap/migration menggunakan kelas `other` (`128Mi/256Mi`). `mong
   ```
 
   Deploy ulang mengembalikan isi ConfigMap ke file pada `pvmbgMappingFile` di config deploy (default `mapping.json` di repo).
-- `fire-processor` saat ini hanya menjalankan engine dan endpoint health; consumer `satellite.raw` dan penulisan ke Aggregator belum ada (CP 3.4/3.5).
+- `fire-processor` mengonsumsi `satellite.raw` (satu partisi, satu pemilik di grup `fire-processor-group`), menulis HazardEvent WILDFIRE lewat `POST /internal/hazards/batch` Aggregator, dan menyimpan snapshot engine lewat `PUT /internal/fire-processor/snapshot` (GridFS di Canonical Store). Saat start, pod memulihkan snapshot terakhir lalu seek ke offset setelahnya. Strategi Deployment-nya `Recreate`, sehingga tidak pernah ada dua engine sekaligus. Record baru masuk ke `satellite.raw` hanya kalau ingest satelit di Aggregator menyala. Nilai default-nya mati (`BNPB_AGGREGATOR_SATELLITE_INGEST_ENABLED=false`), jadi setel `true` dan isi `BNPB_AGGREGATOR_SATELLITE_TOKEN` di `.env` sebelum merender manifest. Token dirender sebagai Secret. Ingest membuka satu koneksi stream saja, yaitu milik leader Aggregator.
 
 ## Batas operasional
 

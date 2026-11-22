@@ -26,6 +26,7 @@ paths:
             parameters:
                 - $ref: '#/components/parameters/CorrelationId'
                 - $ref: '#/components/parameters/Since'
+                - $ref: '#/components/parameters/AfterId'
                 - $ref: '#/components/parameters/Limit'
             responses:
                 '200':
@@ -203,6 +204,14 @@ components:
             required: false
             description: ISO 8601 date-time (Z or offset). Returns reports whose reported_at is >= since.
             schema: { type: string, format: date-time }
+        AfterId:
+            name: after_id
+            in: query
+            required: false
+            description: >-
+                Keyset cursor, only together with since. Returns reports strictly after (since, after_id) in
+                (reported_at, report_id) order, so a page full of one timestamp can still be paged through.
+            schema: { type: string, minLength: 1, maxLength: 64 }
         Limit:
             name: limit
             in: query

@@ -14,6 +14,7 @@ export function parseListQuery(req: Request, res: Response): ListQuery | undefin
 
     return {
         since: parsed.data.since === undefined ? undefined : new Date(parsed.data.since),
+        afterId: parsed.data.after_id,
         limit: parsed.data.limit,
     };
 }

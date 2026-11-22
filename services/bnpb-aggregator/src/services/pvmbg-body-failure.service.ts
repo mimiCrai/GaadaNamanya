@@ -107,15 +107,26 @@ const skippedWindowSchema = z.object({
 // largest page GET /volcanic-reports accepts (limit 1..1000)
 export const PVMBG_BACKFILL_PAGE_LIMIT = 1000;
 
-// the source returns pages ordered by reported_at asc; the last parseable one is the next cursor
-function lastReportedAt(records: VolcanicReportBatch['records']): Date | null {
+interface PageCursor {
+    reportedAt: Date;
+    reportId: string;
+}
+
+// pages come ordered by (reported_at, report_id); the last record carrying both is the next keyset cursor
+function lastCursor(records: VolcanicReportBatch['records']): PageCursor | null {
     for (let index = records.length - 1; index >= 0; index--) {
-        const value = records[index].value as { reported_at?: unknown } | null;
+        const value = records[index].value as { reported_at?: unknown; report_id?: unknown } | null;
         const ms = typeof value?.reported_at === 'string' ? Date.parse(value.reported_at) : NaN;
-        if (Number.isFinite(ms)) return new Date(ms);
+        if (Number.isFinite(ms) && typeof value?.report_id === 'string' && value.report_id.length > 0) {
+            return { reportedAt: new Date(ms), reportId: value.report_id };
+        }
     }
     return null;
 }
+
+// the source returns rows strictly after the cursor, so a repeat means it ignored after_id
+const sameCursor = (a: PageCursor | null, b: PageCursor | null) =>
+    !!a && !!b && a.reportedAt.getTime() === b.reportedAt.getTime() && a.reportId === b.reportId;
 
 /** D-44 backfill: page through the whole skipped window via the normal ingest path; the version guard makes overlap a no-op. */
 export async function backfillSkippedWindow(
@@ -129,13 +140,15 @@ export async function backfillSkippedWindow(
     const parsed = skippedWindowSchema.safeParse(decodeJson(raw, { maxDepth: env.DECODE_MAX_DEPTH }));
     if (!parsed.success) throw new ProcessingError('validation_failed', 'entri window_skipped tidak memuat since/until yang valid');
     const until = new Date(parsed.data.until);
-    let cursor = parsed.data.since ? new Date(parsed.data.since) : undefined;
+    const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
+    let cursor: PageCursor | null = null;
     let pages = 0;
     let records = 0;
     // the entry closes only once a short page or a page reaching `until` proves the window is drained
     for (;;) {
         const batch = await pvmbg.getVolcanicReports({
-            since: cursor,
+            since: cursor?.reportedAt ?? since,
+            afterId: cursor?.reportId,
             limit: pageLimit,
             correlationId: entry.correlationId,
             instanceId: lease.ownerId,
@@ -148,13 +161,13 @@ export async function backfillSkippedWindow(
         pages++;
         records += batch.records.length;
         if (batch.records.length < pageLimit) break;
-        const last = lastReportedAt(batch.records);
-        if (last && last.getTime() >= until.getTime()) break;
-        // since is inclusive: a full page that does not move past the cursor would repeat forever
-        if (!last || (cursor && last.getTime() <= cursor.getTime())) {
+        const last = lastCursor(batch.records);
+        if (last && last.reportedAt.getTime() >= until.getTime()) break;
+        // keyset paging (ties on reported_at included); a cursor that does not move would repeat forever
+        if (!last || sameCursor(last, cursor) || (cursor && last.reportedAt < cursor.reportedAt)) {
             throw new ProcessingError(
                 'window_skipped',
-                `isi ulang jendela macet: ${pageLimit} laporan dengan reported_at ${last?.toISOString() ?? 'tidak terbaca'} memenuhi satu halaman`
+                `isi ulang jendela macet: kursor ${last ? `${last.reportedAt.toISOString()}/${last.reportId}` : 'tidak terbaca'} tidak maju (sumber mengabaikan after_id?)`
             );
         }
         cursor = last;

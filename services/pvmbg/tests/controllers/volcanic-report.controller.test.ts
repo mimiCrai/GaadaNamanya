@@ -41,7 +41,36 @@ describe('GET /volcanic-reports', () => {
         );
     });
 
-    it.each<Record<string, string>>([{ since: 'yesterday' }, { limit: '0' }, { limit: 'abc' }])(
+    it('pages through 1,001 reports sharing one reported_at with the (since, after_id) cursor', async () => {
+        const { app: paged, reports } = await buildApp();
+        const at = '2026-11-20T10:00:00.000Z';
+        await reports.insert(
+            Array.from({ length: 1001 }, (_, index) => ({
+                report_id: `tie-${String(index).padStart(4, '0')}`,
+                volcano_id: 'merapi',
+                alert_level: 'Waspada' as const,
+                eruption_count_24h: 1,
+                ash_column_height_m: 100,
+                reported_at: at,
+            }))
+        );
+        const page = (query: Record<string, string>) =>
+            request(paged).get('/volcanic-reports').query(query).set('Authorization', `Bearer ${PVMBG_TOKEN}`);
+
+        const first = (await page({ since: at, limit: '1000' })).body.data as VolcanicReport[];
+        expect(first).toHaveLength(1000);
+        const last = first[first.length - 1];
+        const second = (await page({ since: last.reported_at, after_id: last.report_id, limit: '1000' })).body
+            .data as VolcanicReport[];
+        // after the tie the page continues with the seeded (later) reports, never repeating a tie
+        const ids = second.map((report) => report.report_id);
+        expect(ids[0]).toBe('tie-1000');
+        expect(ids.filter((id) => id.startsWith('tie-'))).toEqual(['tie-1000']);
+        expect(second.slice(1).every((report) => report.reported_at > at)).toBe(true);
+        expect(new Set([...first, ...second.slice(0, 1)].map((report) => report.report_id)).size).toBe(1001);
+    });
+
+    it.each<Record<string, string>>([{ since: 'yesterday' }, { limit: '0' }, { limit: 'abc' }, { after_id: 'r-1' }])(
         'returns 400 for invalid query %j',
         async (query) => {
             const response = await get(query);

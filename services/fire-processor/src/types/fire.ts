@@ -172,4 +172,6 @@ export interface EngineSnapshot {
     detections: StoredDetection[];
     fires: StoredFire[];
     late_keys: string[];
+    // pipeline-owned (P4.4): [detection key, received_at ms] still waiting for a first HazardEvent; absent in old snapshots
+    latency_waiting?: [string, number][];
 }
