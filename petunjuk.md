@@ -244,7 +244,7 @@ Seluruh aplikasi berada dalam namespace `$NS`; Tester Agent berada pada namespac
 | BMKG/PVMBG | image repo; 8081/8082 | store masing-masing, Secret token, ConfigMap generator/delay | /health | mock; 64Mi/128Mi |
 | Sensor Pantai | digest resmi di Compose; 8080 | Secret PANTAI_AUTH_TOKEN, PVC 2Gi pada A | /healthz | sensor; 128Mi/256Mi (kelas other sementara) |
 | field-report-processor | image repo; 3000 (tanpa NodePort) | Kafka `field-reports`, Aggregator API + Secret internal key; tidak boleh ke MongoDB (aturan 5) | /health/live, /health/ready | consumer; 128Mi/256Mi |
-| fire-processor | image repo; 3000 (tanpa NodePort) | Kafka/Aggregator API (disiapkan; consumer `satellite.raw` menunggu CP 3.4/3.5) | /health/live, /health/ready | broker (pemroses stream); 512Mi/1Gi |
+| fire-processor | image repo; 3000 (tanpa NodePort) | Kafka `satellite.raw` (consumer, satu pemilik) + Aggregator API (HazardEvent batch, snapshot); tidak boleh ke MongoDB (aturan 5) | /health/live, /health/ready | broker (pemroses stream); 512Mi/1Gi |
 | bootstrap/migration/topic Jobs | Mongo/Aggregator/Kafka image | Secret dan ConfigMap sesuai pemilik; tanpa persistent data sendiri | Job Complete | other; 128Mi/256Mi |
 | Prometheus | prom/prometheus:v3.16.0; 9090 (ClusterIP, tanpa NodePort) | ConfigMap `prometheus-scrape` (scrape 5 s; Aggregator lewat headless `bnpb-aggregator-pods`), `emptyDir` retensi 3 hari; `"observability": false` mematikan | /-/ready | other; 128Mi/256Mi |
 | Grafana | grafana/grafana:13.3.1; 3000 (NodePort 30006) | ConfigMap provisioning + dashboard `bnpb.json`, Secret `grafana-secret` (password admin diturunkan dari credential file), `emptyDir` | /api/health | other; 128Mi/256Mi |

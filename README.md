@@ -347,12 +347,67 @@ Kebijakan perubahan skema PVMBG dideklarasikan di [SCHEMA_POLICY](docs/SCHEMA_PO
 - Aggregator: mapping PVMBG dibaca dari direktori `BNPB_AGGREGATOR_PVMBG_MAPPING_DIR` (default `services/bnpb-aggregator/config/pvmbg-mapping`, di-mount read-only) dan dimuat ulang saat hash isinya berubah; status per replica di `GET /internal/pvmbg/mapping`. Pesan terparkir diproses ulang lewat `POST /internal-ops/dlq/replay` di Client API (role `internal`).
 - Laporan lapangan: `POST /field-reports` di Client API (role `lapangan`/`internal`) membalas `202` setelah Kafka (topic `field-reports`) meng-ack; `field-report-processor` menyimpannya lewat Aggregator. Status: `GET /field-reports/{id}`.
 
+Skrip pengujiannya ada di [Skenario Pengujian M2 → P3](#p3--schema-evolution-dlq-dan-laporan-lapangan).
+
+## Skenario Pengujian M2
+
+Setiap skenario pengujian M2 dipicu dengan menjalankan skrip di folder `scripts/`. Jalankan dari root repository dengan bash (pada Windows: Git Bash).
+
+- Skrip **Compose** membuat project Compose terisolasi, lalu menghapus container dan volume-nya setelah selesai, kecuali diberi `--keep`. Stack utama tidak tersentuh.
+- Skrip **Kubernetes** membutuhkan `KUBE_CONTEXT`, misalnya `export KUBE_CONTEXT=bnpb-demo`, dan stack yang sudah di-deploy dengan `bash scripts/kubernetes/deploy-all.sh`. Namespace-nya `sistem-informasi-kebencanaan-bnpb`.
+
+Langkah lengkap, expected result, dan pengumpulan bukti di cluster demo ada di [petunjuk.md](petunjuk.md).
+
+### P1 — Sharding, replikasi, dan Audit API
+
 ```bash
-bash scripts/dlq/p3-malformed-window-test.sh          # P3 #3 + D-34, PASS/FAIL
-bash scripts/dlq/p3-schema-demo.sh [--no-pause]       # demo P3 #1-#5 → test-results/p3-schema/<waktu>/
-bash scripts/field-reports/p3-field-report-proof.sh   # bukti P3 #6 → test-results/p3-field-report/<waktu>/
+bash scripts/test-audit-storage.sh
+bash scripts/kubernetes/verify-mongo.sh
+bash scripts/kubernetes/import-history.sh test-results/history.ndjson
+python3 scripts/kubernetes/verify-distribution.py
+AGGREGATOR_URL=http://<IP node>:30003 BNPB_AUDIT_TOKEN=<token audit> node scripts/kubernetes/verify-audit.mjs
+BNPB_AGGREGATOR_AUDIT_TOKEN=<token audit> bash scripts/kubernetes/check-recovery.sh before test-results/baseline.json
+bash scripts/kubernetes/replace-member.sh sistem-informasi-kebencanaan-bnpb canonical-shard-b 1 --lost-volume
+BNPB_AGGREGATOR_AUDIT_TOKEN=<token audit> bash scripts/kubernetes/check-recovery.sh after test-results/baseline.json
 ```
-Ketiga skrip memakai project Compose terisolasi dan `.env.example`, sehingga stack utama dan `.env` tidak disentuh. Pengguna demo dibuat oleh `scripts/seed-users.sh` (password `password`).
+`test-audit-storage.sh` berjalan di Compose, sedangkan skrip lainnya di Kubernetes. Fixture katalog NDJSON untuk `import-history.sh` ada di `petunjuk.md` § 10.
+
+### P2 — Aggregator multi-replica, leader election, dan beban
+
+```bash
+bash scripts/test-aggregator-failover.sh
+bash scripts/run-aggregator-load-test.sh smoke
+```
+Mode load test lainnya: `sustained`, `scaling`, `benchmark`, dan `rolling`. Untuk target Kubernetes, set `TARGET=kubernetes`, `KUBE_CONTEXT`, `KUBE_NAMESPACE`, `AGGREGATOR_URL`, dan `BNPB_INTERNAL_API_KEY` (lihat `petunjuk.md` § 15). Hasilnya ada di `test-results/p2-load/`.
+
+### P3 — Schema evolution, DLQ, dan laporan lapangan
+
+```bash
+bash scripts/dlq/p3-malformed-window-test.sh
+bash scripts/dlq/p3-schema-demo.sh [--no-pause]
+bash scripts/field-reports/p3-field-report-proof.sh
+PW=<password> bash scripts/dlq/p3-dlq-demo.sh
+```
+Tiga skrip pertama memakai project Compose terisolasi dan `.env.example`, sehingga stack utama dan `.env` tidak disentuh. Pengguna demo dibuat oleh `scripts/seed-users.sh` (password `password`).
+
+### P4 — Feed satelit → HazardEvent WILDFIRE
+
+```bash
+bash scripts/satellite/p4-reconnect-test.sh [--pause]
+bash scripts/satellite/p4-crash-equivalence.sh
+bash scripts/satellite/p4-burst-test.sh [--keep]
+KUBE_CONTEXT=bnpb-demo bash scripts/satellite/p4-k8s-burst-report.sh
+SATELLITE_TOKEN=<token grup> bash scripts/satellite/p4-reconnect-test.sh --real --pause
+```
+`p4-reconnect-test.sh` menguji putus-sambung tanpa data hilang atau ganda (#8); `--pause` menambahkan skenario leader dibekukan. `p4-crash-equivalence.sh` mematikan fire-processor saat kebakaran sedang dikenali, lalu membandingkan hasil akhirnya (#5). `p4-burst-test.sh` menjalankan lonjakan feed di Compose dengan Prometheus/Grafana (#4); `--keep` membiarkan stack hidup supaya dashboard bisa dilihat. `p4-k8s-burst-report.sh` mengukur lonjakan 60× di Kubernetes (#4). Skrip stub tidak pernah menghubungi feed asli. Ke feed resmi hanya boleh ada **satu** koneksi stream, jadi hentikan dulu stack atau observer lain yang tersambung ke feed. `p4-k8s-burst-report.sh` hanya mengukur dan tidak membuka koneksi ke feed. Jalankan sebelum sesi 60× dimulai, lalu tekan Enter saat lonjakan selesai. Bisa juga dijalankan setelah sesi dengan `--start <ISO> --burst-end <ISO>`. Dashboard lonjakan ada di Grafana K8s `http://<IP node>:30006` → **BNPB Overview** (panel P4).
+
+### P5 — Resiliensi Sensor Pantai
+
+```bash
+bash scripts/test-sensor-pantai.sh
+bash scripts/sensor-pantai/measure-e2e.sh --duration-seconds 300 --drain-seconds 15
+```
+`test-sensor-pantai.sh` menguji integrasi Sensor Pantai di Compose. `measure-e2e.sh` mengukur p95 dari Sensor Pantai sampai inbox notifikasi (target ≤ 5 s). Jalankan `measure-e2e.sh` sebelum memulai skenario gangguan Tester Agent. Penjelasan hasilnya ada di bagian [Pengukuran end-to-end Sensor Pantai (P5)](#pengukuran-end-to-end-sensor-pantai-p5).
 
 ## Daftar Variabel Konfigurasi
 
@@ -374,6 +429,26 @@ AUTH_STORE_DB_PASSWORD=
 AUTH_STORE_DB_NAME=
 BNPB_AUTH_HOST_PORT=
 BNPB_CLIENT_API_HOST_PORT=
+
+# BNPB Client API: admission control per instance
+BNPB_CLIENT_API_ADMISSION_MAX_CONCURRENT_REQUESTS=
+BNPB_CLIENT_API_ADMISSION_RESERVED_LAPANGAN_REQUESTS=
+BNPB_CLIENT_API_ADMISSION_RETRY_AFTER_SECONDS=
+
+# Field reports (Client API → Kafka)
+FIELD_REPORT_TOPIC=
+BNPB_CLIENT_API_KAFKA_BROKERS=
+BNPB_CLIENT_API_KAFKA_CLIENT_ID=
+BNPB_CLIENT_API_FIELD_REPORT_PUBLISH_TIMEOUT_MS=
+BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES=
+BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS=
+
+# BNPB Client API: DLQ replay
+BNPB_CLIENT_API_DLQ_REPLAY_TIMEOUT_MS=
+
+# BNPB Client API: cache public key Auth
+BNPB_CLIENT_API_JWT_PUBLIC_KEY_CACHE_MS=
+BNPB_CLIENT_API_JWT_PUBLIC_KEY_MIN_REFRESH_MS=
 
 # BNPB Auth
 BNPB_AUTH_JWT_PRIVATE_KEY=
@@ -397,6 +472,7 @@ KAFKA_AUTO_CREATE_TOPICS_ENABLE=
 KAFKA_CLUSTER_ID=
 KAFKA_HOST_PORT=
 KAFKA_INTERNAL_BOOTSTRAP_SERVER=
+KAFKA_OFFSETS_RETENTION_MINUTES=
 
 # BNPB Aggregator
 BNPB_AGGREGATOR_HOST_PORT=
@@ -425,36 +501,49 @@ BNPB_AGGREGATOR_POLL_INTERVAL_MS=
 BNPB_AGGREGATOR_POLL_OVERLAP_MS=
 BNPB_AGGREGATOR_OUTBOX_RELAY_INTERVAL_MS=
 BNPB_AGGREGATOR_OUTBOX_BATCH_SIZE=
+
+# BNPB Aggregator: decoding aman dan penyimpanan pesan unprocessed (DLQ)
+BNPB_AGGREGATOR_PVMBG_MAX_BODY_BYTES=
+BNPB_AGGREGATOR_DECODE_MAX_DEPTH=
+BNPB_AGGREGATOR_DLQ_INLINE_MAX_BYTES=
+BNPB_AGGREGATOR_DLQ_INSPECT_MAX_BYTES=
+BNPB_AGGREGATOR_DLQ_MAX_ATTEMPTS=
+BNPB_AGGREGATOR_DLQ_RETRY_BASE_MS=
+BNPB_AGGREGATOR_DLQ_RETRY_CAP_MS=
+BNPB_AGGREGATOR_DLQ_RETRY_INTERVAL_MS=
+BNPB_AGGREGATOR_DLQ_RETRY_BATCH_SIZE=
+BNPB_AGGREGATOR_DLQ_CLAIM_MS=
 BNPB_AGGREGATOR_DLQ_REPLAY_MAX=
+
+# BNPB Aggregator: API tulis untuk fire processor (P4)
+BNPB_AGGREGATOR_FIRE_SNAPSHOT_MAX_BYTES=
+BNPB_AGGREGATOR_HAZARD_BATCH_CONCURRENCY=
+
+# BNPB Aggregator: body dan mapping PVMBG
 BNPB_AGGREGATOR_PVMBG_BODY_FAILURE_HOLD_POLLS=
 BNPB_AGGREGATOR_PVMBG_MAPPING_DIR=
 BNPB_AGGREGATOR_PVMBG_MAPPING_PATH=
 BNPB_AGGREGATOR_PVMBG_MAPPING_POLL_MS=
 
-# Field reports (Client API → Kafka)
-FIELD_REPORT_TOPIC=
-BNPB_CLIENT_API_KAFKA_BROKERS=
-BNPB_CLIENT_API_KAFKA_CLIENT_ID=
-BNPB_CLIENT_API_FIELD_REPORT_PUBLISH_TIMEOUT_MS=
-BNPB_CLIENT_API_FIELD_REPORT_MAX_BODY_BYTES=
-BNPB_CLIENT_API_FIELD_REPORT_RETRY_AFTER_SECONDS=
-
-# Field Report Processor
-FIELD_REPORT_PROCESSOR_HOST_PORT=
-FIELD_REPORT_PROCESSOR_NODE_ENV=
-FIELD_REPORT_PROCESSOR_KAFKA_BROKERS=
-FIELD_REPORT_PROCESSOR_KAFKA_CLIENT_ID=
-FIELD_REPORT_PROCESSOR_KAFKA_GROUP_ID=
-FIELD_REPORT_PROCESSOR_LAG_POLL_INTERVAL_MS=
-FIELD_REPORT_PROCESSOR_GATEWAY_TIMEOUT_MS=
-FIELD_REPORT_PROCESSOR_MAX_MESSAGE_BYTES=
-FIELD_REPORT_PROCESSOR_MAX_PERMANENT_ATTEMPTS=
-FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS=
-FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS=
-
-# Fire Processor
-FIRE_PROCESSOR_HOST_PORT=
-FIRE_PROCESSOR_NODE_ENV=
+# BNPB Aggregator: ingest feed satelit (P4)
+BNPB_AGGREGATOR_SATELLITE_INGEST_ENABLED=
+BNPB_AGGREGATOR_SATELLITE_BASE_URL=
+BNPB_AGGREGATOR_SATELLITE_TOKEN=
+BNPB_AGGREGATOR_SATELLITE_RAW_TOPIC=
+BNPB_AGGREGATOR_KAFKA_SATELLITE_TRANSACTIONAL_ID=
+BNPB_AGGREGATOR_SATELLITE_CHECKPOINT_GROUP=
+BNPB_AGGREGATOR_SATELLITE_BATCH_MAX=
+BNPB_AGGREGATOR_SATELLITE_BATCH_MAX_BYTES=
+BNPB_AGGREGATOR_SATELLITE_BATCH_LINGER_MS=
+BNPB_AGGREGATOR_SATELLITE_MAX_EVENT_BYTES=
+BNPB_AGGREGATOR_SATELLITE_CONNECT_TIMEOUT_MS=
+BNPB_AGGREGATOR_SATELLITE_IDLE_TIMEOUT_MS=
+BNPB_AGGREGATOR_SATELLITE_SESSION_POLL_MS=
+BNPB_AGGREGATOR_SATELLITE_BACKOFF_BASE_MS=
+BNPB_AGGREGATOR_SATELLITE_BACKOFF_CAP_MS=
+BNPB_AGGREGATOR_SATELLITE_429_BACKOFF_BASE_MS=
+BNPB_AGGREGATOR_SATELLITE_429_BACKOFF_CAP_MS=
+BNPB_AGGREGATOR_SATELLITE_AUTH_BACKOFF_MS=
 
 # Dashboard Consumer
 DASHBOARD_STORE_DB_USER=
@@ -483,6 +572,33 @@ NOTIFICATION_CONSUMER_KAFKA_BROKERS=
 NOTIFICATION_CONSUMER_KAFKA_CLIENT_ID=
 NOTIFICATION_CONSUMER_KAFKA_GROUP_ID=
 NOTIFICATION_CONSUMER_KAFKA_TOPIC=
+
+# Field Report Processor
+FIELD_REPORT_PROCESSOR_HOST_PORT=
+FIELD_REPORT_PROCESSOR_NODE_ENV=
+FIELD_REPORT_PROCESSOR_KAFKA_BROKERS=
+FIELD_REPORT_PROCESSOR_KAFKA_CLIENT_ID=
+FIELD_REPORT_PROCESSOR_KAFKA_GROUP_ID=
+FIELD_REPORT_PROCESSOR_LAG_POLL_INTERVAL_MS=
+FIELD_REPORT_PROCESSOR_GATEWAY_TIMEOUT_MS=
+FIELD_REPORT_PROCESSOR_MAX_MESSAGE_BYTES=
+FIELD_REPORT_PROCESSOR_MAX_PERMANENT_ATTEMPTS=
+FIELD_REPORT_PROCESSOR_BACKOFF_BASE_MS=
+FIELD_REPORT_PROCESSOR_BACKOFF_CAP_MS=
+
+# Fire Processor
+FIRE_PROCESSOR_HOST_PORT=
+FIRE_PROCESSOR_NODE_ENV=
+FIRE_PROCESSOR_KAFKA_BROKERS=
+FIRE_PROCESSOR_KAFKA_CLIENT_ID=
+FIRE_PROCESSOR_KAFKA_GROUP_ID=
+FIRE_PROCESSOR_GATEWAY_TIMEOUT_MS=
+FIRE_PROCESSOR_ALLOWED_LATENESS_MINUTES=
+FIRE_PROCESSOR_FLUSH_MAX_RECORDS=
+FIRE_PROCESSOR_SNAPSHOT_EVERY_RECORDS=
+FIRE_PROCESSOR_SNAPSHOT_INTERVAL_MS=
+FIRE_PROCESSOR_BACKOFF_BASE_MS=
+FIRE_PROCESSOR_BACKOFF_CAP_MS=
 
 # BMKG Mock
 BMKG_PORT=
@@ -514,4 +630,36 @@ PVMBG_DELAY_MAX_MS=
 PVMBG_REPORT_INTERVAL_MS=
 PVMBG_REPORT_GENERATION_PROBABILITY=
 PVMBG_RANDOM_SEED=
+
+# Feed satelit (skrip P4)
+SATELLITE_BASE_URL=
+SATELLITE_TOKEN=
+
+# Sensor Pantai
+PANTAI_AUTH_TOKEN=
+PANTAI_PROFILE=
+PANTAI_SEED=
+PANTAI_SPEED=
+SENSOR_PANTAI_HOST_PORT=
+BNPB_AGGREGATOR_SENSOR_PANTAI_ENABLED=
+BNPB_AGGREGATOR_SENSOR_PANTAI_REQUEST_TIMEOUT_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_POLL_INTERVAL_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_PAGE_SIZE=
+BNPB_AGGREGATOR_SENSOR_PANTAI_MAX_PAGES_PER_POLL=
+BNPB_AGGREGATOR_SENSOR_PANTAI_MAX_RESPONSE_BYTES=
+BNPB_AGGREGATOR_SENSOR_PANTAI_FAILURE_THRESHOLD=
+BNPB_AGGREGATOR_SENSOR_PANTAI_COOLDOWN_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_STALE_AFTER_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_MAX_SOURCE_LAG_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_MAX_FUTURE_MS=
+BNPB_AGGREGATOR_SENSOR_PANTAI_MAX_RECORD_BYTES=
+
+# Observabilitas (opsional)
+OTEL_SDK_DISABLED=
+OTEL_TRACES_SAMPLER_ARG=
+GRAFANA_HOST_PORT=
+GRAFANA_ADMIN_USER=
+GRAFANA_ADMIN_PASSWORD=
+PROMETHEUS_HOST_PORT=
+TEMPO_HOST_PORT=
 ```
