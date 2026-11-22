@@ -192,17 +192,23 @@ describe('D-44 backfill of a skipped PVMBG window', () => {
     });
 
     describe('draining a window larger than one page', () => {
-        // same rules as the mock: reported_at >= since, ordered by reported_at then report_id, at most `limit`
+        // same rules as the mock: (reported_at, report_id) order, since inclusive, after_id strictly after the pair
         const source = (count: number, stepMs = 10) =>
             Array.from({ length: count }, (_, index) => ({
                 report_id: `r-${String(index).padStart(4, '0')}`,
                 reported_at: new Date(since.getTime() + index * stepMs).toISOString(),
             }));
-        const serve = (reports: { report_id: string; reported_at: string }[]) =>
-            jest.fn(async (options: { since?: Date; limit?: number }) => ({
+        const after = (report: { report_id: string; reported_at: string }, since?: Date, afterId?: string) => {
+            if (!since) return true;
+            const at = Date.parse(report.reported_at);
+            if (afterId === undefined) return at >= since.getTime();
+            return at > since.getTime() || (at === since.getTime() && report.report_id > afterId);
+        };
+        const serve = (reports: { report_id: string; reported_at: string }[], ignoreAfterId = false) =>
+            jest.fn(async (options: { since?: Date; afterId?: string; limit?: number }) => ({
                 contentType: 'application/json',
                 records: reports
-                    .filter((report) => !options.since || Date.parse(report.reported_at) >= options.since.getTime())
+                    .filter((report) => after(report, options.since, ignoreAfterId ? undefined : options.afterId))
                     .slice(0, options.limit ?? 500)
                     .map((value) => ({ raw: Buffer.from(JSON.stringify(value)), value })),
             }));
@@ -219,7 +225,12 @@ describe('D-44 backfill of a skipped PVMBG window', () => {
             await backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion, 500);
             expect(ingested().size).toBe(501);
             expect(pvmbg.getVolcanicReports).toHaveBeenCalledTimes(2);
-            expect(pvmbg.getVolcanicReports.mock.calls[1][0]).toMatchObject({ limit: 500, since: new Date(since.getTime() + 499 * 10) });
+            expect(pvmbg.getVolcanicReports.mock.calls[0][0]).toMatchObject({ since, afterId: undefined });
+            expect(pvmbg.getVolcanicReports.mock.calls[1][0]).toMatchObject({
+                limit: 500,
+                since: new Date(since.getTime() + 499 * 10),
+                afterId: 'r-0499',
+            });
         });
 
         it('stops once a page reaches until (later records belong to the normal poll)', async () => {
@@ -230,8 +241,16 @@ describe('D-44 backfill of a skipped PVMBG window', () => {
             expect([...ingested()]).toEqual(expect.arrayContaining(source(16, 1_000).map((report) => report.report_id)));
         });
 
-        it('a full page that cannot move the cursor keeps the entry retrying instead of closing it', async () => {
-            pvmbg.getVolcanicReports = serve(source(6, 0));
+        it('1,001 reports sharing one reported_at are all ingested (keyset cursor past the tie)', async () => {
+            pvmbg.getVolcanicReports = serve(source(1001, 0));
+            await backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion);
+            expect(ingested().size).toBe(1001);
+            expect(pvmbg.getVolcanicReports).toHaveBeenCalledTimes(2);
+            expect(pvmbg.getVolcanicReports.mock.calls[1][0]).toMatchObject({ since, afterId: 'r-0999' });
+        });
+
+        it('a source that ignores after_id cannot move the cursor: the entry keeps retrying instead of closing', async () => {
+            pvmbg.getVolcanicReports = serve(source(6, 0), true);
             await expect(backfillSkippedWindow(wide, entry, lease, pvmbg as never, ingestion, 3)).rejects.toMatchObject({
                 category: 'window_skipped',
                 retryable: true,

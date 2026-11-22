@@ -1,4 +1,4 @@
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import {
     HazardBatchOp,
     HazardBatchResult,
@@ -220,9 +220,10 @@ describe('FirePipeline (CP 3.4/3.5)', () => {
                 expect(client.state()).toEqual(reference.state());
                 expect([...client.late.keys()]).toEqual([...reference.late.keys()]);
                 expect([...client.dlq.keys()]).toEqual([...reference.dlq.keys()]);
-                expect(JSON.parse(gunzipSync(client.snapshot!.body).toString('utf8'))).toEqual(
-                    JSON.parse(JSON.stringify(clean.engine.snapshot()))
-                );
+                // engine state and the pending latency arrival times both match the uninterrupted run
+                const stored = JSON.parse(gunzipSync(client.snapshot!.body).toString('utf8'));
+                expect(stored).toEqual(JSON.parse(gunzipSync(reference.snapshot!.body).toString('utf8')));
+                expect(stored).toMatchObject(JSON.parse(JSON.stringify(clean.engine.snapshot())));
             }
         }
     );
@@ -307,6 +308,42 @@ describe('FirePipeline (CP 3.4/3.5)', () => {
             expect(await sum(endToEndSeconds)).toBeCloseTo(62);
             expect(await count(processingSeconds)).toBe(1);
             expect(await sum(processingSeconds)).toBeCloseTo(1);
+        });
+
+        it('a restart between the single and the second detection keeps the full wait (61 s + 1 s)', async () => {
+            const log = new LogBuilder()
+                .heartbeat('2026-11-15T06:00:00Z')
+                .detection(at('-2.50000', 500))
+                .detection(at('-2.50800', 510));
+            const [heartbeat, single, second] = messages(receivedAt(log.records, [t0, t0, t0 + 60_000]));
+            const client = new FakeAggregator();
+            const before = new FirePipeline(client, options({ now: () => clock }));
+            await before.restore('c');
+            clock = t0 + 2_000;
+            before.ingest(heartbeat);
+            before.ingest(single);
+            await before.maybeSnapshot('c', undefined, true);
+            const stored = JSON.parse(gunzipSync(client.snapshot!.body).toString('utf8'));
+            expect(stored.latency_waiting).toEqual([[expect.stringContaining('-2.50000'), t0]]);
+
+            const after = new FirePipeline(client, options({ now: () => clock }));
+            expect(await after.restore('c')).toBe('2');
+            clock = t0 + 61_000;
+            after.ingest(second);
+            await after.flush('c');
+            expect(client.hazards.size).toBe(1);
+            expect(await count(endToEndSeconds)).toBe(2);
+            expect(await sum(endToEndSeconds)).toBeCloseTo(62);
+        });
+
+        it('a snapshot written before latency_waiting existed still restores (nothing to wait for)', async () => {
+            const client = new FakeAggregator();
+            await runAll(client, scenario());
+            const legacy = JSON.parse(gunzipSync(client.snapshot!.body).toString('utf8'));
+            delete legacy.latency_waiting;
+            client.snapshot = { ...client.snapshot!, body: gzipSync(Buffer.from(JSON.stringify(legacy))) };
+            const restored = new FirePipeline(client, options());
+            await expect(restored.restore('c')).resolves.toBe(String(scenario().length));
         });
 
         it('a replayed write the Aggregator reports unchanged observes nothing', async () => {

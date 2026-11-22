@@ -1,4 +1,4 @@
-import { asc, count, desc, gte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, gte, or } from 'drizzle-orm';
 import { inject, injectable } from 'inversify';
 import { TYPES } from '../constants/types';
 import { Database } from '../db';
@@ -7,6 +7,8 @@ import { ALERT_LEVELS, AlertLevel, SchemaMode, VolcanicReport, WireReport } from
 
 export interface ListQuery {
     since?: Date;
+    // with since: strictly after (since, afterId), the same order the list uses
+    afterId?: string;
     limit: number;
 }
 
@@ -61,10 +63,19 @@ export class ReportRepository implements IReportRepository {
         return this.db
             .select()
             .from(volcanicReports)
-            .where(query.since === undefined ? undefined : gte(volcanicReports.reportedAt, query.since))
+            .where(sinceFilter(query))
             .orderBy(asc(volcanicReports.reportedAt), asc(volcanicReports.reportId))
             .limit(query.limit);
     }
+}
+
+function sinceFilter({ since, afterId }: ListQuery) {
+    if (since === undefined) return undefined;
+    if (afterId === undefined) return gte(volcanicReports.reportedAt, since);
+    return or(
+        gt(volcanicReports.reportedAt, since),
+        and(eq(volcanicReports.reportedAt, since), gt(volcanicReports.reportId, afterId))
+    );
 }
 
 function toRow(report: VolcanicReport): NewVolcanicReportRow {

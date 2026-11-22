@@ -27,16 +27,23 @@ export type AlertLevel = (typeof ALERT_LEVELS)[number];
 export type SchemaVersion = 1 | 2;
 export type VolcanicReport = z.infer<typeof VolcanicReportV1Schema> & { confidence_level?: number };
 
-export const ListQuerySchema = z.object({
-    since: isoDateTime.optional(),
-    limit: z
-        .string()
-        .regex(/^\d+$/, 'limit must be an integer')
-        .transform(Number)
-        .pipe(z.number().int().min(1).max(1000))
-        .optional()
-        .default('500'),
-});
+export const ListQuerySchema = z
+    .object({
+        since: isoDateTime.optional(),
+        // keyset cursor with since: continue after (since, after_id) in (reported_at, report_id) order
+        after_id: z.string().min(1).max(64).optional(),
+        limit: z
+            .string()
+            .regex(/^\d+$/, 'limit must be an integer')
+            .transform(Number)
+            .pipe(z.number().int().min(1).max(1000))
+            .optional()
+            .default('500'),
+    })
+    .refine((query) => query.after_id === undefined || query.since !== undefined, {
+        message: 'after_id requires since',
+        path: ['after_id'],
+    });
 
 export const SchemaVersionBodySchema = z
     .object({

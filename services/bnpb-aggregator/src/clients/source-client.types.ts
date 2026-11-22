@@ -2,6 +2,8 @@ export interface PollRequestOptions {
     since?: Date;
     // page size; omitted = the source default (PVMBG: 500)
     limit?: number;
+    // keyset cursor with since (PVMBG after_id): rows strictly after (since, afterId)
+    afterId?: string;
     correlationId: string;
     instanceId?: string;
     fencingToken?: number;

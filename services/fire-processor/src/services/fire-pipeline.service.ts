@@ -165,6 +165,8 @@ export class FirePipeline {
             configuredAllowedLatenessMs: this.options.allowedLatenessMs,
         });
         this.engine = engine;
+        // arrival times survive a restart, so a single that later forms a fire still reports its full wait
+        for (const [key, receivedAt] of snapshot.latency_waiting ?? []) this.waiting.set(key, receivedAt);
         this.restoredFeedOffset = snapshot.last_offset;
         latenessMismatch.set(mismatch ? 1 : 0);
         allowedLatenessSeconds.set(engine.allowedLatenessMs / 1000);
@@ -266,7 +268,7 @@ export class FirePipeline {
         if (!due || this.sinceSnapshot === 0 || this.engine.processedOffset < 0) return null;
         const feedOffset = this.engine.processedOffset;
         const kafkaOffset = this.engine.kafkaOffset;
-        const body = gzipSync(Buffer.from(JSON.stringify(this.engine.snapshot())));
+        const body = gzipSync(Buffer.from(JSON.stringify({ ...this.engine.snapshot(), latency_waiting: this.waitingSnapshot() })));
         try {
             await this.retry('snapshot_put', heartbeat, () =>
                 this.client.putSnapshot(body, feedOffset, kafkaOffset, correlationId)
@@ -311,22 +313,28 @@ export class FirePipeline {
     // only writes the Aggregator actually applied count: unchanged/skipped replays and singles never observe
     private observeLatency(chunk: HazardBatchOp[], results: HazardBatchResult[]): void {
         const applied = new Set(results.filter((result) => result.result === 'applied').map((result) => result.source_ref_id));
-        if (!applied.size) return;
         const storedAt = this.now();
-        for (const trigger of this.triggers) {
+        for (const trigger of applied.size ? this.triggers : []) {
             if (trigger.observed || !trigger.fireIds.some((id) => applied.has(id))) continue;
             trigger.observed = true;
             processingSeconds.observe(Math.max(0, storedAt - trigger.receivedAtMs) / 1000);
         }
         for (const op of chunk) {
-            if (op.op !== 'upsert' || !applied.has(op.source_ref_id)) continue;
+            if (op.op !== 'upsert') continue;
+            // unchanged/skipped: already stored before a crash (observed then), so drop without a sample
+            const observe = applied.has(op.source_ref_id);
             for (const key of (op.hazard?.attributes.detection_keys ?? []) as string[]) {
                 const receivedAt = this.waiting.get(key);
                 if (receivedAt === undefined) continue;
                 this.waiting.delete(key);
-                endToEndSeconds.observe(Math.max(0, storedAt - receivedAt) / 1000);
+                if (observe) endToEndSeconds.observe(Math.max(0, storedAt - receivedAt) / 1000);
             }
         }
+    }
+
+    // oldest first (eviction order), ties by key: deterministic bytes for the same state
+    private waitingSnapshot(): [string, number][] {
+        return [...this.waiting].sort(([keyA, atA], [keyB, atB]) => atA - atB || (keyA < keyB ? -1 : keyA > keyB ? 1 : 0));
     }
 
     private updateGauges(): void {
